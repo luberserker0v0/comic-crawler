@@ -1,0 +1,15 @@
+{
+  "id": "negative-kuronavi-home-page",
+  "type": "negative",
+  "enabled": false,
+  "live": true,
+  "description": "Kuronavi home page should not become a comic metadata adapter candidate. Disabled until live negative AO runs are explicitly scheduled.",
+  "url": "https://kuronavi.one/",
+  "defaultRuns": 1,
+  "expectations": {
+    "metadata": false,
+    "chapters": false,
+    "images": false,
+    "oracleComparison": false
+  }
+}

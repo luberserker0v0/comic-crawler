@@ -1,0 +1,15 @@
+{
+  "id": "kuronavi-an-haxing-jian-guo-jia-noe-de-ling-zhu",
+  "type": "positive",
+  "enabled": true,
+  "description": "Kuronavi metadata page with an existing built-in adapter oracle.",
+  "url": "https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu",
+  "oracleAdapterId": "kuronavi",
+  "defaultRuns": 1,
+  "expectations": {
+    "metadata": true,
+    "chapters": true,
+    "images": true,
+    "oracleComparison": true
+  }
+}

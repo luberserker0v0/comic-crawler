@@ -1,0 +1,45 @@
+{
+  "name": "comiccrawler",
+  "private": true,
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=9.0.0"
+  },
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "node ./scripts/dev.mjs",
+    "dev:raw": "npm run build:shared && concurrently \"npm run dev:shared\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:utf8": "powershell -ExecutionPolicy Bypass -File ./scripts/start-with-utf8.ps1 npm run dev",
+    "dev:shared": "npm run -w shared build -- --watch --preserveWatchOutput",
+    "dev:backend": "npm run -w backend dev",
+    "dev:frontend": "npm run -w frontend dev",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
+    "build:shared": "npm run -w shared build",
+    "build:backend": "npm run -w backend build",
+    "build:frontend": "npm run -w frontend build",
+    "pretest": "npm run build:shared",
+    "test": "npm run test:dev && npm run test:workspaces",
+    "test:workspaces": "npm run test --workspaces --if-present",
+    "test:dev": "node --test scripts/dev.test.mjs",
+    "test:backend": "npm run -w backend test",
+    "test:frontend": "npm run -w frontend test",
+    "test:e2e": "npm run -w backend test:e2e",
+    "test:e2e:self-ao": "npm run -w backend test:e2e:self-ao",
+    "test:core": "node ./scripts/verify-core-tests.mjs",
+    "verify:quick": "npm run test:dev && npm run build && npm run verify:utf8 && npm run test:core",
+    "verify:local": "npm run verify:quick && npm run -w backend test:e2e -- --project=chromium",
+    "verify:utf8": "node ./scripts/verify-utf8.mjs",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8.62.0"
+  }
+}

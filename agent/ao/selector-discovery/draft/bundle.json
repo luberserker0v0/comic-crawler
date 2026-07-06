@@ -1,0 +1,8 @@
+{
+  "name": "selector-discovery",
+  "version": "draft",
+  "agent": "selector-discovery",
+  "defaultModel": "my_local_lmstudio/gemma-4-e4b-uncensored-hauhaucs-aggressive",
+  "contracts": "Markdown-only agent-facing input and output"
+}
+

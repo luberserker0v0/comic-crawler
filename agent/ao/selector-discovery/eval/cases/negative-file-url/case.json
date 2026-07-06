@@ -1,0 +1,14 @@
+{
+  "id": "negative-file-url",
+  "type": "negative",
+  "enabled": true,
+  "description": "Reject non-http URL schemes before discovery.",
+  "url": "file:///etc/passwd",
+  "defaultRuns": 1,
+  "expectations": {
+    "metadata": false,
+    "chapters": false,
+    "images": false,
+    "oracleComparison": false
+  }
+}

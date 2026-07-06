@@ -1,0 +1,14 @@
+{
+  "id": "negative-localhost-private-url",
+  "type": "negative",
+  "enabled": true,
+  "description": "Reject private/loopback hosts through URL safety before AO can produce a candidate.",
+  "url": "http://127.0.0.1/manga/private-test",
+  "defaultRuns": 1,
+  "expectations": {
+    "metadata": false,
+    "chapters": false,
+    "images": false,
+    "oracleComparison": false
+  }
+}

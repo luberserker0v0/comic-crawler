@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Runtime data
+data/
+backend/data/
+backend/downloads/
+agent-runtime/
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+backend/tests/**/__tmp__/
+
+# Logs and temp files
+logs/
+*.log
+*.tmp
+*.bak
+.tmp-dev-logs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

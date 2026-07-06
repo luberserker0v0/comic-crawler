@@ -1,0 +1,125 @@
+# ComicCrawler Architecture
+
+ComicCrawler is a local-first monorepo application for adapter-based comic
+crawling. The current runtime is built around a React WebUI, a Fastify backend,
+shared TypeScript types/constants, Playwright-assisted rendering, and AO-assisted
+selector discovery.
+
+## Runtime layout
+
+```text
+repo/
+  frontend/        React + Vite WebUI
+  backend/         Fastify API, crawler engine, task queue, adapter runtime
+  shared/          shared types and defaults
+  agent/ao/        AO bundle drafts, skills, agents, contracts, eval cases
+  docs/            user/contributor-facing docs
+  data/            ignored runtime state
+```
+
+`repo/` is the source-of-truth Git root. Runtime data belongs under `data/` and
+is not committed.
+
+## Main flow
+
+```mermaid
+flowchart TD
+  UI["WebUI create task"] --> Resolve["Resolve URL against adapters"]
+  Resolve -->|adapter covers requested mode| Queue["Create crawl task"]
+  Resolve -->|missing or capability mismatch| Discovery["Queue selector discovery"]
+  Queue --> Crawl["Crawler engine"]
+  Crawl -->|static parse succeeds| Download["Download images"]
+  Crawl -->|parse needs rendering| Headless["Playwright render HTML"]
+  Headless --> Download
+  Crawl -->|human verification needed| Wait["waiting_verification"]
+  Wait --> Handoff["Task detail handoff browser"]
+  Handoff --> Resume["Continue from checkpoint"]
+  Resume --> Crawl
+```
+
+## Adapters and capabilities
+
+Adapters identify supported domains and declare capabilities:
+
+- `metadata` - fetch manga metadata and chapter list.
+- `chapterImages` - fetch images from chapter URLs.
+- `verification` - participate in verification handoff.
+
+All-chapter tasks require metadata and chapter-image support. Specific-chapter
+tasks require only chapter-image support. Built-in adapters have priority over
+dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
+candidates.
+
+## Crawler rendering
+
+The crawler supports static and Playwright-rendered HTML:
+
+- Static mode fetches HTML and parses it with existing selector logic.
+- Headless mode opens a Playwright page, waits for rendering, and passes
+  `page.content()` into the same parser path.
+- Auto mode prefers static HTML and falls back to headless rendering for parsing
+  failures such as missing required selectors, no chapters, or no images.
+
+Image downloading remains URL-based. Browser image fallback exists only for
+specific verified-session cases.
+
+## Task reliability
+
+Tasks persist checkpoint state:
+
+- current chapter
+- extracted image list
+- completed image indexes and paths
+- failed image counts
+- latest error and update time
+
+Completed images are skipped on resume. `waiting_verification` releases the
+worker slot, so unrelated queued tasks can continue while a user completes
+verification.
+
+Forced task order is stored separately from normal priority and is used by the
+queue when deciding which pending task should run next.
+
+## Human verification handoff
+
+When a matched adapter encounters a human verification page, the task enters
+`waiting_verification`. The supported WebUI path is:
+
+1. Open the task detail page.
+2. Click **Open browser for verification**.
+3. Complete verification in the isolated browser profile.
+4. Click **Continue** to resume from checkpoint.
+
+If the challenge handoff expires or is removed, the task detail page prompts the
+user to click **Continue** to recreate the handoff before opening the browser
+again.
+
+## Selector and challenge discovery
+
+AO bundle sources live under `agent/ao/`.
+
+- `selector-discovery` produces Markdown selector candidates for unknown or
+  capability-missing sites.
+- `challenge-discovery` produces restricted challenge strategy candidates for
+  browser challenge handling.
+
+Agent-facing task and candidate artifacts use Markdown section contracts rather
+than JSON contracts. JSON remains limited to system settings such as
+`opencode.json`, provider documents, API payloads, and internal manifests.
+
+ComicCrawler treats its own workspace and `data/agent-workspaces` as the source
+of truth. AO workspaces are short-lived execution surfaces, not persistent
+project state.
+
+## Configuration and defaults
+
+Shared runtime defaults live in `shared/constants/index.ts`. Process-level
+deployment settings can be overridden by environment variables documented in the
+root README. The dev launcher waits for the backend before starting the
+frontend, then verifies both services are ready.
+
+## Documentation status
+
+This document describes the current high-level architecture. Detailed API
+schemas, adapter authoring guides, AO operation guides, and reliability internals
+are tracked as follow-up documentation work in `docs/README.md`.
