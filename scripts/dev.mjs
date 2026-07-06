@@ -84,6 +84,7 @@ function spawnLabeled(label, args) {
     env: createChildEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
+    detached: !isWindows,
   });
   children.add(child);
   childLabels.set(child, label);
@@ -294,12 +295,12 @@ async function stopChildTree(child, graceMs) {
       delay(Math.min(graceMs, 1000)),
     ]);
   } else {
-    child.kill('SIGTERM');
+    killProcessGroup(child, 'SIGTERM');
   }
 
   const didExit = await exited;
   if (!didExit && !isWindows && child.exitCode === null && child.signalCode === null) {
-    child.kill('SIGKILL');
+    killProcessGroup(child, 'SIGKILL');
     await waitForChildExit(child, 1000);
   }
   if (child.exitCode === null && child.signalCode === null) {
@@ -326,6 +327,22 @@ function waitForChildExit(child, timeoutMs) {
     };
     child.once('exit', onExit);
   });
+}
+
+function killProcessGroup(child, signal) {
+  if (!child.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error?.code === 'ESRCH') return;
+    try {
+      child.kill(signal);
+    } catch (fallbackError) {
+      if (fallbackError?.code !== 'ESRCH') {
+        throw fallbackError;
+      }
+    }
+  }
 }
 
 process.on('SIGINT', () => {
