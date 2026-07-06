@@ -64,6 +64,10 @@ Use the smallest gate that covers your change:
 verification, and core backend reliability tests. Fake dev tests must not be
 used as a substitute for the real dev smoke test.
 
+GitHub Actions runs `npm run verify:quick` on every push and pull request. The
+full Playwright E2E workflow is available as a manual GitHub Actions run until
+it is promoted to a required PR gate.
+
 ## Encoding and formatting
 
 - Store text files as UTF-8 with LF endings and final newline.

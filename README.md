@@ -74,13 +74,15 @@ npm run verify:quick
 `verify:quick` is the daily local gate. It runs the real dev startup smoke test,
 builds shared/backend/frontend, checks UTF-8 encoding, and runs the core backend
 tests for task reliability, crawler resume, download behavior, and task routes.
+GitHub Actions runs the same quick gate on every push and pull request.
 
 ```bash
 npm run verify:local
 ```
 
 `verify:local` is the full handoff gate. It runs `verify:quick` and then the full
-Playwright E2E suite.
+Playwright E2E suite. The GitHub E2E workflow is currently manual
+(`workflow_dispatch`) until the remote runner path is proven stable.
 
 Rules of thumb:
 

@@ -1,0 +1,40 @@
+name: Verify Quick
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify-quick:
+    name: npm run verify:quick
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quick verification gate
+        run: npm run verify:quick
+
+      - name: Upload diagnostic artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-quick-diagnostics
+          if-no-files-found: ignore
+          path: |
+            test-results/
+            playwright-report/
+            backend/coverage/
+            frontend/coverage/
+            .tmp-dev-logs/
