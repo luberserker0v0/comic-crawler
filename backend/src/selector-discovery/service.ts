@@ -10,7 +10,7 @@ import { validateChapterImageSelectorExtraction, validateSelectorExtraction } fr
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
-import { createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl } from './task-markdown';
+import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl } from './task-markdown';
 import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
   DEFAULT_SELECTOR_DISCOVERY_MODEL,
@@ -279,9 +279,21 @@ export class SelectorDiscoveryService {
         });
         return;
       }
-      const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
       const client = new AoClient(aoBaseUrl);
       const bundle = await this.bundleManager.loadActive(providerDocument, model);
+      if (job.target === 'chapter-only') {
+        const chapterFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
+        await this.runChapterOnlyDiscovery(job, {
+          client,
+          bundle,
+          model,
+          aoBaseUrl,
+          chapterFetch,
+          phase1Markdown: createChapterOnlyPhase1Markdown(chapterFetch.finalUrl),
+        });
+        return;
+      }
+      const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
       const phase1 = await this.runAoPhase(client, bundle, model, createPhase1TaskMarkdown({ url: job.normalizedUrl, metadataFetch }), 'outputs/phase1-output.md');
 
       await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2', model, aoBaseUrl });
@@ -297,18 +309,7 @@ export class SelectorDiscoveryService {
         chapterFetch,
       }), 'outputs/candidate-output.md');
 
-      const validation = validateMarkdownCandidate(candidateMarkdown, { target: job.target });
-      const parsedCandidate = parseMarkdownCandidate(candidateMarkdown);
-      const manifestMarkdown = createManifestMarkdown(parsedCandidate);
-      await this.updateJob(job.id, {
-        status: validation.valid ? 'awaiting_review' : 'invalid',
-        phase: 'complete',
-        candidateMarkdown,
-        parsedCandidate,
-        validation,
-        updatedAt: new Date().toISOString(),
-      });
-      await this.storage.write(`selector-discovery-manifest-${job.id}`, { markdown: manifestMarkdown, parsedCandidate });
+      await this.finalizeCandidate(job, candidateMarkdown);
     } finally {
       this.inFlightHosts.delete(job.hostname);
     }
@@ -380,7 +381,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     };
     const phase1 = `# Phase 1 Result
 
-## 網站判斷
+## Site Decision
 
 - Snapshot source: user-provided rendered chapter HTML.
 - Discovery target: chapter-only adapter.
@@ -408,13 +409,47 @@ ${finalUrl}
 `;
     const client = new AoClient(configured.aoBaseUrl);
     const bundle = await this.bundleManager.loadActive(configured.providerDocument, configured.model);
-    await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2', model: configured.model, aoBaseUrl: configured.aoBaseUrl });
-    const candidateMarkdown = await this.runAoPhase(client, bundle, configured.model, createPhase2TaskMarkdown({
-      url: job.normalizedUrl,
-      phase1Markdown: phase1,
+    await this.runChapterOnlyDiscovery(job, {
+      client,
+      bundle,
+      model: configured.model,
+      aoBaseUrl: configured.aoBaseUrl,
       chapterFetch,
-    }), 'outputs/candidate-output.md');
+      phase1Markdown: phase1,
+    });
+  }
 
+  private async runChapterOnlyDiscovery(
+    job: SelectorDiscoveryJob,
+    input: {
+      client: AoClient;
+      bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>;
+      model: string;
+      aoBaseUrl: string;
+      chapterFetch: SafeHtmlFetchResult;
+      phase1Markdown: string;
+    }
+  ): Promise<void> {
+    await this.updateJob(job.id, {
+      phase1Markdown: input.phase1Markdown,
+      phase: 'phase2',
+      model: input.model,
+      aoBaseUrl: input.aoBaseUrl,
+    });
+    const candidateMarkdown = await this.runAoPhase(
+      input.client,
+      input.bundle,
+      input.model,
+      createChapterOnlyTaskMarkdown({
+        url: job.normalizedUrl,
+        chapterFetch: input.chapterFetch,
+      }),
+      'outputs/candidate-output.md'
+    );
+    await this.finalizeCandidate(job, candidateMarkdown);
+  }
+
+  private async finalizeCandidate(job: SelectorDiscoveryJob, candidateMarkdown: string): Promise<void> {
     const validation = validateMarkdownCandidate(candidateMarkdown, { target: job.target });
     const parsedCandidate = parseMarkdownCandidate(candidateMarkdown);
     const manifestMarkdown = createManifestMarkdown(parsedCandidate);
@@ -578,4 +613,35 @@ function adapterSupportsDiscoveryTarget(
 
 function normalizeComparableText(value?: string): string {
   return (value ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+}
+
+function createChapterOnlyPhase1Markdown(finalUrl: string): string {
+  return `# Phase 1 Result
+
+## Site Decision
+
+- Snapshot source: fetched chapter reader HTML.
+- Discovery target: chapter-only adapter.
+
+## Metadata Selectors
+
+- Not required for chapter-only discovery.
+
+## Chapter List Selectors
+
+- Not required for chapter-only discovery.
+
+## Representative Chapter URL
+
+${finalUrl}
+
+## Evidence
+
+- The supplied URL is treated as the representative chapter page.
+- Chapter-only discovery intentionally extracts image selectors only.
+
+## Uncertainty
+
+- Metadata and chapter list extraction are intentionally out of scope for chapter-only discovery.
+`;
 }

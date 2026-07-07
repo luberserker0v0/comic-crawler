@@ -7,6 +7,7 @@ const coreBackendTests = [
   'tests/unit/task/queue.test.ts',
   'tests/unit/crawler/engine.test.ts',
   'tests/unit/crawler/image-downloader.test.ts',
+  'tests/unit/selector-discovery/task-markdown.test.ts',
 ];
 
 const isWindows = process.platform === 'win32';

@@ -50,6 +50,14 @@ tasks require only chapter-image support. Built-in adapters have priority over
 dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
 candidates.
 
+Selector discovery is intentionally modular:
+
+- Chapter-only discovery is the base unit. It analyzes a chapter reader page and
+  produces image selectors for `fetchChapterImages`.
+- Full discovery adds metadata/catalog analysis before the same chapter image
+  selector step. In other words, a full adapter is metadata/chapter-list
+  discovery plus one or more chapter-only image extraction checks.
+
 ## Crawler rendering
 
 The crawler supports static and Playwright-rendered HTML:

@@ -89,13 +89,63 @@ Analyze in this order:
 `;
 }
 
+export function createChapterOnlyTaskMarkdown(input: {
+  url: string;
+  chapterFetch: SafeHtmlFetchResult;
+}): string {
+  return `# Selector Discovery Chapter-Only Candidate
+
+## Goal
+
+Analyze a comic reader chapter page and produce a chapter-only Markdown selector candidate.
+
+This target implements only chapter image extraction:
+
+- Metadata selectors are not required.
+- Chapter list selectors are not required.
+- Image selectors are required.
+- Write Markdown only.
+- Do not output JSON.
+- Do not generate adapter code.
+- Use divide-and-conquer. Analyze image containers, repeated image nodes, and lazy-loading attributes separately.
+
+## Source URL
+
+${input.url}
+
+## Discovery Target
+
+chapter-only adapter
+
+## Chapter Fetch Summary
+
+- Final URL: ${input.chapterFetch.finalUrl}
+- Content-Type: ${input.chapterFetch.contentType || 'unknown'}
+- Redirects: ${input.chapterFetch.redirectChain.length === 0 ? 'none' : input.chapterFetch.redirectChain.join(' -> ')}
+
+## Chapter DOM Summary
+
+${summarizeHtmlForAgent(input.chapterFetch.html, input.chapterFetch.finalUrl, 'chapter')}
+
+## HTML Analysis Plan
+
+Analyze in this order:
+
+1. Identify the reader/image container.
+2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
+3. Choose image item selector and source attribute.
+4. Mark metadata and chapter-list selectors as not required for chapter-only discovery.
+5. Write the final output using the Markdown outline in contracts/candidate-output.md.
+`;
+}
+
 export function extractRepresentativeChapterUrl(markdown: string, baseUrl: string): string {
   const match = /Representative Chapter URL\s*:?\s*(https?:\/\/\S+|\/\S+)/i.exec(markdown)
     ?? /representative chapter\s*:?\s*(https?:\/\/\S+|\/\S+)/i.exec(markdown);
   if (!match?.[1]) {
     throw new Error('Phase 1 output did not include a Representative Chapter URL.');
   }
-  return new URL(match[1].replace(/[)>.,，。]+$/, ''), baseUrl).href;
+  return new URL(match[1].replace(/[)>.,]+$/, ''), baseUrl).href;
 }
 
 export function extractFallbackChapterUrlFromHtml(html: string, baseUrl: string): string | undefined {
@@ -106,7 +156,7 @@ export function extractFallbackChapterUrlFromHtml(html: string, baseUrl: string)
     const text = compactText($(element).text());
     const resolved = safeResolve(baseUrl, href);
     const signal = `${text} ${href} ${resolved}`;
-    if (/chapter|episode|read|第|話|\/manga\/[^/]+\/[^/]+/i.test(signal)) {
+    if (/chapter|episode|read|reader|viewer|\/manga\/[^/]+\/[^/]+/i.test(signal)) {
       candidates.push(resolved);
     }
   });
@@ -156,7 +206,7 @@ function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: 'metadat
     const href = node.attr('href') ?? '';
     const text = compactText(node.text());
     return `${text || '(no text)'} -> ${safeResolve(baseUrl, href)}`;
-  }, pageType === 'metadata' ? 120 : 50, (value) => /chapter|manga|comic|read|episode|ep|第|話/i.test(value));
+  }, pageType === 'metadata' ? 120 : 50, (value) => /chapter|manga|comic|read|reader|viewer|episode|ep/i.test(value));
   const images = collect($, 'img,source', (el) => {
     const node = $(el);
     const attrs = ['src', 'data-src', 'data-original', 'data-lazy-src', 'srcset']

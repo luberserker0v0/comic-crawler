@@ -21,6 +21,8 @@ Use these exact second-level headings. Do not rename them, do not add parentheti
 - Tags:
 - Description:
 
+For chapter-only discovery, write `Not required for chapter-only discovery.` for this section instead of inventing metadata selectors.
+
 ## Chapter Selectors
 
 - List:
@@ -28,11 +30,15 @@ Use these exact second-level headings. Do not rename them, do not add parentheti
 - Title:
 - URL:
 
+For chapter-only discovery, write `Not required for chapter-only discovery.` for this section instead of inventing chapter-list selectors.
+
 ## Image Selectors
 
 - Container:
 - Item:
 - Source Attribute:
+
+This section is required for both full and chapter-only discovery.
 
 ## Sample Extraction
 

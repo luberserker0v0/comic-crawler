@@ -72,10 +72,10 @@ npm run verify:quick
 ```
 
 `verify:quick` is the daily local gate. It runs the real dev startup smoke test,
-builds shared/backend/frontend, checks UTF-8 encoding, runs the core backend
-tests for task reliability, crawler resume, download behavior, and task routes,
-and runs the REST-only API crawl flow test. GitHub Actions runs the same quick
-gate on every push and pull request.
+builds shared/backend/frontend, checks UTF-8 encoding and common mojibake
+patterns, runs the core backend tests for task reliability, crawler resume,
+download behavior, and task routes, and runs the REST-only API crawl flow test.
+GitHub Actions runs the same quick gate on every push and pull request.
 
 ```bash
 npm run verify:local

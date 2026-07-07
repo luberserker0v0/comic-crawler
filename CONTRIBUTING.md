@@ -66,10 +66,10 @@ Use the smallest gate that covers your change:
   npm run verify:local
   ```
 
-`verify:quick` includes the real `npm run dev` smoke test, build, UTF-8
-verification, core backend reliability tests, and the REST-only API crawl flow
-test. Fake dev tests must not be used as a substitute for the real dev smoke
-test.
+`verify:quick` includes the real `npm run dev` smoke test, build, UTF-8 and
+common mojibake verification, core backend reliability tests, and the REST-only
+API crawl flow test. Fake dev tests must not be used as a substitute for the
+real dev smoke test.
 
 GitHub Actions runs `npm run verify:quick` on every push and pull request. The
 full Playwright E2E workflow is available as a manual GitHub Actions run until
@@ -78,6 +78,8 @@ it is promoted to a required PR gate.
 ## Encoding and formatting
 
 - Store text files as UTF-8 with LF endings and final newline.
+- `npm run verify:utf8` checks byte-level UTF-8 validity and common mojibake
+  patterns; it is not only a decoder check.
 - `.editorconfig` defines editor behavior; it cannot repair already corrupted
   text.
 - After changing Chinese text or docs, run:
