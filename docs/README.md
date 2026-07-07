@@ -8,6 +8,7 @@ This directory contains user- and contributor-facing documentation for the
 - `USER_GUIDE.md` - WebUI flow for all-chapter tasks, chapter-only tasks,
   waiting verification, resume, previews, and download folder operations.
 - `API.md` - concise reference for the currently implemented backend routes.
+- `openapi.yaml` - machine-readable contract for the public REST crawl flow.
 - `ARCHITECTURE.md` - current subsystem overview and runtime data flow.
 
 ## Documentation boundary

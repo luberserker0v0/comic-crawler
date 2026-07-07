@@ -72,9 +72,10 @@ npm run verify:quick
 ```
 
 `verify:quick` is the daily local gate. It runs the real dev startup smoke test,
-builds shared/backend/frontend, checks UTF-8 encoding, and runs the core backend
-tests for task reliability, crawler resume, download behavior, and task routes.
-GitHub Actions runs the same quick gate on every push and pull request.
+builds shared/backend/frontend, checks UTF-8 encoding, runs the core backend
+tests for task reliability, crawler resume, download behavior, and task routes,
+and runs the REST-only API crawl flow test. GitHub Actions runs the same quick
+gate on every push and pull request.
 
 ```bash
 npm run verify:local
@@ -87,6 +88,7 @@ Playwright E2E suite. The GitHub E2E workflow is currently manual
 Rules of thumb:
 
 - Changes to `npm run dev`, ports, Vite proxying, or process startup must pass `npm run test:dev`.
+- Changes to public REST API contracts or crawl flow DTOs must pass `npm run test:api`.
 - Changes to backend/frontend/shared code should pass at least `npm run verify:quick`.
 - Changes to WebUI flows, crawler behavior, challenge handoff, selector discovery, or adapter promotion should pass `npm run verify:local`.
 - Fake dev-launcher tests only cover failure branches. They must never be used as a substitute for the real `npm run dev` smoke test included in `npm run test:dev`.

@@ -94,14 +94,16 @@ If the challenge handoff expires or is removed, the task detail page prompts the
 user to click **Continue** to recreate the handoff before opening the browser
 again.
 
-## Selector and challenge discovery
+## Selector discovery and verification handoff
 
 AO bundle sources live under `agent/ao/`.
 
 - `selector-discovery` produces Markdown selector candidates for unknown or
   capability-missing sites.
-- `challenge-discovery` produces restricted challenge strategy candidates for
-  browser challenge handling.
+- Human verification is handled in the current public flow through handoff jobs
+  exposed under the historical `/api/challenge-discovery/*` namespace.
+- Restricted challenge strategy candidates are experimental/internal work and
+  are not the normal crawl path.
 
 Agent-facing task and candidate artifacts use Markdown section contracts rather
 than JSON contracts. JSON remains limited to system settings such as

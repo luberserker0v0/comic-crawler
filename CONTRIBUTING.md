@@ -53,6 +53,12 @@ Use the smallest gate that covers your change:
   npm run verify:quick
   ```
 
+- Public REST API contracts or API-only crawl flow:
+
+  ```bash
+  npm run test:api
+  ```
+
 - WebUI flows, crawler behavior, challenge handoff, selector discovery, dynamic
   adapters, or reliability behavior:
 
@@ -61,8 +67,9 @@ Use the smallest gate that covers your change:
   ```
 
 `verify:quick` includes the real `npm run dev` smoke test, build, UTF-8
-verification, and core backend reliability tests. Fake dev tests must not be
-used as a substitute for the real dev smoke test.
+verification, core backend reliability tests, and the REST-only API crawl flow
+test. Fake dev tests must not be used as a substitute for the real dev smoke
+test.
 
 GitHub Actions runs `npm run verify:quick` on every push and pull request. The
 full Playwright E2E workflow is available as a manual GitHub Actions run until
@@ -130,16 +137,17 @@ Built-in adapters should include unit fixtures. Dynamic adapters should come
 from reviewed selector candidates and should be promoted through the existing
 agent adapter review flow.
 
-## AO and dynamic adapter workflow
+## AO, selector discovery, and verification handoff
 
-AO-facing selector and challenge bundles live under `agent/ao/`. Agent-facing
-contracts use Markdown sections, not JSON schemas. Provider documents and
-`opencode.json` are system settings and must not be copied into task-facing
-Markdown logs.
+AO-facing selector bundle work lives under `agent/ao/`. Agent-facing contracts
+use Markdown sections, not JSON schemas. Provider documents and `opencode.json`
+are system settings and must not be copied into task-facing Markdown logs.
 
-Selector discovery and challenge discovery candidates must be reviewed before
-promotion. Provider secrets, token paths, and API keys must not be logged or
-returned from read APIs.
+Selector discovery candidates must be reviewed before promotion. The current
+public verification flow uses human handoff jobs under the historical
+`/api/challenge-discovery/*` namespace; challenge strategy discovery utilities
+are internal/experimental unless explicitly promoted later. Provider secrets,
+token paths, and API keys must not be logged or returned from read APIs.
 
 ## Pull request checklist
 

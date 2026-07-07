@@ -1,0 +1,537 @@
+openapi: 3.1.0
+info:
+  title: ComicCrawler REST API
+  version: 0.1.0
+  description: Public REST contract for API-only crawl clients.
+servers:
+  - url: http://127.0.0.1:4100
+paths:
+  /api/status:
+    get:
+      summary: Health and runtime status
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+  /api/adapters:
+    get:
+      summary: List registered adapters
+      responses:
+        "200":
+          description: Adapter list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Adapter"
+  /api/adapters/resolve:
+    post:
+      summary: Resolve which adapter can handle a URL and mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdapterResolveRequest"
+      responses:
+        "200":
+          description: Adapter resolution result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdapterResolveResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/tasks:
+    get:
+      summary: List tasks
+      responses:
+        "200":
+          description: Task list and stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TaskListResponse"
+    post:
+      summary: Create a crawl task or queue adapter/verification preparation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CreateTaskResponse"
+        "202":
+          description: Selector discovery or verification handoff queued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CreateTaskResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{id}:
+    get:
+      summary: Read task detail, checkpoint, result, and preview metadata
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TaskDetailResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete a terminal or waiting-verification task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Message"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{id}/resume:
+    post:
+      summary: Resume a paused, interrupted, failed, or waiting-verification task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Message"
+        "409":
+          description: Human verification handoff is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{id}/preview-file:
+    get:
+      summary: Read a downloaded image preview file
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Image file stream
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+  /api/selector-discovery/{id}:
+    get:
+      summary: Read selector discovery job
+      parameters:
+        - $ref: "#/components/parameters/DiscoveryId"
+      responses:
+        "200":
+          description: Selector discovery job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SelectorDiscoveryJob"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/selector-discovery/{id}/promote:
+    post:
+      summary: Promote a reviewed selector candidate
+      parameters:
+        - $ref: "#/components/parameters/DiscoveryId"
+      responses:
+        "200":
+          description: Promoted selector discovery job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SelectorDiscoveryJob"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/challenge-discovery/{id}:
+    get:
+      summary: Read a human verification handoff job
+      description: The namespace is historical; public crawl flow treats this as a verification handoff job.
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "200":
+          description: Handoff job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HandoffJob"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/challenge-discovery/{id}/open-external-browser:
+    post:
+      summary: Open isolated browser for human verification
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenVerificationBrowserRequest"
+      responses:
+        "200":
+          description: Updated handoff job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HandoffJob"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/challenge-discovery/{id}/complete-human-verification:
+    post:
+      summary: Check whether human verification is complete
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "202":
+          description: Updated handoff job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HandoffJob"
+        "400":
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    DiscoveryId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    HandoffId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Message:
+      description: Message response
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/ApiResponse"
+              - type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Message"
+  schemas:
+    ApiResponse:
+      type: object
+      required: [data]
+      properties:
+        data: {}
+        error:
+          type: string
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        data: {}
+    Message:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    CrawlMode:
+      type: string
+      enum: [all, chapters]
+    Capabilities:
+      type: object
+      properties:
+        verification:
+          type: boolean
+        metadata:
+          type: boolean
+        chapterImages:
+          type: boolean
+    Adapter:
+      type: object
+      required: [id, name, domains, parseMode, capabilities]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        domains:
+          type: array
+          items:
+            type: string
+        parseMode:
+          type: string
+          enum: [static, dynamic, interactive]
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+    AdapterResolveRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        mode:
+          $ref: "#/components/schemas/CrawlMode"
+    AdapterResolveResponse:
+      type: object
+      required: [url, hostname, mode, requiredCapabilities, status, discoveryTarget]
+      properties:
+        url:
+          type: string
+          format: uri
+        hostname:
+          type: string
+        mode:
+          $ref: "#/components/schemas/CrawlMode"
+        requiredCapabilities:
+          type: object
+        status:
+          type: string
+          enum: [matched, capability_mismatch, not_found]
+        adapter:
+          $ref: "#/components/schemas/Adapter"
+        matchedAdapter:
+          $ref: "#/components/schemas/Adapter"
+        discoveryTarget:
+          type: string
+          enum: [full, chapter-only]
+    CreateTaskRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        adapterId:
+          type: string
+        mode:
+          $ref: "#/components/schemas/CrawlMode"
+        chapters:
+          type: array
+          items:
+            type: string
+        chapterUrls:
+          type: array
+          items:
+            type: string
+            format: uri
+        priority:
+          type: number
+    CreateTaskResponse:
+      oneOf:
+        - type: object
+          required: [kind, taskId]
+          properties:
+            kind:
+              const: taskCreated
+            taskId:
+              type: string
+        - type: object
+          required: [kind, reason, discoveryId, status, normalizedUrl]
+          properties:
+            kind:
+              const: discoveryQueued
+            reason:
+              enum: [adapter_not_found, adapter_capability_mismatch]
+            discoveryId:
+              type: string
+            status:
+              type: string
+            normalizedUrl:
+              type: string
+            target:
+              enum: [full, chapter-only]
+        - type: object
+          required: [kind, reason, challengeDiscoveryId, status, normalizedUrl]
+          properties:
+            kind:
+              const: challengeDiscoveryQueued
+            reason:
+              const: browser_challenge
+            challengeDiscoveryId:
+              type: string
+            status:
+              type: string
+            normalizedUrl:
+              type: string
+    TaskListResponse:
+      type: object
+      required: [tasks, stats]
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskSummary"
+        stats:
+          type: object
+    TaskSummary:
+      type: object
+      required: [id, url, status, priority, createdAt]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        status:
+          type: string
+        priority:
+          type: number
+        createdAt:
+          type: string
+        error:
+          type: string
+    TaskDetailResponse:
+      type: object
+      required: [task, checkpoint, preview]
+      properties:
+        task:
+          $ref: "#/components/schemas/TaskSummary"
+        progress:
+          type:
+            - object
+            - "null"
+        result:
+          type: object
+        checkpoint:
+          type:
+            - object
+            - "null"
+        preview:
+          type:
+            - object
+            - "null"
+    SelectorDiscoveryJob:
+      type: object
+      required: [id, url, normalizedUrl, hostname, status]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        normalizedUrl:
+          type: string
+        hostname:
+          type: string
+        status:
+          type: string
+        target:
+          enum: [full, chapter-only]
+        error:
+          type: string
+    HandoffJob:
+      type: object
+      required: [id, normalizedUrl, status]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+        normalizedUrl:
+          type: string
+        hostname:
+          type: string
+        status:
+          type: string
+        error:
+          type: string
+    OpenVerificationBrowserRequest:
+      type: object
+      properties:
+        executablePath:
+          type: string
+        profileId:
+          type: string

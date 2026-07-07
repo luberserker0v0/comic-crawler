@@ -1,4 +1,26 @@
 import axios, { AxiosInstance } from 'axios';
+import type {
+  AdapterInfo,
+  AdapterResolveRequest,
+  AdapterResolveResponse,
+  ApiResponse,
+  ChallengeHandoffJobSummary,
+  ConfigResponse,
+  CreateSelectorDiscoveryRequest,
+  CreateSelectorDiscoverySnapshotRequest,
+  CreateTaskRequest,
+  CreateTaskResponse,
+  MessageResponse,
+  OpenVerificationBrowserRequest,
+  SelectorDiscoveryConfigRequest,
+  SelectorDiscoveryJobSummary,
+  SelectorDiscoverySettingsSummary,
+  TaskDetailResponse,
+  TaskListResponse,
+  TaskPriorityOrderResponse,
+} from '@comiccrawler/shared';
+
+export type { ApiResponse } from '@comiccrawler/shared';
 
 const API_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -13,11 +35,6 @@ const API_ENDPOINTS = {
   selectorDiscoveryConfig: '/api/config/selector-discovery',
   status: '/api/status',
 } as const;
-
-export interface ApiResponse<T> {
-  data: T;
-  error?: string;
-}
 
 export function getApiErrorMessage(error: any): string {
   const status = error.response?.status;
@@ -61,52 +78,52 @@ export class ApiClient {
     );
   }
 
-  async getTasks(): Promise<ApiResponse<any>> {
+  async getTasks(): Promise<ApiResponse<TaskListResponse>> {
     const response = await this.client.get(API_ENDPOINTS.tasks);
     return response.data;
   }
 
-  async getTaskPriorityOrder(): Promise<ApiResponse<any>> {
+  async getTaskPriorityOrder(): Promise<ApiResponse<TaskPriorityOrderResponse>> {
     const response = await this.client.get(`${API_ENDPOINTS.tasks}/priority-order`);
     return response.data;
   }
 
-  async updateTaskPriorityOrder(taskIds: string[]): Promise<ApiResponse<any>> {
+  async updateTaskPriorityOrder(taskIds: string[]): Promise<ApiResponse<TaskPriorityOrderResponse>> {
     const response = await this.client.put(`${API_ENDPOINTS.tasks}/priority-order`, { taskIds });
     return response.data;
   }
 
-  async getTask(id: string): Promise<ApiResponse<any>> {
+  async getTask(id: string): Promise<ApiResponse<TaskDetailResponse>> {
     const response = await this.client.get(`${API_ENDPOINTS.tasks}/${id}`);
     return response.data;
   }
 
-  async createTask(url: string, options?: { adapterId?: string; mode?: 'all' | 'chapters'; chapters?: string[]; chapterUrls?: string[]; priority?: number }): Promise<ApiResponse<any>> {
+  async createTask(url: string, options?: Omit<CreateTaskRequest, 'url'>): Promise<ApiResponse<CreateTaskResponse>> {
     const response = await this.client.post(API_ENDPOINTS.tasks, { url, ...options });
     return response.data;
   }
 
-  async pauseTask(id: string): Promise<ApiResponse<any>> {
+  async pauseTask(id: string): Promise<ApiResponse<MessageResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.tasks}/${id}/pause`);
     return response.data;
   }
 
-  async resumeTask(id: string): Promise<ApiResponse<any>> {
+  async resumeTask(id: string): Promise<ApiResponse<MessageResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.tasks}/${id}/resume`);
     return response.data;
   }
 
-  async cancelTask(id: string): Promise<ApiResponse<any>> {
+  async cancelTask(id: string): Promise<ApiResponse<MessageResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.tasks}/${id}/cancel`);
     return response.data;
   }
 
-  async deleteTask(id: string): Promise<ApiResponse<any>> {
+  async deleteTask(id: string): Promise<ApiResponse<MessageResponse>> {
     const response = await this.client.delete(`${API_ENDPOINTS.tasks}/${id}`);
     return response.data;
   }
 
-  async getConfig(): Promise<ApiResponse<any>> {
+  async getConfig(): Promise<ApiResponse<ConfigResponse>> {
     const response = await this.client.get(API_ENDPOINTS.config);
     return response.data;
   }
@@ -146,7 +163,7 @@ export class ApiClient {
     return response.data;
   }
 
-  async updateSelectorDiscoveryConfig(config: { aoBaseUrl: string; providerDocument: unknown; model: string }): Promise<ApiResponse<any>> {
+  async updateSelectorDiscoveryConfig(config: SelectorDiscoveryConfigRequest): Promise<ApiResponse<SelectorDiscoverySettingsSummary>> {
     const response = await this.client.put(API_ENDPOINTS.selectorDiscoveryConfig, config);
     return response.data;
   }
@@ -161,12 +178,12 @@ export class ApiClient {
     return response.data;
   }
 
-  async getAdapters(): Promise<ApiResponse<any>> {
+  async getAdapters(): Promise<ApiResponse<AdapterInfo[]>> {
     const response = await this.client.get(API_ENDPOINTS.adapters);
     return response.data;
   }
 
-  async resolveAdapter(input: { url: string; mode: 'all' | 'chapters' }): Promise<ApiResponse<any>> {
+  async resolveAdapter(input: AdapterResolveRequest): Promise<ApiResponse<AdapterResolveResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.adapters}/resolve`, input);
     return response.data;
   }
@@ -201,66 +218,57 @@ export class ApiClient {
     return response.data;
   }
 
-  async createSelectorDiscovery(input: {
-    url: string;
-    target?: 'full' | 'chapter-only';
-    forceDiscovery?: boolean;
-  }): Promise<ApiResponse<any>> {
+  async createSelectorDiscovery(input: CreateSelectorDiscoveryRequest): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(API_ENDPOINTS.selectorDiscovery, input);
     return response.data;
   }
 
-  async createSelectorDiscoveryFromSnapshot(input: {
-    url: string;
-    html: string;
-    finalUrl?: string;
-    target?: 'chapter-only';
-  }): Promise<ApiResponse<any>> {
+  async createSelectorDiscoveryFromSnapshot(input: CreateSelectorDiscoverySnapshotRequest): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/snapshot`, input);
     return response.data;
   }
 
-  async getSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
+  async getSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.get(`${API_ENDPOINTS.selectorDiscovery}/${id}`);
     return response.data;
   }
 
-  async promoteSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
+  async promoteSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/promote`);
     return response.data;
   }
 
-  async shadowPromoteSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
+  async shadowPromoteSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/shadow-promote`);
     return response.data;
   }
 
-  async rejectSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
+  async rejectSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/reject`);
     return response.data;
   }
 
-  async revalidateSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
+  async revalidateSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/revalidate`);
     return response.data;
   }
 
-  async validateSelectorDiscoveryCandidate(id: string): Promise<ApiResponse<any>> {
+  async validateSelectorDiscoveryCandidate(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/validate`);
     return response.data;
   }
 
-  async getChallengeDiscovery(id: string): Promise<ApiResponse<any>> {
+  async getChallengeDiscovery(id: string): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
     const response = await this.client.get(`${API_ENDPOINTS.challengeDiscovery}/${id}`);
     return response.data;
   }
 
-  async retryChallengeDiscovery(id: string): Promise<ApiResponse<any>> {
+  async retryChallengeDiscovery(id: string): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/retry`);
     return response.data;
   }
 
-  async promoteChallengeDiscovery(id: string): Promise<ApiResponse<any>> {
+  async promoteChallengeDiscovery(id: string): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/promote`);
     return response.data;
   }
@@ -282,8 +290,8 @@ export class ApiClient {
 
   async openChallengeDiscoveryExternalBrowser(
     id: string,
-    options?: { executablePath?: string; profileId?: string }
-  ): Promise<ApiResponse<any>> {
+    options?: OpenVerificationBrowserRequest
+  ): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/open-external-browser`, options ?? {});
     return response.data;
   }
@@ -303,7 +311,7 @@ export class ApiClient {
     return response.data;
   }
 
-  async completeChallengeDiscoveryHumanVerification(id: string): Promise<ApiResponse<any>> {
+  async completeChallengeDiscoveryHumanVerification(id: string): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/complete-human-verification`);
     return response.data;
   }
