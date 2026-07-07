@@ -5,8 +5,6 @@ export interface Adapter {
   id: string;
   name: string;
   domains: string[];
-  enabled: boolean;
-  parseMode: 'static' | 'dynamic' | 'interactive';
   capabilities: {
     verification: boolean;
     metadata: boolean;

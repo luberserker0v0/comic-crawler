@@ -32,7 +32,7 @@ paths:
                       data:
                         type: array
                         items:
-                          $ref: "#/components/schemas/Adapter"
+                          $ref: "#/components/schemas/AdapterListItem"
   /api/adapters/resolve:
     post:
       summary: Resolve which adapter can handle a URL and mode
@@ -355,6 +355,20 @@ components:
         parseMode:
           type: string
           enum: [static, dynamic, interactive]
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+    AdapterListItem:
+      type: object
+      required: [id, name, domains, capabilities]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        domains:
+          type: array
+          items:
+            type: string
         capabilities:
           $ref: "#/components/schemas/Capabilities"
     AdapterResolveRequest:

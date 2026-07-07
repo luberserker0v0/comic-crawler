@@ -30,6 +30,13 @@ export interface AdapterResolveResponse {
   discoveryTarget: SelectorDiscoveryTarget;
 }
 
+export interface AdapterListItem {
+  id: string;
+  name: string;
+  domains: string[];
+  capabilities: AdapterCapabilities;
+}
+
 export interface CreateTaskRequest {
   url: string;
   adapterId?: string;
@@ -129,10 +136,8 @@ export interface CrawlCheckpointSummary {
   currentChapter?: string;
   completedImages: number;
   failedImages: number;
-  totalImages: number;
   resumable: boolean;
   updatedAt?: string;
-  lastError?: string;
 }
 
 export interface TaskPreview {

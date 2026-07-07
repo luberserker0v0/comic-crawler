@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import type {
-  AdapterInfo,
+  AdapterListItem,
   AdapterResolveRequest,
   AdapterResolveResponse,
   ApiResponse,
@@ -178,7 +178,7 @@ export class ApiClient {
     return response.data;
   }
 
-  async getAdapters(): Promise<ApiResponse<AdapterInfo[]>> {
+  async getAdapters(): Promise<ApiResponse<AdapterListItem[]>> {
     const response = await this.client.get(API_ENDPOINTS.adapters);
     return response.data;
   }

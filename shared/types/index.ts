@@ -48,6 +48,7 @@ export type {
   CrawlMode,
   AdapterResolveRequest,
   AdapterResolveResponse,
+  AdapterListItem,
   CreateTaskRequest,
   CreateTaskResponse,
   TaskListResponse,
