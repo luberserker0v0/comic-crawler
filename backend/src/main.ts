@@ -16,6 +16,7 @@ import type { TaskItem } from './task/types';
 import { CrawlerEngine } from './crawler/engine';
 import { ComicError, ErrorType, errorToLogObject } from './error/types';
 import { KuronaviAdapter } from './adapter/sites/kuronavi';
+import { HappyMhAdapter } from './adapter/sites/happymh';
 import { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from './selector-discovery';
 import { ChallengeDiscoveryService } from './challenge';
 import { logger } from './utils/logger';
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
 
     const kuronaviAdapter = new KuronaviAdapter();
     adapterRegistry.register(kuronaviAdapter);
+    adapterRegistry.register(new HappyMhAdapter());
 
     const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
     const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {

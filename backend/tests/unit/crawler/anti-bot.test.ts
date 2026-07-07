@@ -58,6 +58,20 @@ describe('anti-bot challenge detection', () => {
     expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/chapter')).toThrow(ComicError);
   });
 
+  it('detects HappyMH Chinese human verification pages', () => {
+    const html = `<!doctype html>
+      <html>
+        <head><title>嗨皮漫画——人机验证</title></head>
+        <body>
+          <h1>人机验证</h1>
+          <p>请完成验证后继续阅读漫画。</p>
+        </body>
+      </html>`;
+
+    expect(looksLikeAntiBotChallenge(html)).toBe(true);
+    expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).toThrow(ComicError);
+  });
+
   it('waits for JavaScript challenge pages to become normal DOM', async () => {
     const challengeHtml = `<!doctype html><title>Attention Required! | Cloudflare</title><script src="/cdn-cgi/challenge-platform/x.js"></script>`;
     const normalHtml = `<!doctype html><a href="/chapter-1">Chapter 1</a><img src="/page-1.jpg" />`;

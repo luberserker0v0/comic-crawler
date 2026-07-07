@@ -58,6 +58,12 @@ Selector discovery is intentionally modular:
   selector step. In other words, a full adapter is metadata/chapter-list
   discovery plus one or more chapter-only image extraction checks.
 
+HappyMH is a representative full-adapter case that requires human verification
+handoff before the crawler can see real manga DOM. Static probes of its catalog
+pages can return a Chinese verification page such as `嗨皮漫画——人机验证`; that
+HTML must be classified as anti-bot content and must not be sent into selector
+discovery or promoted as an adapter candidate.
+
 ## Crawler rendering
 
 The crawler supports static and Playwright-rendered HTML:
