@@ -46,6 +46,12 @@ export async function findCdpPageHtml(input: {
     if (!page) {
       throw new Error(`No CDP page matched ${target.href}. Open the target page in your browser first.`);
     }
+    if (!samePage(page.url(), target.href)) {
+      await page.goto(target.href, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+    }
     await settleLazyLoadedImages(page);
     return {
       url: page.url(),
@@ -58,6 +64,7 @@ export async function findCdpPageHtml(input: {
 }
 
 async function settleLazyLoadedImages(page: import('playwright').Page): Promise<void> {
+  await expandCatalogControls(page);
   await page.evaluate(async () => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const maxScrollTop = () => Math.max(
@@ -80,6 +87,33 @@ async function settleLazyLoadedImages(page: import('playwright').Page): Promise<
 
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
   await page.waitForTimeout(500).catch(() => undefined);
+}
+
+async function expandCatalogControls(page: import('playwright').Page): Promise<void> {
+  const expandLabels = [
+    '全部章节',
+    '全部章節',
+    '展开全部',
+    '展開全部',
+    '显示全部',
+    '顯示全部',
+    '更多章节',
+    '更多章節',
+    '展开',
+    '展開',
+    '更多',
+  ];
+
+  for (const label of expandLabels) {
+    const locator = page.locator('button, a, [role="button"]')
+      .filter({ hasText: label })
+      .first();
+    if (await locator.count().catch(() => 0) === 0) {
+      continue;
+    }
+    await locator.click({ timeout: 1500 }).catch(() => undefined);
+    await page.waitForTimeout(300).catch(() => undefined);
+  }
 }
 
 function validateLocalCdpUrl(value: string): URL {

@@ -8,6 +8,7 @@ const coreBackendTests = [
   'tests/unit/crawler/engine.test.ts',
   'tests/unit/crawler/image-downloader.test.ts',
   'tests/unit/crawler/anti-bot.test.ts',
+  'tests/unit/challenge/cdp-handoff.test.ts',
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
   'tests/unit/selector-discovery/happymh-self-ao.test.ts',

@@ -25,12 +25,12 @@ export class HappyMhAdapter extends BaseAdapter {
     const html = await this.fetchHtml(url);
     const $ = this.parseHtml(html);
     const title = this.firstText($, [
-      'h1',
-      '.comic-title',
       '.detail-title',
+      '.comic-title',
       '.manga-title',
-      '.title',
       'meta[property="og:title"]',
+      'h1',
+      '.title',
       'title',
     ]);
     const chapters = this.extractChapters($, url);
@@ -91,7 +91,6 @@ export class HappyMhAdapter extends BaseAdapter {
       '.chapter-content img',
       'img[data-original]',
       'img[data-src]',
-      'img[src]',
     ];
     const seen = new Set<string>();
     const images: ImageInfo[] = [];
@@ -105,7 +104,7 @@ export class HappyMhAdapter extends BaseAdapter {
           ?? node.attr('src')
           ?? '';
         const resolved = this.cleanImageUrl(raw, chapterUrl);
-        if (!resolved || seen.has(resolved) || !this.looksLikeImageUrl(resolved)) return;
+        if (!resolved || seen.has(resolved) || !this.looksLikeComicImageUrl(resolved)) return;
         seen.add(resolved);
         images.push({
           url: resolved,
@@ -116,7 +115,7 @@ export class HappyMhAdapter extends BaseAdapter {
     }
 
     for (const url of this.extractImageUrlsFromScripts(html, chapterUrl)) {
-      if (seen.has(url)) continue;
+      if (seen.has(url) || !this.looksLikeComicImageUrl(url)) continue;
       seen.add(url);
       images.push({
         url,
@@ -153,10 +152,12 @@ export class HappyMhAdapter extends BaseAdapter {
       if (!href) return;
       const url = this.resolveUrl(baseUrl, href);
       if (!/\/mangaread\/[^/]+\/[^/?#]+/i.test(new URL(url).pathname) || seen.has(url)) return;
+      const title = node.text().replace(/\s+/g, ' ').trim();
+      if (this.isNonCatalogChapterLink(title)) return;
       seen.add(url);
       chapters.push({
         id: this.deriveChapterId(url, chapters.length),
-        title: node.text().replace(/\s+/g, ' ').trim() || `Chapter ${chapters.length + 1}`,
+        title: title || `Chapter ${chapters.length + 1}`,
         url,
         number: chapters.length + 1,
       });
@@ -211,6 +212,21 @@ export class HappyMhAdapter extends BaseAdapter {
 
   private looksLikeImageUrl(url: string): boolean {
     return /\.(?:jpg|jpeg|png|webp|gif|avif)(?:\?|$)/i.test(url);
+  }
+
+  private looksLikeComicImageUrl(url: string): boolean {
+    if (!this.looksLikeImageUrl(url)) return false;
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === 'ruicdn.happymh.com' || hostname === 'img.happymh.com') return true;
+    if (hostname.endsWith('.happymh.com') && /\/(?:comic|manga|chapter|read|upload|images?)\//i.test(parsed.pathname)) {
+      return !/\/(?:mcover|imgs|next|static|assets?)\//i.test(parsed.pathname);
+    }
+    return false;
+  }
+
+  private isNonCatalogChapterLink(title: string): boolean {
+    return /^(开始阅读|開始閱讀|继续阅读|繼續閱讀|阅读|閱讀)$/i.test(title.trim());
   }
 
   private deriveMangaId(url: string): string {
