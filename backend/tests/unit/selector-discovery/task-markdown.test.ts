@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  createPhase1TaskMarkdown,
+  createPhase2TaskMarkdown,
   createChapterOnlyTaskMarkdown,
   extractFallbackChapterUrlFromHtml,
   extractRepresentativeChapterUrl,
@@ -22,6 +24,44 @@ describe('selector discovery task Markdown', () => {
     expect(markdown).toContain('Metadata selectors are not required.');
     expect(markdown).toContain('Image selectors are required.');
     expect(markdown).not.toContain('Choose one representative chapter URL');
+  });
+
+  it('documents reusable chapter image extraction and non-comic image exclusions in AO prompts', () => {
+    const chapterFetch = {
+      url: 'https://example.com/manga/demo/chapter-1',
+      finalUrl: 'https://example.com/manga/demo/chapter-1',
+      redirectChain: [],
+      contentType: 'text/html',
+      html: '<html><body><main class="reader"><img data-src="/001.jpg"></main></body></html>',
+    };
+    const phase1 = createPhase1TaskMarkdown({
+      url: 'https://example.com/manga/demo',
+      metadataFetch: {
+        url: 'https://example.com/manga/demo',
+        finalUrl: 'https://example.com/manga/demo',
+        redirectChain: [],
+        contentType: 'text/html',
+        html: '<html><body><a href="/manga/demo/chapter-1">Chapter 1</a></body></html>',
+      },
+    });
+    const phase2 = createPhase2TaskMarkdown({
+      url: 'https://example.com/manga/demo',
+      phase1Markdown: 'Representative Chapter URL: /manga/demo/chapter-1',
+      chapterFetch,
+    });
+    const chapterOnly = createChapterOnlyTaskMarkdown({
+      url: 'https://example.com/manga/demo/chapter-1',
+      chapterFetch,
+    });
+
+    expect(phase1).toContain('If the chapter list appears partial');
+    expect(phase1).toContain('start reading');
+    expect(phase2).toContain('reusable chapter-only unit');
+    expect(phase2).toContain('not a metadata/catalog page');
+    expect(phase2).toContain('Exclude covers, logos, browser/app promotion icons');
+    expect(chapterOnly).toContain('reusable image extraction unit');
+    expect(chapterOnly).toContain('Do not use broad selectors');
+    expect(chapterOnly).toContain('comic CDN/lazy-loading attributes');
   });
 
   it('extracts representative chapter URLs and strips ASCII trailing punctuation', () => {

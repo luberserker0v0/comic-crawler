@@ -15,6 +15,10 @@ Important rules:
 - Do not output JSON.
 - Do not generate adapter code.
 - Use divide-and-conquer. Do not try to reason over the whole HTML at once.
+- If the chapter list appears partial, look for signals that the UI may collapse
+  older chapters behind "more", "show all", "expand", "全部章节", or similar controls.
+- Selectors must describe the real catalog content, not navigation shortcuts such
+  as "start reading" or "continue reading".
 
 ## Source URL
 
@@ -38,7 +42,8 @@ Analyze in this order:
 2. Analyze metadata signals: title, author, cover, status, tags, and description.
 3. Analyze chapter-list signals: list container, chapter item, chapter title, and chapter URL.
 4. Choose one representative chapter URL that is likely to contain reader images.
-5. Write the output using the Markdown outline in contracts/phase1-output.md.
+5. Note whether the chapter list may be collapsed or incomplete.
+6. Write the output using the Markdown outline in contracts/phase1-output.md.
 `;
 }
 
@@ -59,6 +64,16 @@ Important rules:
 - Do not output JSON.
 - Do not generate adapter code.
 - Use divide-and-conquer. Analyze image containers and lazy-loading attributes separately.
+- Treat image extraction as the same reusable chapter-only unit used by direct
+  chapter crawling.
+- Confirm the representative chapter DOM belongs to the representative chapter
+  URL, not a metadata/catalog page from the same domain.
+- Do not use broad selectors such as body img or img[src] as the final image
+  selector unless evidence shows the page contains only comic page images.
+- Exclude covers, logos, browser/app promotion icons, UI assets, tracking pixels,
+  and ads from image selector reasoning.
+- Prefer reader containers and comic CDN/lazy-loading attributes over global
+  image nodes.
 
 ## Source URL
 
@@ -83,9 +98,10 @@ Analyze in this order:
 
 1. Identify the reader/image container.
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
-3. Choose image item selector and source attribute.
-4. Combine the Phase 1 selectors with the image selectors.
-5. Write the final output using the Markdown outline in contracts/candidate-output.md.
+3. Separate comic page images from cover/logo/icon/UI/ad images.
+4. Choose image item selector and source attribute.
+5. Combine the Phase 1 selectors with the image selectors.
+6. Write the final output using the Markdown outline in contracts/candidate-output.md.
 `;
 }
 
@@ -108,6 +124,16 @@ This target implements only chapter image extraction:
 - Do not output JSON.
 - Do not generate adapter code.
 - Use divide-and-conquer. Analyze image containers, repeated image nodes, and lazy-loading attributes separately.
+- This is the reusable image extraction unit used by full discovery after
+  metadata/chapter-list discovery chooses a representative chapter URL.
+- Confirm the DOM belongs to the requested reader/chapter URL, not a catalog page
+  from the same domain.
+- Do not use broad selectors such as body img or img[src] as the final image
+  selector unless evidence shows the page contains only comic page images.
+- Exclude covers, logos, browser/app promotion icons, UI assets, tracking pixels,
+  and ads from image selector reasoning.
+- Prefer reader containers and comic CDN/lazy-loading attributes over global
+  image nodes.
 
 ## Source URL
 
@@ -133,9 +159,10 @@ Analyze in this order:
 
 1. Identify the reader/image container.
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
-3. Choose image item selector and source attribute.
-4. Mark metadata and chapter-list selectors as not required for chapter-only discovery.
-5. Write the final output using the Markdown outline in contracts/candidate-output.md.
+3. Separate comic page images from cover/logo/icon/UI/ad images.
+4. Choose image item selector and source attribute.
+5. Mark metadata and chapter-list selectors as not required for chapter-only discovery.
+6. Write the final output using the Markdown outline in contracts/candidate-output.md.
 `;
 }
 
