@@ -88,4 +88,30 @@ describe('ImageDownloader', () => {
     expect(result.resumed).toBe(true);
     expect(result.size).toBe(Buffer.byteLength('partial-remaining'));
   });
+
+  it('uses the verified chapter page URL as Referer for protected image CDNs', async () => {
+    const requestSpy = jest.fn(async (options: { headers: Record<string, string> }) => {
+      expect(options.headers.Referer).toBe('https://m.happymh.com/mangaread/demo/1');
+
+      return {
+        statusCode: 200,
+        body: createBody(['image-bytes']),
+      };
+    });
+    await downloader.dispose();
+    (downloader as any).client = { request: requestSpy, close: jest.fn(async () => {}) };
+
+    await downloader.download(
+      { url: 'https://ruicdn.happymh.com/hash/page.jpg?q=99', index: 1 },
+      {
+        outputDir: TEST_ROOT,
+        verifiedBrowser: {
+          cdpUrl: 'http://127.0.0.1:9222',
+          pageUrl: 'https://m.happymh.com/mangaread/demo/1',
+        },
+      }
+    );
+
+    expect(requestSpy).toHaveBeenCalled();
+  });
 });

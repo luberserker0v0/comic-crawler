@@ -39,8 +39,8 @@ async function main() {
 
   await waitForServiceOrExit('backend', backend, backendStatusUrl, readyTimeoutMs);
 
-  const frontend = spawnLabeled('frontend', ['run', 'dev:frontend']);
-  await waitForServiceOrExit('frontend', frontend, frontendUrl, readyTimeoutMs);
+  const frontend = spawnLabeled('frontend', ['run', 'dev:frontend'], handleFrontendLine);
+  await waitForServiceOrExit('frontend', frontend, () => frontendUrl, readyTimeoutMs);
 
   if (process.env.COMICCRAWLER_DEV_EXIT_AFTER_READY === '1') {
     console.log('[dev] Exit-after-ready requested; stopping dev environment.');
@@ -77,7 +77,7 @@ async function runOnce(label, args) {
   }
 }
 
-function spawnLabeled(label, args) {
+function spawnLabeled(label, args, onLine) {
   console.log(`[dev] Starting ${label}: ${commandLabel} ${args.join(' ')}`);
   const child = spawnCommand(args, {
     cwd: process.cwd(),
@@ -88,8 +88,8 @@ function spawnLabeled(label, args) {
   });
   children.add(child);
   childLabels.set(child, label);
-  prefixStream(label, child.stdout);
-  prefixStream(label, child.stderr);
+  prefixStream(label, child.stdout, onLine);
+  prefixStream(label, child.stderr, onLine);
   child.once('exit', () => {
     children.delete(child);
     childLabels.delete(child);
@@ -126,9 +126,10 @@ function parseCommandSpec(value) {
   throw new Error('COMICCRAWLER_DEV_COMMAND_JSON must be a JSON string array, e.g. ["npm"].');
 }
 
-function prefixStream(label, stream) {
+function prefixStream(label, stream, onLine) {
   const reader = readline.createInterface({ input: stream });
   reader.on('line', (line) => {
+    onLine?.(line);
     console.log(`[${label}] ${line}`);
   });
 }
@@ -165,11 +166,13 @@ async function waitForServiceOrExit(label, child, url, timeoutMs) {
 async function waitUntilReady(label, url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError = '';
+  const getUrl = typeof url === 'function' ? url : () => url;
   while (Date.now() < deadline) {
+    const currentUrl = getUrl();
     try {
-      const statusCode = await httpStatus(url);
+      const statusCode = await httpStatus(currentUrl);
       if (statusCode >= 200 && statusCode < 500) {
-        console.log(`[dev] ${label} ready: ${url} (${statusCode})`);
+        console.log(`[dev] ${label} ready: ${currentUrl} (${statusCode})`);
         return;
       }
       lastError = `HTTP ${statusCode}`;
@@ -179,12 +182,31 @@ async function waitUntilReady(label, url, timeoutMs) {
     await delay(probeIntervalMs);
   }
 
-  console.error(`[dev] ${label} not ready after ${Math.round(timeoutMs / 1000)}s: ${url}`);
+  console.error(`[dev] ${label} not ready after ${Math.round(timeoutMs / 1000)}s: ${getUrl()}`);
   console.error(`[dev] Last ${label} probe error: ${lastError || 'unknown error'}`);
   if (label === 'backend') {
     console.error('[dev] Frontend was not started because the backend is not listening. Inspect the [backend] lines above.');
   }
   throw new Error(`${label} not ready: ${lastError || 'unknown error'}`);
+}
+
+function handleFrontendLine(line) {
+  const cleanLine = stripAnsi(line);
+  const match = /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|::1):(\d+)/i.exec(cleanLine);
+  if (!match?.[1]) {
+    return;
+  }
+  const actualPort = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(actualPort) || actualPort === frontendPort) {
+    return;
+  }
+  frontendPort = actualPort;
+  frontendUrl = `http://${frontendHost}:${frontendPort}`;
+  console.error(`[dev] Frontend dev server selected port ${frontendPort}; updating readiness probe to ${frontendUrl}.`);
+}
+
+function stripAnsi(value) {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
 function httpStatus(url) {

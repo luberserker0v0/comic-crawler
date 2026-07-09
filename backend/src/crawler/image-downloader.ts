@@ -67,7 +67,7 @@ export class ImageDownloader {
         signal: AbortSignal.timeout(15000),
         headers: {
           'User-Agent': headers['User-Agent'] ?? 'ComicCrawler/1.0.0',
-          Referer: headers['Referer'] ?? new URL(image.url).origin,
+          Referer: headers['Referer'] ?? options.verifiedBrowser?.pageUrl ?? new URL(image.url).origin,
           ...(rangeStart > 0 ? { Range: `bytes=${rangeStart}-` } : {}),
           ...headers,
         },
@@ -230,6 +230,19 @@ export class ImageDownloader {
         );
       }
 
+      if (!samePageUrl(page.url(), verifiedBrowser.pageUrl)) {
+        await page.goto(verifiedBrowser.pageUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60000,
+        });
+        await settleLazyImages(page);
+      }
+
+      const browserRequestResult = await this.downloadFromBrowserRequest(page, image, originalOutputPath, verifiedBrowser.pageUrl);
+      if (browserRequestResult) {
+        return browserRequestResult;
+      }
+
       const element = await page.evaluateHandle((targetUrl) => {
         const images = Array.from(document.images);
         return images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl) ?? null;
@@ -297,6 +310,53 @@ export class ImageDownloader {
     }
   }
 
+  private async downloadFromBrowserRequest(
+    page: import('playwright').Page,
+    image: ImageInfo,
+    outputPath: string,
+    referer: string
+  ): Promise<DownloadResult | null> {
+    try {
+      const response = await page.context().request.get(image.url, {
+        headers: {
+          Referer: referer,
+        },
+        timeout: 15000,
+      });
+      if (!response.ok()) {
+        logger.warn(
+          { url: image.url, statusCode: response.status(), pageUrl: referer },
+          'Verified browser request failed; falling back to rendered image capture'
+        );
+        return null;
+      }
+
+      const buffer = await response.body();
+      await fs.writeFile(outputPath, buffer);
+      const completedFile = await this.getExistingFile(outputPath);
+      if (!completedFile) {
+        throw new ComicError(
+          'Failed to persist browser-context image download',
+          ErrorType.STORAGE_ERROR,
+          true,
+          { path: outputPath, url: image.url }
+        );
+      }
+
+      return {
+        path: outputPath,
+        size: completedFile.size,
+        url: image.url,
+      };
+    } catch (error) {
+      logger.warn(
+        { url: image.url, pageUrl: referer, error: errorToLogObject(error) },
+        'Verified browser request threw; falling back to rendered image capture'
+      );
+      return null;
+    }
+  }
+
   private withExtension(path: string, extension: string): string {
     const current = extname(path);
     return current ? `${path.slice(0, -current.length)}${extension}` : `${path}${extension}`;
@@ -305,6 +365,28 @@ export class ImageDownloader {
   async dispose(): Promise<void> {
     await this.client.close();
   }
+}
+
+async function settleLazyImages(page: import('playwright').Page): Promise<void> {
+  await page.evaluate(async () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const maxScrollTop = () => Math.max(
+      document.documentElement.scrollHeight,
+      document.body?.scrollHeight ?? 0
+    );
+    const viewportHeight = window.innerHeight || 800;
+    const step = Math.max(300, Math.floor(viewportHeight * 0.8));
+    let lastHeight = maxScrollTop();
+
+    for (let y = 0, iteration = 0; y <= lastHeight + step && iteration < 30; y += step, iteration++) {
+      window.scrollTo(0, y);
+      await sleep(150);
+      lastHeight = maxScrollTop();
+    }
+  }).catch(() => undefined);
+
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  await page.waitForTimeout(500).catch(() => undefined);
 }
 
 function samePageUrl(left: string, right: string): boolean {
