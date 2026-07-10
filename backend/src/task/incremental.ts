@@ -35,7 +35,7 @@ export class IncrementalUpdater {
     const localRecord = await this.getLocalRecord(url);
     if (!localRecord) return [];
 
-    const metadata = await fetchMetadataForRuntime(adapter, url);
+    const metadata = await composeMetadataForRuntime(adapter, url);
     const updates = this.findNewChapters(localRecord, metadata);
 
     if (updates.length > 0) {
@@ -131,9 +131,8 @@ export class IncrementalUpdater {
   }
 }
 
-async function fetchMetadataForRuntime(adapter: IComicAdapter, url: string): Promise<ComicMetadata> {
-  const runtime = adapter as unknown as { fetchMetadata?: (url: string) => Promise<ComicMetadata>; loadDocument?: (url: string) => Promise<unknown> };
-  if (runtime.fetchMetadata) return runtime.fetchMetadata(url);
+async function composeMetadataForRuntime(adapter: IComicAdapter, url: string): Promise<ComicMetadata> {
+  const runtime = adapter as unknown as { loadDocument?: (url: string) => Promise<unknown> };
   if (!runtime.loadDocument || !adapter.extractTitle || !adapter.extractChapterList) {
     throw new Error(`Adapter "${adapter.id}" does not expose metadata extraction methods.`);
   }

@@ -4,7 +4,7 @@ import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
 import type { CrawlerEngine } from '../crawler/engine';
 import type { AgentAdminService } from '../agent/admin-service';
-import type { BaseAdapter } from '../adapter/base';
+import type { AdapterBase } from '../adapter/base';
 import type { SelectorDiscoveryService } from '../selector-discovery';
 import { SelectorDiscoveryBundleManager } from '../selector-discovery';
 import { evaluateSelectorDiscoveryEvalPolicy, loadSelectorDiscoveryEvalCases, type SelectorDiscoveryEvalCase, type SelectorDiscoveryEvalPolicyResult } from '../selector-discovery/eval-suite';
@@ -90,7 +90,7 @@ export class ComicCrawlerCli {
         try {
           logger.info({ url }, cliMessages.commands.download.startLog);
 
-          const adapter = this.options.adapterRegistry.findByUrl(url) as BaseAdapter | undefined;
+          const adapter = this.options.adapterRegistry.findByUrl(url) as AdapterBase | undefined;
           if (!adapter) {
             this.ui.renderError(cliMessages.commands.download.adapterNotFound(url));
             process.exit(1);
@@ -228,8 +228,8 @@ export class ComicCrawlerCli {
       .action(async (query: string, options: { adapter?: string; limit?: string }) => {
         try {
           const adapters = options.adapter
-            ? [this.options.adapterRegistry.get(options.adapter) as BaseAdapter | undefined].filter(Boolean)
-            : this.options.adapterRegistry.getAll() as BaseAdapter[];
+            ? [this.options.adapterRegistry.get(options.adapter) as AdapterBase | undefined].filter(Boolean)
+            : this.options.adapterRegistry.getAll() as AdapterBase[];
 
           if (adapters.length === 0) {
             this.ui.renderError(cliMessages.commands.search.adapterNotFound);

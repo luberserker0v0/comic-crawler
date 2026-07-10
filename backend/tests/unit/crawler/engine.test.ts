@@ -3,11 +3,11 @@ import type { ComicMetadata, ImageInfo } from '@comiccrawler/shared';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BaseAdapter } from '../../../src/adapter/base';
+import { AdapterBase } from '../../../src/adapter/base';
 import { CrawlerEngine } from '../../../src/crawler/engine';
 import { ComicError, ErrorType } from '../../../src/error/types';
 
-class FixtureAdapter extends BaseAdapter {
+class FixtureAdapter extends AdapterBase {
   readonly id = 'fixture';
   readonly name = 'Fixture';
   readonly domains = ['example.com'];
@@ -28,20 +28,50 @@ class FixtureAdapter extends BaseAdapter {
     return url.includes('example.com');
   }
 
-  async fetchMetadata(url: string): Promise<ComicMetadata> {
-    const html = await this.fetchHtml(url);
-    if (!this.handlers.metadata) {
-      throw new ComicError('metadata handler missing', ErrorType.PARSING_ERROR);
-    }
-    return this.handlers.metadata(html, url);
+  async loadDocument(url: string): Promise<unknown> {
+    return this.fetchHtml(url);
   }
 
-  async fetchChapterImages(chapterUrl: string): Promise<ImageInfo[]> {
-    const html = await this.fetchHtml(chapterUrl);
+  extractTitle(document: unknown, url: string): string {
+    return this.getMetadata(document, url).title;
+  }
+
+  extractAuthor(document: unknown, url: string): string | undefined {
+    return this.getMetadata(document, url).author;
+  }
+
+  extractDescription(document: unknown, url: string): string | undefined {
+    return this.getMetadata(document, url).description;
+  }
+
+  extractCoverUrl(document: unknown, url: string): string | undefined {
+    return this.getMetadata(document, url).coverUrl;
+  }
+
+  extractTags(document: unknown, url: string): string[] {
+    return this.getMetadata(document, url).tags ?? [];
+  }
+
+  extractStatus(document: unknown, url: string): ComicMetadata['status'] {
+    return this.getMetadata(document, url).status;
+  }
+
+  extractChapterList(document: unknown, url: string): ComicMetadata['chapters'] {
+    return this.getMetadata(document, url).chapters;
+  }
+
+  extractChapterImageUrls(document: unknown, chapterUrl: string): string[] {
     if (!this.handlers.images) {
       throw new ComicError('images handler missing', ErrorType.PARSING_ERROR);
     }
-    return this.handlers.images(html, chapterUrl);
+    return this.handlers.images(String(document), chapterUrl).map((image) => image.url);
+  }
+
+  private getMetadata(document: unknown, url: string): ComicMetadata {
+    if (!this.handlers.metadata) {
+      throw new ComicError('metadata handler missing', ErrorType.PARSING_ERROR);
+    }
+    return this.handlers.metadata(String(document), url);
   }
 }
 

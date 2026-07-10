@@ -8,13 +8,14 @@ import { JsonFileStore } from '../../src/storage/json-store';
 import { ConfigManager } from '../../src/config/manager';
 import { TaskManager } from '../../src/task/manager';
 import { CrawlerEngine } from '../../src/crawler/engine';
+import { AdapterBase } from '../../src/adapter/base';
 import { createEmptyCheckpoint } from '../../src/task/checkpoint';
 import { ComicError, ErrorType } from '../../src/error/types';
-import type { IComicAdapter, ComicMetadata, ImageInfo } from '../../../shared/types';
+import type { ComicMetadata } from '../../../shared/types';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'rest-only-flow');
 
-class RestOnlyAdapter implements IComicAdapter {
+class RestOnlyAdapter extends AdapterBase {
   readonly id = 'rest-only';
   readonly name = 'REST Only Adapter';
   readonly domains = ['rest-only.example'];
@@ -25,20 +26,29 @@ class RestOnlyAdapter implements IComicAdapter {
     return url.includes('rest-only.example');
   }
 
-  async fetchMetadata(url: string): Promise<ComicMetadata> {
-    return {
-      id: 'rest-only-comic',
-      title: 'REST Only Comic',
-      chapters: [
-        { id: 'chapter-1', title: 'Chapter 1', url: `${new URL(url).origin}/chapter-1` },
-      ],
-    };
+  async loadDocument(url: string): Promise<unknown> {
+    return url.includes('/chapter-') ? 'chapter' : url;
   }
 
-  async fetchChapterImages(): Promise<ImageInfo[]> {
+  extractTitle(): string {
+    return 'REST Only Comic';
+  }
+
+  extractChapterList(document: unknown): ComicMetadata['chapters'] {
+    const url = String(document);
     return [
-      { url: 'https://rest-only.example/images/001.jpg', index: 0 },
-      { url: 'https://rest-only.example/images/002.jpg', index: 1 },
+      {
+        id: 'chapter-1',
+        title: 'Chapter 1',
+        url: `${new URL(url).origin}/chapter-1`,
+      },
+    ];
+  }
+
+  extractChapterImageUrls(): string[] {
+    return [
+      'https://rest-only.example/images/001.jpg',
+      'https://rest-only.example/images/002.jpg',
     ];
   }
 }

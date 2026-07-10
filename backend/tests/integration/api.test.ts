@@ -50,8 +50,6 @@ describe('Integration: API Endpoints', () => {
       readonly domains = ['mock.example.com'];
       readonly parseMode = 'static' as const;
       matchUrl(url: string): boolean { return url.includes('mock.example.com'); }
-      async fetchMetadata() { return { id: 'mock', title: 'Mock', chapters: [] }; }
-      async fetchChapterImages() { return []; }
     }
 
     adapterRegistry.register(new MockAdapter());
@@ -67,8 +65,6 @@ describe('Integration: API Endpoints', () => {
       readonly domains = ['mock.example.com'];
       readonly parseMode = 'static' as const;
       matchUrl(url: string): boolean { return url.includes('mock.example.com'); }
-      async fetchMetadata() { return { id: 'mock', title: 'Mock', chapters: [] }; }
-      async fetchChapterImages() { return []; }
     }
 
     adapterRegistry.register(new MockAdapter());

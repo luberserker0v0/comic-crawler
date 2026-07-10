@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import * as fs from 'fs';
 import * as path from 'path';
 import { KuronaviAdapter } from '../../../../../src/adapter/sites/kuronavi';
+import { composeChapterImages, composeMetadata } from '../../../../../src/adapter/runtime-composer';
 import { ComicError } from '../../../../../src/error/types';
 
 const FIXTURES_DIR = path.join(__dirname, '../../../../fixtures/kuronavi');
@@ -31,7 +32,7 @@ describe('KuronaviAdapter', () => {
     });
   });
 
-  describe('fetchMetadata', () => {
+  describe('composeMetadata', () => {
     it('should parse manga metadata from HTML through the extraction orchestrator', async () => {
       const html = fs.readFileSync(path.join(FIXTURES_DIR, 'manga-page.html'), 'utf-8');
       const expected = JSON.parse(
@@ -47,7 +48,7 @@ describe('KuronaviAdapter', () => {
 
       const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-      const metadata = await adapter.fetchMetadata('https://kuronavi.one/manga/wanpisu');
+      const metadata = await composeMetadata(adapter, 'https://kuronavi.one/manga/wanpisu');
 
       expect(metadata.id).toBe(expected.id);
       expect(metadata.title).toBe(expected.title);
@@ -62,6 +63,19 @@ describe('KuronaviAdapter', () => {
         url: expected.chapters[0].url,
       });
 
+      fetchHtmlSpy.mockRestore();
+    });
+
+    it('should reuse the metadata extraction result across fine-grained metadata fields', async () => {
+      const html = fs.readFileSync(path.join(FIXTURES_DIR, 'manga-page.html'), 'utf-8');
+      const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
+      const extractSpy = jest.spyOn((adapter as any).metadata, 'extractMetadataDocument');
+
+      await composeMetadata(adapter, 'https://kuronavi.one/manga/wanpisu');
+
+      expect(extractSpy).toHaveBeenCalledTimes(1);
+
+      extractSpy.mockRestore();
       fetchHtmlSpy.mockRestore();
     });
 
@@ -83,7 +97,7 @@ describe('KuronaviAdapter', () => {
 
       const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-      const metadata = await adapter.fetchMetadata('https://kuronavi.one/manga/example');
+      const metadata = await composeMetadata(adapter, 'https://kuronavi.one/manga/example');
 
       expect(metadata.chapters.map((chapter) => chapter.url)).toEqual([
         'https://kuronavi.one/manga/example/chapter-2',
@@ -95,13 +109,13 @@ describe('KuronaviAdapter', () => {
     });
   });
 
-  describe('fetchChapterImages', () => {
+  describe('composeChapterImages', () => {
     it('should extract image URLs from chapter page through the extraction orchestrator', async () => {
       const html = fs.readFileSync(path.join(FIXTURES_DIR, 'chapter-page.html'), 'utf-8');
 
       const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-      const images = await adapter.fetchChapterImages('https://kuronavi.one/manga/wanpisu/chapter-1182');
+      const images = await composeChapterImages(adapter, 'https://kuronavi.one/manga/wanpisu/chapter-1182');
 
       expect(images).toHaveLength(5);
       expect(images[0].url).toBe('https://iphotomg.com/wanpisu/1182/1.jpg');
@@ -119,7 +133,7 @@ describe('KuronaviAdapter', () => {
       const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
       await expect(
-        adapter.fetchChapterImages('https://kuronavi.one/manga/test/chapter-1')
+        composeChapterImages(adapter, 'https://kuronavi.one/manga/test/chapter-1')
       ).rejects.toBeInstanceOf(ComicError);
 
       fetchHtmlSpy.mockRestore();

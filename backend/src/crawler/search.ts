@@ -1,5 +1,5 @@
 import type { SearchResult, SearchOptions } from '@comiccrawler/shared';
-import type { BaseAdapter } from '../adapter/base';
+import type { AdapterBase } from '../adapter/base';
 import type { HtmlParser } from './html-parser';
 import { ComicError, ErrorType } from '../error/types';
 
@@ -17,7 +17,7 @@ export class SearchEngine {
     this.parser = parser;
   }
 
-  async search(adapter: BaseAdapter, query: string, options?: SearchOptions & SearchEngineOptions): Promise<SearchResult[]> {
+  async search(adapter: AdapterBase, query: string, options?: SearchOptions & SearchEngineOptions): Promise<SearchResult[]> {
     if (adapter.search) {
       return adapter.search(query, options);
     }
@@ -58,7 +58,7 @@ export class SearchEngine {
     return results;
   }
 
-  async searchMultiple(adapters: BaseAdapter[], query: string, options?: SearchOptions & SearchEngineOptions): Promise<Record<string, SearchResult[]>> {
+  async searchMultiple(adapters: AdapterBase[], query: string, options?: SearchOptions & SearchEngineOptions): Promise<Record<string, SearchResult[]>> {
     const results: Record<string, SearchResult[]> = {};
 
     const searchPromises = adapters.map(async (adapter) => {

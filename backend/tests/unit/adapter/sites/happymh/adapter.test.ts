@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HappyMhAdapter } from '../../../../../src/adapter/sites/happymh';
+import { composeChapterImages, composeMetadata } from '../../../../../src/adapter/runtime-composer';
 import { ComicError } from '../../../../../src/error/types';
 
 const FIXTURES_DIR = join(__dirname, '../../../../fixtures/happymh');
@@ -44,7 +45,7 @@ describe('HappyMhAdapter', () => {
     };
     jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-    const metadata = await adapter.fetchMetadata('https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
+    const metadata = await composeMetadata(adapter, 'https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
 
     expect(metadata.id).toBe(expected.id);
     expect(metadata.title).toBe(expected.title);
@@ -73,7 +74,7 @@ describe('HappyMhAdapter', () => {
     `;
     jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-    const metadata = await adapter.fetchMetadata('https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
+    const metadata = await composeMetadata(adapter, 'https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
 
     expect(metadata.title).toBe('我在星际国家当恶德领主');
     expect(metadata.chapters).toHaveLength(1);
@@ -84,7 +85,7 @@ describe('HappyMhAdapter', () => {
     const expected = JSON.parse(readFileSync(join(FIXTURES_DIR, 'expected-images.json'), 'utf-8')) as string[];
     jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
 
-    const images = await adapter.fetchChapterImages('https://m.happymh.com/mangaread/wozaixingjiguojiadangedelingzhu/3279871');
+    const images = await composeChapterImages(adapter, 'https://m.happymh.com/mangaread/wozaixingjiguojiadangedelingzhu/3279871');
 
     expect(images.map((image) => image.url)).toEqual(expected);
     expect(images[0]).toMatchObject({ index: 0, filename: '001.webp' });
@@ -93,6 +94,6 @@ describe('HappyMhAdapter', () => {
   it('raises parsing error when no chapter images exist', async () => {
     jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue('<html><body><article id="cp_img"></article></body></html>');
 
-    await expect(adapter.fetchChapterImages('https://m.happymh.com/mangaread/demo/1')).rejects.toBeInstanceOf(ComicError);
+    await expect(composeChapterImages(adapter, 'https://m.happymh.com/mangaread/demo/1')).rejects.toBeInstanceOf(ComicError);
   });
 });

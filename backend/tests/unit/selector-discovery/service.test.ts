@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
-import type { IComicAdapter, ComicMetadata, ImageInfo } from '@comiccrawler/shared';
+import type { ComicMetadata } from '@comiccrawler/shared';
 import { AdapterRegistry } from '../../../src/adapter/registry';
+import { AdapterBase } from '../../../src/adapter/base';
 import { SelectorDiscoveryService } from '../../../src/selector-discovery/service';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../../src/adapter/dynamic-site-adapter';
 import type { IStorage } from '../../../src/storage/types';
@@ -30,7 +31,7 @@ class MemoryStorage implements IStorage {
   }
 }
 
-class OracleAdapter implements IComicAdapter {
+class OracleAdapter extends AdapterBase {
   readonly id = 'oracle';
   readonly name = 'Oracle';
   readonly domains = ['example.com'];
@@ -40,18 +41,22 @@ class OracleAdapter implements IComicAdapter {
     return new URL(url).hostname === 'example.com';
   }
 
-  async fetchMetadata(_url: string): Promise<ComicMetadata> {
-    return {
-      id: 'example',
-      title: 'Example Comic',
-      chapters: [
-        { id: 'c1', title: 'Chapter 1', url: 'https://example.com/manga/demo/chapter-1' },
-      ],
-    };
+  async loadDocument(url: string): Promise<unknown> {
+    return url.includes('/chapter-') ? 'chapter' : 'metadata';
   }
 
-  async fetchChapterImages(_chapterUrl: string): Promise<ImageInfo[]> {
-    return [{ url: 'https://example.com/images/1.webp', index: 0 }];
+  extractTitle(): string {
+    return 'Example Comic';
+  }
+
+  extractChapterList(): ComicMetadata['chapters'] {
+    return [
+      { id: 'c1', title: 'Chapter 1', url: 'https://example.com/manga/demo/chapter-1' },
+    ];
+  }
+
+  extractChapterImageUrls(): string[] {
+    return ['https://example.com/images/1.webp'];
   }
 }
 

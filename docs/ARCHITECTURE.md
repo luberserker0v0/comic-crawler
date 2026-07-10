@@ -41,15 +41,16 @@ flowchart TD
 
 Adapters identify supported domains and declare capabilities:
 
-- `metadata` - fetch manga metadata and chapter list.
-- `chapterImages` - fetch images from chapter URLs.
+- `metadata` - extract manga metadata and chapter list from a parsed catalog document.
+- `chapterImages` - extract image URLs from a parsed chapter document.
 - `verification` - participate in verification handoff.
 
-Runtime adapter code is split into an adapter shell plus capability handlers.
-The shell owns identity, domains, fetch/render helpers, and runtime composition;
-handlers own the small extraction functions for `common`, `metadata`,
-`chapterImages`, and `verification`. Agent-generated TypeScript should implement
-capability handlers, not the runtime facade methods.
+Runtime adapter code is split into an `AdapterBase` shell plus capability
+handlers. The shell owns identity, domains, and fetch/render helpers; handlers
+own the small extraction functions for `common`, `metadata`, `chapterImages`,
+and `verification`. ComicCrawler runtime composes those functions into metadata
+and image results internally. Agent-generated TypeScript should implement
+capability handlers only, not runtime composer facade functions.
 
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. Built-in adapters have priority over

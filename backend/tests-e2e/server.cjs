@@ -52,8 +52,6 @@ async function start() {
     extractStatus: async () => 'unknown',
     extractChapterList: async () => [],
     extractChapterImageUrls: async () => [],
-    fetchMetadata: async () => ({ id: 'fixture', title: 'Fixture', chapters: [] }),
-    fetchChapterImages: async () => [],
   });
 
   const reliabilityState = {
@@ -65,16 +63,20 @@ async function start() {
     name: 'Reliability Fixture',
     domains: ['reliability-fixture.invalid'],
     parseMode: 'static',
+    capabilities: { verification: true, metadata: true, chapterImages: true },
     matchUrl: (url) => /\/api\/fixtures\/reliability-/.test(url),
-    fetchMetadata: async (url) => ({
-      id: 'reliability',
-      title: 'Reliability Fixture',
-      chapters: [
+    loadDocument: async (url) => url,
+    extractTitle: async () => 'Reliability Fixture',
+    extractAuthor: async () => undefined,
+    extractDescription: async () => undefined,
+    extractCoverUrl: async () => undefined,
+    extractTags: async () => [],
+    extractStatus: async () => 'unknown',
+    extractChapterList: async (_document, url) => [
         { id: 'chapter-1', title: 'Chapter 1', url: `${new URL(url).origin}/api/fixtures/reliability-ok-chapter-1` },
         { id: 'chapter-2', title: 'Chapter 2', url: `${new URL(url).origin}/api/fixtures/reliability-ok-chapter-2` },
-      ],
-    }),
-    fetchChapterImages: async (chapterUrl) => {
+    ],
+    extractChapterImageUrls: async (_document, chapterUrl) => {
       const parsed = new URL(chapterUrl);
       if (chapterUrl.includes('reliability-challenge') && !reliabilityState.verifiedHosts.has(parsed.hostname)) {
         throw new ComicError(
@@ -90,8 +92,8 @@ async function start() {
       }
       const chapterId = parsed.pathname.split('/').filter(Boolean).at(-1) || 'chapter';
       return [
-        { url: `${parsed.origin}/api/fixtures/reliability-image/${chapterId}-1.jpg`, index: 1 },
-        { url: `${parsed.origin}/api/fixtures/reliability-image/${chapterId}-2.jpg`, index: 2 },
+        `${parsed.origin}/api/fixtures/reliability-image/${chapterId}-1.jpg`,
+        `${parsed.origin}/api/fixtures/reliability-image/${chapterId}-2.jpg`,
       ];
     },
   });

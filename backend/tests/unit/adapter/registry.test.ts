@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { AdapterRegistry } from '../../../src/adapter/registry';
 import { EventBus } from '../../../src/events/bus';
-import type { IComicAdapter, ComicMetadata, ImageInfo } from '../../../../shared/types';
+import type { IComicAdapter } from '../../../../shared/types';
 
 class MockAdapter implements IComicAdapter {
   readonly id: string;
@@ -17,14 +17,6 @@ class MockAdapter implements IComicAdapter {
 
   matchUrl(url: string): boolean {
     return this.domains.some((d) => url.includes(d));
-  }
-
-  async fetchMetadata(_url: string): Promise<ComicMetadata> {
-    return { id: this.id, title: 'Test', chapters: [] };
-  }
-
-  async fetchChapterImages(_url: string): Promise<ImageInfo[]> {
-    return [];
   }
 }
 

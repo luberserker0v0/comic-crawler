@@ -4,12 +4,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   ChapterImagesCapabilityContract,
   ChapterInfo,
-  ComicMetadata,
   ComicStatus,
   CommonCapabilityContract,
   Credentials,
   IComicAdapter,
-  ImageInfo,
   MetadataCapabilityContract,
   SearchOptions,
   SearchResult,
@@ -57,67 +55,6 @@ export abstract class AdapterBase implements IComicAdapter {
   matchUrl(url: string): boolean {
     if (this.common) return this.common.matchUrl(url);
     return this.domains.includes(new URL(url).hostname);
-  }
-
-  async fetchMetadata(url: string): Promise<ComicMetadata> {
-    if (!this.capabilities.metadata) {
-      throw new ComicError(
-        `Adapter "${this.id}" does not support metadata capability.`,
-        ErrorType.ADAPTER_ERROR,
-        false,
-        { adapterId: this.id, capability: 'metadata' }
-      );
-    }
-    const html = await this.fetchHtml(url);
-    const document = this.parseHtml(html);
-    const title = await this.extractTitle(document, url);
-    const chapters = await this.extractChapterList(document, url);
-    if (!title || chapters.length === 0) {
-      throw new ComicError(
-        `Adapter "${this.id}" did not extract required metadata fields.`,
-        ErrorType.PARSING_ERROR,
-        false,
-        { adapterId: this.id, url, missing: { title: !title, chapters: chapters.length === 0 } }
-      );
-    }
-
-    return {
-      id: this.deriveMetadataId(url),
-      title,
-      author: await this.extractAuthor(document, url),
-      coverUrl: await this.extractCoverUrl(document, url),
-      status: await this.extractStatus(document, url) ?? 'unknown',
-      tags: await this.extractTags(document, url),
-      description: await this.extractDescription(document, url),
-      chapters,
-    };
-  }
-
-  async fetchChapterImages(chapterUrl: string): Promise<ImageInfo[]> {
-    if (!this.capabilities.chapterImages) {
-      throw new ComicError(
-        `Adapter "${this.id}" does not support chapterImages capability.`,
-        ErrorType.ADAPTER_ERROR,
-        false,
-        { adapterId: this.id, capability: 'chapterImages' }
-      );
-    }
-    const html = await this.fetchHtml(chapterUrl);
-    const document = this.parseHtml(html);
-    const urls = await this.extractChapterImageUrls(document, chapterUrl);
-    if (urls.length === 0) {
-      throw new ComicError(
-        `Adapter "${this.id}" did not extract any chapter image URLs.`,
-        ErrorType.PARSING_ERROR,
-        false,
-        { adapterId: this.id, url: chapterUrl }
-      );
-    }
-    return urls.map((url, index) => ({
-      url,
-      index,
-      filename: `${String(index + 1).padStart(3, '0')}.${this.composedImageExtensionFor(url)}`,
-    }));
   }
 
   extractTitle(document: unknown, sourceUrl: string): Promise<string> | string {
@@ -279,15 +216,6 @@ export abstract class AdapterBase implements IComicAdapter {
 
     return fetchFn();
   }
-
-  private deriveMetadataId(url: string): string {
-    const segments = new URL(url).pathname.split('/').filter(Boolean);
-    return segments.at(-1) ?? this.id;
-  }
-
-  private composedImageExtensionFor(url: string): string {
-    return /\.(jpg|jpeg|png|webp|gif|avif)(?:\?|$)/i.exec(url)?.[1]?.toLowerCase() ?? 'jpg';
-  }
 }
 
 export abstract class CommonCapability implements CommonCapabilityContract {
@@ -333,8 +261,6 @@ export class VerificationCapability implements VerificationCapabilityContract {
     };
   }
 }
-
-export abstract class BaseAdapter extends AdapterBase {}
 
 function defaultVerificationDetection(input: string): boolean {
   return /anti-bot|human verification|challenge|cloudflare|sorry, you have been blocked|unable to access|人机验证|人機驗證|HTTP\s+(?:401|403|429|503)\b/i.test(input);

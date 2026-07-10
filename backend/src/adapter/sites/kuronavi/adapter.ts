@@ -24,33 +24,56 @@ class KuronaviCommonCapability extends CommonCapability {
 
 class KuronaviMetadataCapability extends MetadataCapability {
   private readonly orchestrator = createDefaultExtractionOrchestrator();
+  private readonly metadataCache = new WeakMap<object, Map<string, Promise<ComicMetadata>>>();
 
   async extractTitle(document: unknown, sourceUrl: string): Promise<string> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).title;
+    return (await this.getMetadataDocument(document, sourceUrl)).title;
   }
 
   async extractAuthor(document: unknown, sourceUrl: string): Promise<string | undefined> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).author;
+    return (await this.getMetadataDocument(document, sourceUrl)).author;
   }
 
   async extractDescription(document: unknown, sourceUrl: string): Promise<string | undefined> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).description;
+    return (await this.getMetadataDocument(document, sourceUrl)).description;
   }
 
   async extractCoverUrl(document: unknown, sourceUrl: string): Promise<string | undefined> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).coverUrl;
+    return (await this.getMetadataDocument(document, sourceUrl)).coverUrl;
   }
 
   async extractTags(document: unknown, sourceUrl: string): Promise<string[]> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).tags ?? [];
+    return (await this.getMetadataDocument(document, sourceUrl)).tags ?? [];
   }
 
   async extractStatus(document: unknown, sourceUrl: string): Promise<ComicStatus | undefined> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).status;
+    return (await this.getMetadataDocument(document, sourceUrl)).status;
   }
 
   async extractChapterList(document: unknown, sourceUrl: string): Promise<ChapterInfo[]> {
-    return (await this.extractMetadataDocument(document, sourceUrl)).chapters;
+    return (await this.getMetadataDocument(document, sourceUrl)).chapters;
+  }
+
+  private async getMetadataDocument(document: unknown, sourceUrl: string): Promise<ComicMetadata> {
+    if (!isObjectLike(document)) {
+      return this.extractMetadataDocument(document, sourceUrl);
+    }
+
+    let bySourceUrl = this.metadataCache.get(document);
+    if (!bySourceUrl) {
+      bySourceUrl = new Map<string, Promise<ComicMetadata>>();
+      this.metadataCache.set(document, bySourceUrl);
+    }
+
+    const cached = bySourceUrl.get(sourceUrl);
+    if (cached) return cached;
+
+    const pending = this.extractMetadataDocument(document, sourceUrl).catch((error) => {
+      bySourceUrl.delete(sourceUrl);
+      throw error;
+    });
+    bySourceUrl.set(sourceUrl, pending);
+    return pending;
   }
 
   private async extractMetadataDocument(document: unknown, sourceUrl: string): Promise<ComicMetadata> {
@@ -77,6 +100,10 @@ class KuronaviMetadataCapability extends MetadataCapability {
     }
     return result.metadata;
   }
+}
+
+function isObjectLike(value: unknown): value is object {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function';
 }
 
 class KuronaviChapterImagesCapability extends ChapterImagesCapability {

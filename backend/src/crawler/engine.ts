@@ -1,7 +1,8 @@
 import type { BrowserConfig, ChapterListSummary, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult, TaskPreviewFile } from '@comiccrawler/shared';
 import { promises as fs } from 'node:fs';
 import { extname, join, relative } from 'node:path';
-import type { BaseAdapter } from '../adapter/base';
+import type { AdapterBase } from '../adapter/base';
+import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import type { EventBus } from '../events/bus';
 import { HtmlParser } from './html-parser';
 import type { BrowserPool } from './browser-pool';
@@ -78,7 +79,7 @@ export class CrawlerEngine {
     }
   }
 
-  async crawl(adapter: BaseAdapter, url: string, options?: CrawlOptions): Promise<CrawlResult> {
+  async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
     const taskId = options?.taskId ?? url;
     const checkpoint = options?.checkpoint ?? createEmptyCheckpoint(taskId);
     const saveCheckpoint = async () => {
@@ -99,7 +100,7 @@ export class CrawlerEngine {
     );
     const metadata = options?.chapterUrls && options.chapterUrls.length > 0
       ? checkpoint.metadata ?? this.createDirectChapterMetadata(url, options.chapterUrls)
-      : checkpoint.metadata ?? await this.fetchMetadata(adapter, url);
+      : checkpoint.metadata ?? await this.composeMetadata(adapter, url);
     const outputRoot = this.getOutputRoot(url, metadata.title);
     const chapterListSummary = this.createChapterListSummary(metadata);
     checkpoint.metadata = metadata;
@@ -169,7 +170,7 @@ export class CrawlerEngine {
       try {
         const images = chapterCheckpoint.images?.length
           ? chapterCheckpoint.images
-          : await this.fetchChapterImages(adapter, chapter.url);
+          : await this.composeChapterImages(adapter, chapter.url);
         if (images.length === 0) {
           throw new ComicError(
             `No images were extracted for chapter "${chapter.title}".`,
@@ -583,7 +584,7 @@ export class CrawlerEngine {
     return value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-').replace(/\s+/g, ' ').replace(/^-+|-+$/g, '') || 'unknown';
   }
 
-  async search(adapter: BaseAdapter, query: string, options?: SearchOptions): Promise<SearchResult[]> {
+  async search(adapter: AdapterBase, query: string, options?: SearchOptions): Promise<SearchResult[]> {
     return this.searchEngine.search(adapter, query, options);
   }
 
@@ -597,7 +598,7 @@ export class CrawlerEngine {
     }
   }
 
-  private attachRenderer(adapter: BaseAdapter): void {
+  private attachRenderer(adapter: AdapterBase): void {
     if (typeof (adapter as any).setHtmlRenderer === 'function') {
       adapter.setHtmlRenderer(this.htmlRenderer);
     }
@@ -617,26 +618,26 @@ export class CrawlerEngine {
     });
   }
 
-  private async fetchMetadata(adapter: BaseAdapter, url: string): Promise<ComicMetadata> {
-    return this.withCrawlerFetchMode(adapter, () => adapter.fetchMetadata(url), {
+  private async composeMetadata(adapter: AdapterBase, url: string): Promise<ComicMetadata> {
+    return this.withCrawlerFetchMode(adapter, () => composeMetadata(adapter, url), {
       adapter,
       url,
-      operation: 'fetchMetadata',
+      operation: 'composeMetadata',
     });
   }
 
-  private async fetchChapterImages(adapter: BaseAdapter, chapterUrl: string): Promise<ImageInfo[]> {
-    return this.withCrawlerFetchMode(adapter, () => adapter.fetchChapterImages(chapterUrl), {
+  private async composeChapterImages(adapter: AdapterBase, chapterUrl: string): Promise<ImageInfo[]> {
+    return this.withCrawlerFetchMode(adapter, () => composeChapterImages(adapter, chapterUrl), {
       adapter,
       url: chapterUrl,
-      operation: 'fetchChapterImages',
+      operation: 'composeChapterImages',
     });
   }
 
   private async withCrawlerFetchMode<T>(
-    adapter: BaseAdapter,
+    adapter: AdapterBase,
     operation: () => Promise<T>,
-    context: { adapter: BaseAdapter; url: string; operation: string }
+    context: { adapter: AdapterBase; url: string; operation: string }
   ): Promise<T> {
     const preferredMode = this.getPreferredMode(adapter);
     if (preferredMode === 'static') {
@@ -683,7 +684,7 @@ export class CrawlerEngine {
     }
   }
 
-  private getPreferredMode(adapter: BaseAdapter): 'static' | 'headless' | 'auto' {
+  private getPreferredMode(adapter: AdapterBase): 'static' | 'headless' | 'auto' {
     if (this.browserConfig.mode !== 'auto') {
       return this.browserConfig.mode;
     }
@@ -694,7 +695,7 @@ export class CrawlerEngine {
   }
 
   private async runAdapterOperation<T>(
-    adapter: BaseAdapter,
+    adapter: AdapterBase,
     mode: 'static' | 'headless',
     operation: () => Promise<T>
   ): Promise<T> {

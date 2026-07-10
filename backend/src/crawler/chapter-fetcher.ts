@@ -1,6 +1,6 @@
 import type { ImageInfo } from '@comiccrawler/shared';
 import type { HtmlParser } from './html-parser';
-import type { BaseAdapter } from '../adapter/base';
+import type { AdapterBase } from '../adapter/base';
 import { ComicError, ErrorType } from '../error/types';
 
 export interface ChapterFetcherOptions {
@@ -16,7 +16,7 @@ export class ChapterFetcher {
     this.parser = parser;
   }
 
-  async fetchChapters(adapter: BaseAdapter, url: string, options?: ChapterFetcherOptions): Promise<Array<{ id: string; title: string; url: string }>> {
+  async fetchChapters(adapter: AdapterBase, url: string, options?: ChapterFetcherOptions): Promise<Array<{ id: string; title: string; url: string }>> {
     const html = await adapter.fetchHtml(url);
     const $ = this.parser.parse(html);
 
@@ -44,7 +44,7 @@ export class ChapterFetcher {
     return chapters;
   }
 
-  async fetchChapterImages(adapter: BaseAdapter, chapterUrl: string, options?: { selector?: string; srcAttr?: string }): Promise<ImageInfo[]> {
+  async extractImagesFromChapterPage(adapter: AdapterBase, chapterUrl: string, options?: { selector?: string; srcAttr?: string }): Promise<ImageInfo[]> {
     const html = await adapter.fetchHtml(chapterUrl);
     const $ = this.parser.parse(html);
 

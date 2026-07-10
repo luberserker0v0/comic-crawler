@@ -44,8 +44,6 @@ describe('Agent routes', () => {
       readonly domains = ['kuronavi.one'];
       readonly parseMode = 'static' as const;
       matchUrl(url: string): boolean { return url.includes('kuronavi.one'); }
-      async fetchMetadata() { return { id: 'mock', title: 'Mock', chapters: [] }; }
-      async fetchChapterImages() { return []; }
     }
 
     adapterRegistry.register(new MockAdapter());

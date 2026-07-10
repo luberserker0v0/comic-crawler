@@ -1,5 +1,7 @@
 import type { AdapterRegistry } from '../adapter/registry';
 import { getAdapterCapabilities } from '../adapter/registry';
+import { AdapterBase } from '../adapter/base';
+import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../adapter/dynamic-site-adapter';
 import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
@@ -648,18 +650,13 @@ ${finalUrl}
     let oracleFirstImageUrl: string | undefined;
 
     try {
-      const oracleRuntime = oracle as unknown as {
-        fetchMetadata?: (url: string) => Promise<{ title: string; chapters: Array<{ url: string }> }>;
-        fetchChapterImages?: (url: string) => Promise<Array<{ url: string }>>;
-      };
-      if (!oracleRuntime.fetchMetadata) return undefined;
-      const metadata = await oracleRuntime.fetchMetadata(job.normalizedUrl);
+      if (!(oracle instanceof AdapterBase)) return undefined;
+      const metadata = await composeMetadata(oracle, job.normalizedUrl);
       oracleTitle = metadata.title;
       oracleChapterCount = metadata.chapters.length;
       oracleFirstChapterUrl = metadata.chapters[0]?.url;
       if (oracleFirstChapterUrl) {
-        if (!oracleRuntime.fetchChapterImages) return undefined;
-        const images = await oracleRuntime.fetchChapterImages(oracleFirstChapterUrl);
+        const images = await composeChapterImages(oracle, oracleFirstChapterUrl);
         oracleImageCount = images.length;
         oracleFirstImageUrl = images[0]?.url;
       } else {

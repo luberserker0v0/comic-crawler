@@ -11,11 +11,12 @@ import { ImageDownloader } from '../../src/crawler/image-downloader';
 import { DedupChecker } from '../../src/image/dedup';
 import { TaskQueue } from '../../src/task/queue';
 import { ProgressTracker } from '../../src/task/progress';
-import type { IComicAdapter, ComicMetadata, ImageInfo } from '../../../shared/types';
+import { AdapterBase } from '../../src/adapter/base';
+import type { ComicMetadata } from '../../../shared/types';
 
 const TEST_DIR = join(__dirname, '__tmp__');
 
-class MockAdapter implements IComicAdapter {
+class MockAdapter extends AdapterBase {
   readonly id = 'mock';
   readonly name = 'Mock Adapter';
   readonly domains = ['mock.example.com'];
@@ -25,22 +26,29 @@ class MockAdapter implements IComicAdapter {
     return url.includes('mock.example.com');
   }
 
-  async fetchMetadata(_url: string): Promise<ComicMetadata> {
-    return {
-      id: 'mock-comic',
-      title: 'Mock Comic',
-      author: 'Mock Author',
-      chapters: [
-        { id: 'ch-1', title: 'Chapter 1', url: 'https://mock.example.com/chapter/1' },
-        { id: 'ch-2', title: 'Chapter 2', url: 'https://mock.example.com/chapter/2' },
-      ],
-    };
+  async loadDocument(url: string): Promise<unknown> {
+    return url;
   }
 
-  async fetchChapterImages(_url: string): Promise<ImageInfo[]> {
+  extractTitle(): string {
+    return 'Mock Comic';
+  }
+
+  extractAuthor(): string {
+    return 'Mock Author';
+  }
+
+  extractChapterList(): ComicMetadata['chapters'] {
     return [
-      { url: 'https://mock.example.com/img/1.jpg', index: 0 },
-      { url: 'https://mock.example.com/img/2.jpg', index: 1 },
+      { id: 'ch-1', title: 'Chapter 1', url: 'https://mock.example.com/chapter/1' },
+      { id: 'ch-2', title: 'Chapter 2', url: 'https://mock.example.com/chapter/2' },
+    ];
+  }
+
+  extractChapterImageUrls(): string[] {
+    return [
+      'https://mock.example.com/img/1.jpg',
+      'https://mock.example.com/img/2.jpg',
     ];
   }
 }

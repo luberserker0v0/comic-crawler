@@ -1,9 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
+import { composeChapterImages, composeMetadata } from '../../../src/adapter/runtime-composer';
 import { ComicError, ErrorType } from '../../../src/error/types';
 
 describe('DynamicSiteAdapter capabilities', () => {
-  it('rejects fetchMetadata for chapter-only adapters', async () => {
+  it('rejects composeMetadata for chapter-only adapters', async () => {
     const adapter = new DynamicSiteAdapter({
       adapterId: 'chapter-only',
       name: 'Chapter Only',
@@ -20,7 +21,7 @@ describe('DynamicSiteAdapter capabilities', () => {
       promotedAt: '2026-06-25T00:00:00.000Z',
     });
 
-    await expect(adapter.fetchMetadata('https://example.com/manga/demo')).rejects.toMatchObject({
+    await expect(composeMetadata(adapter, 'https://example.com/manga/demo')).rejects.toMatchObject({
       type: ErrorType.ADAPTER_ERROR,
       context: { adapterId: 'chapter-only', capability: 'metadata' },
     });
@@ -50,7 +51,7 @@ describe('DynamicSiteAdapter capabilities', () => {
       </main>
     `;
 
-    await expect(adapter.fetchChapterImages('https://example.com/manga/demo/chapter-1')).resolves.toEqual([
+    await expect(composeChapterImages(adapter, 'https://example.com/manga/demo/chapter-1')).resolves.toEqual([
       { url: 'https://example.com/images/1.webp', index: 0, filename: '001.webp' },
       { url: 'https://cdn.example.com/2.webp', index: 1, filename: '002.webp' },
     ]);
@@ -82,7 +83,7 @@ describe('DynamicSiteAdapter capabilities', () => {
     adapter.setHtmlRenderer({ render, dispose: jest.fn(async () => undefined) });
 
     await expect(
-      adapter.withHtmlFetchMode('headless', () => adapter.fetchChapterImages('https://example.com/manga/demo/chapter-1'))
+      adapter.withHtmlFetchMode('headless', () => composeChapterImages(adapter, 'https://example.com/manga/demo/chapter-1'))
     ).resolves.toEqual([
       { url: 'https://example.com/rendered/1.webp', index: 0, filename: '001.webp' },
     ]);

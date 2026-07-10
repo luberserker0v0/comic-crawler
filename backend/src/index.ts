@@ -3,7 +3,7 @@ export { JsonFileStore } from './storage';
 export { ConfigManager } from './config';
 export { ErrorHandler, RetryHandler, ComicError, ErrorType } from './error';
 export { EncryptionService, SsrfProtection, CredentialManager } from './security';
-export { AdapterRegistry, AdapterFactory, UrlResolver, BaseAdapter } from './adapter';
+export { AdapterRegistry, AdapterFactory, UrlResolver, AdapterBase } from './adapter';
 export { BrowserPool, HtmlParser, ChapterFetcher, ImageDownloader, SearchEngine, CrawlerEngine } from './crawler';
 export { TaskQueue, ProgressTracker, TaskManager, BatchProcessor, IncrementalUpdater } from './task';
 export { DedupChecker, ImageConverter, ImageCompressor } from './image';
