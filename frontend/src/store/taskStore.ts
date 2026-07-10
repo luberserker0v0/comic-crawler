@@ -4,6 +4,7 @@ import { api, getApiErrorMessage } from '../api/client';
 export interface Task {
   id: string;
   url: string;
+  mode?: 'all' | 'chapters';
   status: string;
   priority: number;
   createdAt: string;
@@ -15,7 +16,11 @@ export interface Task {
     completedItems: number;
     failedItems: number;
     percentage: number;
+    stage?: CrawlStage;
+    stageDetail?: string;
     currentItems?: string;
+    metadata?: Record<string, unknown>;
+    chapterListSummary?: ChapterListSummary;
   } | null;
   checkpoint?: {
     currentChapter?: string;
@@ -33,7 +38,11 @@ export interface TaskDetail {
     completedItems: number;
     failedItems: number;
     percentage: number;
+    stage?: CrawlStage;
+    stageDetail?: string;
     currentItems?: string;
+    metadata?: Record<string, unknown>;
+    chapterListSummary?: ChapterListSummary;
     startedAt?: string;
     updatedAt?: string;
   } | null;
@@ -70,6 +79,25 @@ export interface TaskDetail {
     resumable: boolean;
     updatedAt?: string;
   } | null;
+}
+
+export type CrawlStage =
+  | 'adapter'
+  | 'verification'
+  | 'metadata'
+  | 'chapter_list'
+  | 'chapter_images'
+  | 'downloading'
+  | 'completed'
+  | 'failed';
+
+export interface ChapterListSummary {
+  totalChapters: number;
+  chapters: Array<{
+    id: string;
+    title: string;
+    url: string;
+  }>;
 }
 
 export interface TaskStats {
@@ -179,6 +207,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             {
               id: taskId,
               url,
+              mode: undefined,
               status: 'pending',
               priority: 0,
               createdAt: new Date().toISOString(),
@@ -214,6 +243,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           const completedItems = typeof progressData.completedImages === 'number' ? progressData.completedImages : 0;
           const failedItems = typeof progressData.failedImages === 'number' ? progressData.failedImages : 0;
           const currentItems = typeof progressData.currentChapter === 'string' ? progressData.currentChapter : undefined;
+          const stage = typeof progressData.stage === 'string' ? progressData.stage as CrawlStage : undefined;
+          const stageDetail = typeof progressData.stageDetail === 'string' ? progressData.stageDetail : currentItems;
+          const metadata = progressData.metadata && typeof progressData.metadata === 'object'
+            ? progressData.metadata as Record<string, unknown>
+            : undefined;
+          const chapterListSummary = parseChapterListSummary(progressData.chapterListSummary);
           const percentage = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
 
           tasks = updateTask(tasks, taskId, (task) => ({
@@ -224,7 +259,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               completedItems,
               failedItems,
               percentage,
+              stage,
+              stageDetail,
               currentItems,
+              metadata,
+              chapterListSummary,
             },
           }));
         }
@@ -246,6 +285,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               completedItems,
               failedItems,
               percentage: totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 100,
+              stage: 'completed',
+              stageDetail: 'crawl completed',
               currentItems: task.progress?.currentItems,
             },
           }));
@@ -261,6 +302,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             status: 'waiting_verification',
             completedAt: undefined,
             error: message ?? task.error,
+            progress: task.progress
+              ? {
+                  ...task.progress,
+                  stage: 'verification',
+                  stageDetail: message ?? task.progress.stageDetail,
+                  currentItems: message ?? task.progress.currentItems,
+                }
+              : task.progress,
           }));
         }
       }
@@ -274,6 +323,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             status: 'failed',
             completedAt: new Date().toISOString(),
             error: typeof error?.message === 'string' ? error.message : task.error,
+            progress: task.progress ? { ...task.progress, stage: 'failed', stageDetail: typeof error?.message === 'string' ? error.message : task.progress.stageDetail } : task.progress,
           }));
         }
       }
@@ -348,3 +398,27 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+function parseChapterListSummary(value: unknown): ChapterListSummary | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const chapters = Array.isArray(raw.chapters)
+    ? raw.chapters
+        .map((chapter) => {
+          if (!chapter || typeof chapter !== 'object') return null;
+          const item = chapter as Record<string, unknown>;
+          return {
+            id: typeof item.id === 'string' ? item.id : '',
+            title: typeof item.title === 'string' ? item.title : '',
+            url: typeof item.url === 'string' ? item.url : '',
+          };
+        })
+        .filter((chapter): chapter is { id: string; title: string; url: string } => Boolean(chapter && chapter.url))
+    : [];
+  return {
+    totalChapters: typeof raw.totalChapters === 'number' ? raw.totalChapters : chapters.length,
+    chapters,
+  };
+}

@@ -1,4 +1,11 @@
-import type { AdapterCapabilities, IComicAdapter } from '@comiccrawler/shared';
+import type {
+  AdapterCapabilities,
+  ChapterImagesCapabilityContract,
+  CommonCapabilityContract,
+  IComicAdapter,
+  MetadataCapabilityContract,
+  VerificationCapabilityContract,
+} from '@comiccrawler/shared';
 import type { EventBus } from '../events/bus';
 import { ComicError, ErrorType } from '../error/types';
 
@@ -8,6 +15,45 @@ export function getAdapterCapabilities(adapter: IComicAdapter): AdapterCapabilit
     metadata: true,
     chapterImages: true,
   };
+}
+
+export function getCommonCapability(adapter: IComicAdapter): CommonCapabilityContract {
+  return adapter.common ?? adapter;
+}
+
+export function getVerificationCapability(adapter: IComicAdapter): VerificationCapabilityContract | undefined {
+  return adapter.verification ?? (
+    adapter.detectVerificationRequired || adapter.describeVerificationHandoff
+      ? {
+          detectVerificationRequired: adapter.detectVerificationRequired?.bind(adapter) ?? (() => false),
+          describeVerificationHandoff: adapter.describeVerificationHandoff?.bind(adapter) ?? (() => ({ supported: false })),
+        }
+      : undefined
+  );
+}
+
+export function getMetadataCapability(adapter: IComicAdapter): MetadataCapabilityContract | undefined {
+  return adapter.metadata ?? (
+    adapter.extractTitle && adapter.extractChapterList
+      ? {
+          extractTitle: adapter.extractTitle.bind(adapter),
+          extractAuthor: adapter.extractAuthor?.bind(adapter),
+          extractDescription: adapter.extractDescription?.bind(adapter),
+          extractCoverUrl: adapter.extractCoverUrl?.bind(adapter),
+          extractTags: adapter.extractTags?.bind(adapter),
+          extractStatus: adapter.extractStatus?.bind(adapter),
+          extractChapterList: adapter.extractChapterList.bind(adapter),
+        }
+      : undefined
+  );
+}
+
+export function getChapterImagesCapability(adapter: IComicAdapter): ChapterImagesCapabilityContract | undefined {
+  return adapter.chapterImages ?? (
+    adapter.extractChapterImageUrls
+      ? { extractChapterImageUrls: adapter.extractChapterImageUrls.bind(adapter) }
+      : undefined
+  );
 }
 
 export class AdapterRegistry {
@@ -22,6 +68,18 @@ export class AdapterRegistry {
     if (this.adapters.has(adapter.id)) {
       throw new ComicError(
         `Adapter "${adapter.id}" is already registered`,
+        ErrorType.ADAPTER_ERROR
+      );
+    }
+
+    this.adapters.set(adapter.id, adapter);
+    this.eventBus?.emit('adapter:registered', { adapterId: adapter.id });
+  }
+
+  replace(adapter: IComicAdapter): void {
+    if (!this.adapters.has(adapter.id)) {
+      throw new ComicError(
+        `Adapter "${adapter.id}" is not registered`,
         ErrorType.ADAPTER_ERROR
       );
     }
@@ -60,7 +118,7 @@ export class AdapterRegistry {
 
   findByUrl(url: string): IComicAdapter | undefined {
     for (const adapter of this.adapters.values()) {
-      if (adapter.matchUrl(url)) {
+      if (getCommonCapability(adapter).matchUrl(url)) {
         return adapter;
       }
     }
@@ -68,9 +126,14 @@ export class AdapterRegistry {
     return undefined;
   }
 
+  findByUrlDomain(url: string): IComicAdapter | undefined {
+    const hostname = new URL(url).hostname;
+    return this.getAll().find((adapter) => adapter.domains.includes(hostname));
+  }
+
   findByUrlWithCapabilities(url: string, required: Partial<AdapterCapabilities>): IComicAdapter | undefined {
     return this.getAll()
-      .filter((adapter) => adapter.matchUrl(url))
+      .filter((adapter) => getCommonCapability(adapter).matchUrl(url))
       .find((adapter) => {
         const capabilities = getAdapterCapabilities(adapter);
         return Object.entries(required).every(([key, value]) =>

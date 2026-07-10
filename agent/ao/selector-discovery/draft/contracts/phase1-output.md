@@ -1,24 +1,61 @@
 # Phase 1 Output Contract
 
-## 網站判斷
+Use Markdown sections only. Do not output JSON and do not describe adapter code.
+
+## Site Decision
 
 State what kind of site/page this appears to be.
 
-## Metadata Selectors
+## Title Extraction
 
-- Title:
-- Author:
-- Cover:
-- Status:
-- Tags:
-- Description:
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
 
-## Chapter List Selectors
+## Author Extraction
 
-- List:
-- Item:
-- Title:
-- URL:
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+## Description Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+## Cover URL Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+## Tags Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+## Status Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+## Chapter List Extraction
+
+- List Selector:
+- Item Selector:
+- Title Selector:
+- URL Selector:
+- Evidence:
+- Risk:
 
 ## Representative Chapter URL
 
@@ -31,4 +68,3 @@ Explain the HTML evidence.
 ## Uncertainty
 
 List known uncertainty and fallback ideas.
-

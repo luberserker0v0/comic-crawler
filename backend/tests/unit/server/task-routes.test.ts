@@ -36,10 +36,13 @@ describe('Task routes persistence', () => {
       name: 'Kuronavi',
       domains: ['kuronavi.one'],
       parseMode: 'static',
+      capabilities: { verification: false, metadata: true, chapterImages: true },
       matchUrl: (url: string) => url.includes('kuronavi.one'),
-      fetchMetadata: async () => ({ id: 'demo', title: 'Demo', chapters: [] }),
-      fetchChapterImages: async () => [],
-    });
+      loadDocument: async () => ({}),
+      extractTitle: async () => 'Demo',
+      extractChapterList: async () => [],
+      extractChapterImageUrls: async () => [],
+    } as any);
     taskManager = new TaskManager(async () => {}, { eventBus, storage });
     await taskManager.initialize();
     challengeJobs = new Map();
@@ -76,6 +79,11 @@ describe('Task routes persistence', () => {
       selectorDiscoveryService: {
         create: async (input: { url: string; target?: 'full' | 'chapter-only' }) => {
           const id = `disc-${Date.now()}`;
+          const domainAdapter = adapterRegistry.findByUrl(input.url) ?? adapterRegistry.findByUrlDomain(input.url);
+          const capabilities = domainAdapter?.capabilities;
+          const promotionMode = input.target === 'full' && domainAdapter && capabilities?.chapterImages && !capabilities.metadata
+            ? 'augment'
+            : 'create';
           const job = {
             id,
             url: input.url,
@@ -83,6 +91,8 @@ describe('Task routes persistence', () => {
             hostname: new URL(input.url).hostname,
             status: 'queued',
             target: input.target,
+            promotionMode,
+            baseAdapterId: promotionMode === 'augment' ? domainAdapter?.id : undefined,
             createdAt: '2026-06-25T00:00:00.000Z',
             updatedAt: '2026-06-25T00:00:00.000Z',
           };
@@ -277,7 +287,7 @@ describe('Task routes persistence', () => {
       adapterId: 'chapter-only-example',
       name: 'Chapter Only Example',
       domains: ['chapter-only.example'],
-      urlPatterns: [],
+      urlPatterns: ['https://chapter-only.example/mangaread/*/*'],
       capabilities: { verification: true, metadata: false, chapterImages: true },
       selectors: {
         images: {
@@ -298,12 +308,15 @@ describe('Task routes persistence', () => {
     });
 
     expect(response.statusCode).toBe(202);
-    const payload = response.json() as { data: { kind: string; reason: string; discoveryId: string; capabilities: { metadata: boolean; chapterImages: boolean } } };
+    const payload = response.json() as { data: { kind: string; reason: string; discoveryId: string; adapterId: string; capabilities: { metadata: boolean; chapterImages: boolean } } };
     expect(payload.data.kind).toBe('discoveryQueued');
     expect(payload.data.reason).toBe('adapter_capability_mismatch');
+    expect(payload.data.adapterId).toBe('chapter-only-example');
     expect(payload.data.capabilities).toEqual({ verification: true, metadata: false, chapterImages: true });
     const job = await storage.read<any>(`selector-discovery-job-${payload.data.discoveryId}`);
     expect(job.target).toBe('full');
+    expect(job.promotionMode).toBe('augment');
+    expect(job.baseAdapterId).toBe('chapter-only-example');
   });
 
   it('should allow specific-chapters tasks for chapter-only adapters', async () => {

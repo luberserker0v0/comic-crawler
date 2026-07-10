@@ -1,5 +1,6 @@
-import type { BrowserConfig, ComicMetadata, ImageInfo, NetworkConfig, SearchOptions, SearchResult } from '@comiccrawler/shared';
-import { join } from 'node:path';
+import type { BrowserConfig, ChapterListSummary, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult, TaskPreviewFile } from '@comiccrawler/shared';
+import { promises as fs } from 'node:fs';
+import { extname, join, relative } from 'node:path';
 import type { BaseAdapter } from '../adapter/base';
 import type { EventBus } from '../events/bus';
 import { HtmlParser } from './html-parser';
@@ -86,20 +87,21 @@ export class CrawlerEngine {
     };
 
     this.eventBus?.emit('task:started', { taskId });
-    this.emitProgressStage(taskId, 'initializing crawler');
+    this.emitProgressStage(taskId, 'adapter', 'initializing crawler');
 
     this.attachRenderer(adapter);
 
+    const isDirectChapterTask = Boolean(options?.chapterUrls && options.chapterUrls.length > 0);
     this.emitProgressStage(
       taskId,
-      options?.chapterUrls && options.chapterUrls.length > 0
-        ? 'building direct chapter task'
-        : 'fetching manga metadata and chapter list'
+      isDirectChapterTask ? 'chapter_images' : 'metadata',
+      isDirectChapterTask ? 'building direct chapter task' : 'fetching manga metadata and chapter list'
     );
     const metadata = options?.chapterUrls && options.chapterUrls.length > 0
       ? checkpoint.metadata ?? this.createDirectChapterMetadata(url, options.chapterUrls)
       : checkpoint.metadata ?? await this.fetchMetadata(adapter, url);
     const outputRoot = this.getOutputRoot(url, metadata.title);
+    const chapterListSummary = this.createChapterListSummary(metadata);
     checkpoint.metadata = metadata;
     checkpoint.outputPath = outputRoot;
     checkpoint.resumable = true;
@@ -110,10 +112,22 @@ export class CrawlerEngine {
         totalImages: 0,
         completedImages: 0,
         failedImages: 0,
-        currentChapter: 'fetching metadata',
-        metadata,
+        stage: isDirectChapterTask ? 'chapter_images' : 'metadata',
+        stageDetail: isDirectChapterTask ? 'direct chapter task prepared' : 'metadata extracted',
+        currentChapter: isDirectChapterTask ? 'direct chapter task prepared' : 'metadata extracted',
+        metadata: metadata as unknown as Record<string, unknown>,
+        chapterListSummary,
         outputPath: outputRoot,
       },
+    });
+    this.eventBus?.emit('task:metadata_extracted', {
+      taskId,
+      metadata: metadata as unknown as Record<string, unknown>,
+      chapterListSummary,
+    });
+    this.eventBus?.emit('task:chapter_list_extracted', {
+      taskId,
+      chapterListSummary,
     });
 
     const chapterSelection = options?.chapterUrls && options.chapterUrls.length > 0
@@ -146,6 +160,8 @@ export class CrawlerEngine {
           totalImages,
           completedImages: downloadedImages,
           failedImages,
+          stage: 'chapter_images',
+          stageDetail: `extracting images: ${chapter.title}`,
           currentChapter: `rendering chapter page and extracting images: ${chapter.title}`,
         },
       });
@@ -187,6 +203,8 @@ export class CrawlerEngine {
             totalImages,
             completedImages: downloadedImages,
             failedImages,
+            stage: 'chapter_images',
+            stageDetail: `prepared ${chapter.title}`,
             currentChapter: `prepared ${chapter.title}`,
           },
         });
@@ -215,6 +233,8 @@ export class CrawlerEngine {
             totalImages,
             completedImages: downloadedImages,
             failedImages,
+            stage: 'chapter_images',
+            stageDetail: `failed to prepare ${chapter.title}`,
             currentChapter: `failed to prepare ${chapter.title}`,
           },
         });
@@ -227,6 +247,8 @@ export class CrawlerEngine {
         totalImages,
         completedImages: downloadedImages,
         failedImages,
+        stage: 'downloading',
+        stageDetail: preparedChapters[0]?.chapter.title ? `ready to download ${preparedChapters[0].chapter.title}` : 'ready',
         currentChapter: preparedChapters[0]?.chapter.title ?? 'ready',
       },
     });
@@ -270,6 +292,8 @@ export class CrawlerEngine {
           totalImages,
           completedImages: downloadedImages,
           failedImages,
+          stage: 'downloading',
+          stageDetail: `downloading ${chapter.title}`,
           currentChapter: chapter.title,
         },
       });
@@ -317,14 +341,19 @@ export class CrawlerEngine {
                 totalImages,
                 completedImages: downloadedImages,
                 failedImages,
+                stage: 'downloading',
+                stageDetail: `downloading ${chapter.title}: ${downloadedImages}/${totalImages} images`,
                 currentChapter: chapter.title,
               },
             });
             if (result) {
-              this.eventBus?.emit('image:downloaded', {
-                taskId,
-                imageUrl: progressImage.url,
-                path: result.path,
+              void this.createPreviewFile(taskId, outputRoot, result.path).then((previewFile) => {
+                this.eventBus?.emit('image:downloaded', {
+                  taskId,
+                  imageUrl: progressImage.url,
+                  path: result.path,
+                  ...(previewFile ? { previewFile } : {}),
+                });
               });
             } else if (result === null) {
               this.eventBus?.emit('image:failed', {
@@ -353,6 +382,8 @@ export class CrawlerEngine {
             totalImages,
             completedImages: downloadedImages,
             failedImages,
+            stage: 'downloading',
+            stageDetail: `downloaded ${chapter.title}`,
             currentChapter: chapter.title,
           },
         });
@@ -378,6 +409,8 @@ export class CrawlerEngine {
             totalImages,
             completedImages: downloadedImages,
             failedImages,
+            stage: 'failed',
+            stageDetail: `failed ${chapter.title}`,
             currentChapter: `failed ${chapter.title}`,
           },
         });
@@ -390,6 +423,18 @@ export class CrawlerEngine {
     checkpoint.completedImages = downloadedImages;
     checkpoint.failedImages = failedImages;
     await saveCheckpoint();
+
+    this.eventBus?.emit('task:progress', {
+      taskId,
+      progress: {
+        totalImages,
+        completedImages: downloadedImages,
+        failedImages,
+        stage: 'completed',
+        stageDetail: 'crawl completed',
+        currentChapter: 'completed',
+      },
+    });
 
     this.eventBus?.emit('task:completed', {
       taskId,
@@ -409,6 +454,42 @@ export class CrawlerEngine {
       totalImages,
       outputPath: outputRoot,
     };
+  }
+
+  private createChapterListSummary(metadata: ComicMetadata): ChapterListSummary {
+    return {
+      totalChapters: metadata.chapters.length,
+      chapters: metadata.chapters.slice(0, 50).map((chapter) => ({
+        id: chapter.id,
+        title: chapter.title,
+        url: chapter.url,
+      })),
+    };
+  }
+
+  private async createPreviewFile(taskId: string, rootDir: string, filePath: string): Promise<TaskPreviewFile | undefined> {
+    try {
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) {
+        return undefined;
+      }
+      const relativePath = relative(rootDir, filePath);
+      const isImage = this.isPreviewImage(filePath);
+      return {
+        name: filePath.split(/[\\/]/).pop() ?? relativePath,
+        relativePath,
+        size: stats.size,
+        modifiedAt: stats.mtime.toISOString(),
+        isImage,
+        url: isImage ? `/api/tasks/${encodeURIComponent(taskId)}/preview-file?path=${encodeURIComponent(relativePath)}` : undefined,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private isPreviewImage(path: string): boolean {
+    return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extname(path).toLowerCase());
   }
 
   private ensureChapterCheckpoint(checkpoint: CrawlCheckpoint, chapter: ComicMetadata['chapters'][number]): ChapterCheckpoint {
@@ -522,14 +603,16 @@ export class CrawlerEngine {
     }
   }
 
-  private emitProgressStage(taskId: string, stage: string): void {
+  private emitProgressStage(taskId: string, stage: CrawlStage, stageDetail: string): void {
     this.eventBus?.emit('task:progress', {
       taskId,
       progress: {
         totalImages: 0,
         completedImages: 0,
         failedImages: 0,
-        currentChapter: stage,
+        stage,
+        stageDetail,
+        currentChapter: stageDetail,
       },
     });
   }

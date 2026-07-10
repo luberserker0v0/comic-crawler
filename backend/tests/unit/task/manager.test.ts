@@ -91,7 +91,14 @@ describe('TaskManager persistence', () => {
         totalImages: 12,
         completedImages: 4,
         failedImages: 1,
+        stage: 'downloading',
+        stageDetail: 'downloading chapter-1: 4/12 images',
         currentChapter: 'chapter-1',
+        metadata: { title: 'Example Live' },
+        chapterListSummary: {
+          totalChapters: 1,
+          chapters: [{ id: 'chapter-1', title: 'Chapter 1', url: 'https://example.com/chapter-1' }],
+        },
       },
     });
     eventBus.emit('task:completed', {
@@ -110,7 +117,12 @@ describe('TaskManager persistence', () => {
     );
     expect(persisted.progress.totalItems).toBe(12);
     expect(persisted.progress.completedItems).toBe(4);
+    expect(persisted.progress.stage).toBe('downloading');
+    expect(persisted.progress.stageDetail).toBe('downloading chapter-1: 4/12 images');
+    expect(persisted.progress.metadata.title).toBe('Example Live');
+    expect(persisted.progress.chapterListSummary.totalChapters).toBe(1);
     expect(persisted.result.status).toBe('completed');
+    expect(persisted.result.metadata.title).toBe('Example');
     expect(persisted.result.outputPath).toBe('./downloads');
   });
 

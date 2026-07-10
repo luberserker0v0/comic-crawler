@@ -108,8 +108,10 @@ describe('Integration: REST-only crawl flow', () => {
             totalImages: 2,
             completedImages: 2,
             failedImages: 0,
+            stage: 'downloading',
+            stageDetail: 'downloading Chapter 1: 2/2 images',
             currentChapter: 'Chapter 1',
-            metadata: checkpoint.metadata,
+            metadata: checkpoint.metadata as unknown as Record<string, unknown>,
             outputPath: checkpoint.outputPath,
           },
         });

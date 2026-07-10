@@ -12,31 +12,78 @@ Use these exact second-level headings. Do not rename them, do not add parentheti
 - Domains:
 - Patterns:
 
-## Metadata Selectors
+## Title Extraction
 
-- Title:
-- Author:
-- Cover:
-- Status:
-- Tags:
-- Description:
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
 
-For chapter-only discovery, write `Not required for chapter-only discovery.` for this section instead of inventing metadata selectors.
+For chapter-only discovery, write `Not required for chapter-only discovery.`
 
-## Chapter Selectors
+## Author Extraction
 
-- List:
-- Item:
-- Title:
-- URL:
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
 
-For chapter-only discovery, write `Not required for chapter-only discovery.` for this section instead of inventing chapter-list selectors.
+For chapter-only discovery, write `Not required for chapter-only discovery.`
 
-## Image Selectors
+## Description Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+For chapter-only discovery, write `Not required for chapter-only discovery.`
+
+## Cover URL Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+For chapter-only discovery, write `Not required for chapter-only discovery.`
+
+## Tags Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+For chapter-only discovery, write `Not required for chapter-only discovery.`
+
+## Status Extraction
+
+- Selector:
+- Attribute:
+- Evidence:
+- Risk:
+
+For chapter-only discovery, write `Not required for chapter-only discovery.`
+
+## Chapter List Extraction
+
+- List Selector:
+- Item Selector:
+- Title Selector:
+- URL Selector:
+- Evidence:
+- Risk:
+
+For chapter-only discovery, write `Not required for chapter-only discovery.`
+
+## Chapter Image URL Extraction
 
 - Container:
 - Item:
 - Source Attribute:
+- Evidence:
+- Risk:
 
 This section is required for both full and chapter-only discovery.
 
@@ -66,9 +113,9 @@ assumptions when relevant.
 
 ## Reviewer Checklist
 
-- Metadata selectors checked:
-- Chapter selectors checked:
-- Image selectors checked:
+- Title extraction checked:
+- Chapter list extraction checked:
+- Chapter image URL extraction checked:
 - Image selectors exclude cover/logo/icon/UI/ad images:
 - Representative chapter DOM matches representative chapter URL:
 - No JSON output:

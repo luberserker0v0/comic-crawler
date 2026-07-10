@@ -53,7 +53,14 @@ export class SelectorDiscoveryService {
     const normalizedUrl = normalizeAndValidateUrl(input.url);
     const parsedUrl = new URL(normalizedUrl);
     const matchedAdapter = this.adapterRegistry.findByUrl(normalizedUrl);
+    const domainMatchedAdapter = matchedAdapter ?? this.adapterRegistry.findByUrlDomain(normalizedUrl);
     const target = input.target ?? 'full';
+    const canAugmentMatchedAdapter = Boolean(
+      domainMatchedAdapter &&
+      target === 'full' &&
+      !adapterSupportsDiscoveryTarget(domainMatchedAdapter, target) &&
+      getAdapterCapabilities(domainMatchedAdapter).chapterImages
+    );
     const now = new Date().toISOString();
 
     if (matchedAdapter && !input.forceDiscovery && adapterSupportsDiscoveryTarget(matchedAdapter, target)) {
@@ -63,8 +70,9 @@ export class SelectorDiscoveryService {
         normalizedUrl,
         hostname: parsedUrl.hostname,
         status: 'known_adapter',
-        target,
-        adapterId: matchedAdapter.id,
+          target,
+          promotionMode: 'create',
+          adapterId: matchedAdapter.id,
         adapterName: matchedAdapter.name,
         phase: 'known_adapter',
         createdAt: now,
@@ -93,6 +101,8 @@ export class SelectorDiscoveryService {
           hostname: parsedUrl.hostname,
           status: 'configuration_required',
           target,
+          promotionMode: canAugmentMatchedAdapter ? 'augment' : 'create',
+          baseAdapterId: canAugmentMatchedAdapter ? domainMatchedAdapter?.id : undefined,
           error: 'Selector discovery is not configured. Configure AO URL, provider JSON, and model in Settings before this adapter build task can run.',
           createdAt: now,
           updatedAt: now,
@@ -109,6 +119,8 @@ export class SelectorDiscoveryService {
       hostname: parsedUrl.hostname,
       status: 'queued',
       target,
+      promotionMode: canAugmentMatchedAdapter ? 'augment' : 'create',
+      baseAdapterId: canAugmentMatchedAdapter ? domainMatchedAdapter?.id : undefined,
       model: input.model,
       aoBaseUrl: input.aoBaseUrl,
       inputSource: input.htmlSnapshot ? 'html-snapshot' : 'live-fetch',
@@ -132,15 +144,26 @@ export class SelectorDiscoveryService {
 
   async retry(id: string): Promise<SelectorDiscoveryJob> {
     const job = await this.getRequiredJob(id);
-    return this.create({ url: job.normalizedUrl, target: job.target });
+    return this.create({ url: job.normalizedUrl, target: job.target, forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId) });
   }
 
   async loadActiveDynamicAdapters(): Promise<void> {
     const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+    const retainedManifests: DynamicSiteAdapterManifest[] = [];
     for (const manifest of manifests) {
-      if (!this.adapterRegistry.has(manifest.adapterId)) {
-        this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
+      const existingDomainAdapter = this.findRegisteredAdapterByDomains(manifest.domains);
+      if (this.adapterRegistry.has(manifest.adapterId)) {
+        retainedManifests.push(manifest);
+        continue;
       }
+      if (existingDomainAdapter && existingDomainAdapter.id !== manifest.adapterId) {
+        continue;
+      }
+      this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
+      retainedManifests.push(manifest);
+    }
+    if (retainedManifests.length !== manifests.length) {
+      await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, retainedManifests);
     }
   }
 
@@ -148,6 +171,26 @@ export class SelectorDiscoveryService {
     const job = await this.getRequiredJob(id);
     const manifest = this.createManifestFromJob(job);
     const adapterId = manifest.adapterId;
+    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+    if (job.promotionMode === 'augment') {
+      const baseAdapterId = job.baseAdapterId;
+      if (!baseAdapterId) {
+        throw new Error('Augment promotion requires a base adapter id.');
+      }
+      if (adapterId !== baseAdapterId) {
+        throw new Error(`Capability supplement must keep existing adapter id "${baseAdapterId}", got "${adapterId}".`);
+      }
+      if (!this.adapterRegistry.has(baseAdapterId)) {
+        throw new Error(`Base adapter "${baseAdapterId}" is not registered.`);
+      }
+
+      const merged = this.mergeManifestWithBase(manifest, manifests, baseAdapterId);
+      this.adapterRegistry.replace(new DynamicSiteAdapter(merged));
+      await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== baseAdapterId), merged]);
+      await this.updateJob(id, { adapterId: baseAdapterId, adapterName: merged.name });
+      return merged;
+    }
+
     if (this.adapterRegistry.has(adapterId)) {
       throw new Error(`Adapter "${adapterId}" is already registered.`);
     }
@@ -158,7 +201,6 @@ export class SelectorDiscoveryService {
     }
 
     this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
     await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== adapterId), manifest]);
     await this.updateJob(id, { adapterId, adapterName: manifest.name });
     return manifest;
@@ -294,7 +336,12 @@ export class SelectorDiscoveryService {
         return;
       }
       const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
-      const phase1 = await this.runAoPhase(client, bundle, model, createPhase1TaskMarkdown({ url: job.normalizedUrl, metadataFetch }), 'outputs/phase1-output.md');
+      const existingAdapterContext = await this.createExistingAdapterContext(job);
+      const phase1 = await this.runAoPhase(client, bundle, model, createPhase1TaskMarkdown({
+        url: job.normalizedUrl,
+        metadataFetch,
+        existingAdapter: existingAdapterContext,
+      }), 'outputs/phase1-output.md');
 
       await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2', model, aoBaseUrl });
       const chapterUrl = tryExtractRepresentativeChapterUrl(phase1, metadataFetch.finalUrl)
@@ -307,6 +354,7 @@ export class SelectorDiscoveryService {
         url: job.normalizedUrl,
         phase1Markdown: phase1,
         chapterFetch,
+        existingAdapter: existingAdapterContext,
       }), 'outputs/candidate-output.md');
 
       await this.finalizeCandidate(job, candidateMarkdown);
@@ -386,11 +434,11 @@ Use the exact Markdown headings required by the referenced contract file. Do not
 - Snapshot source: user-provided rendered chapter HTML.
 - Discovery target: chapter-only adapter.
 
-## Metadata Selectors
+## Title Extraction
 
 - Not required for chapter-only discovery.
 
-## Chapter List Selectors
+## Chapter List Extraction
 
 - Not required for chapter-only discovery.
 
@@ -450,7 +498,10 @@ ${finalUrl}
   }
 
   private async finalizeCandidate(job: SelectorDiscoveryJob, candidateMarkdown: string): Promise<void> {
-    const validation = validateMarkdownCandidate(candidateMarkdown, { target: job.target });
+    const validation = validateMarkdownCandidate(candidateMarkdown, {
+      target: job.target,
+      allowExistingImageSelectors: job.promotionMode === 'augment',
+    });
     const parsedCandidate = parseMarkdownCandidate(candidateMarkdown);
     const manifestMarkdown = createManifestMarkdown(parsedCandidate);
     await this.updateJob(job.id, {
@@ -502,14 +553,23 @@ ${finalUrl}
 
     const target = job.target ?? 'full';
     const selectors = job.parsedCandidate.selectors;
-    if (!selectors.images) {
+    if (!hasCompleteImageSelectors(selectors.images) && job.promotionMode !== 'augment') {
       throw new Error('Candidate image selectors are incomplete.');
     }
     if (target === 'full' && (!selectors.metadata || !selectors.chapters)) {
       throw new Error('Candidate metadata/chapter selectors are incomplete.');
     }
 
-    const adapterId = safeAdapterId(job.parsedCandidate.adapterId ?? job.hostname);
+    if (job.promotionMode === 'augment' && job.baseAdapterId && job.parsedCandidate.adapterId) {
+      const candidateAdapterId = safeAdapterId(job.parsedCandidate.adapterId);
+      if (candidateAdapterId !== job.baseAdapterId) {
+        throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${candidateAdapterId}".`);
+      }
+    }
+
+    const adapterId = safeAdapterId(job.promotionMode === 'augment'
+      ? job.baseAdapterId ?? job.parsedCandidate.adapterId ?? job.hostname
+      : job.parsedCandidate.adapterId ?? job.hostname);
     return {
       adapterId,
       name: job.parsedCandidate.name ?? adapterId,
@@ -521,6 +581,58 @@ ${finalUrl}
       selectors: selectors as DynamicSiteAdapterManifest['selectors'],
       sourceDiscoveryId: job.id,
       promotedAt: new Date().toISOString(),
+    };
+  }
+
+  private findRegisteredAdapterByDomains(domains: string[]): ReturnType<AdapterRegistry['getAll']>[number] | undefined {
+    return this.adapterRegistry.getAll().find((adapter) => adapter.domains.some((domain) => domains.includes(domain)));
+  }
+
+  private async createExistingAdapterContext(job: SelectorDiscoveryJob): Promise<Parameters<typeof createPhase1TaskMarkdown>[0]['existingAdapter']> {
+    if (job.promotionMode !== 'augment' || !job.baseAdapterId) {
+      return undefined;
+    }
+    const adapter = this.adapterRegistry.get(job.baseAdapterId);
+    if (!adapter) {
+      return undefined;
+    }
+    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+    const manifest = manifests.find((item) => item.adapterId === job.baseAdapterId);
+    return {
+      adapterId: adapter.id,
+      name: adapter.name,
+      capabilities: getAdapterCapabilities(adapter),
+      imageSelectors: manifest?.selectors.images,
+      note: 'This is a capability supplement job. Keep the same adapter identity and only add metadata/chapter-list selectors unless image selectors are explicitly revalidated.',
+    };
+  }
+
+  private mergeManifestWithBase(
+    supplement: DynamicSiteAdapterManifest,
+    manifests: DynamicSiteAdapterManifest[],
+    baseAdapterId: string
+  ): DynamicSiteAdapterManifest {
+    const base = manifests.find((item) => item.adapterId === baseAdapterId);
+    if (!base) {
+      throw new Error(`Base dynamic adapter manifest "${baseAdapterId}" was not found.`);
+    }
+    return {
+      ...base,
+      name: supplement.name || base.name,
+      domains: Array.from(new Set([...base.domains, ...supplement.domains])),
+      urlPatterns: Array.from(new Set([...base.urlPatterns, ...supplement.urlPatterns])),
+      capabilities: {
+        verification: base.capabilities?.verification ?? supplement.capabilities?.verification ?? true,
+        metadata: true,
+        chapterImages: true,
+      },
+      selectors: {
+        metadata: supplement.selectors.metadata ?? base.selectors.metadata,
+        chapters: supplement.selectors.chapters ?? base.selectors.chapters,
+        images: hasCompleteImageSelectors(supplement.selectors.images) ? supplement.selectors.images : base.selectors.images,
+      },
+      sourceDiscoveryId: supplement.sourceDiscoveryId,
+      promotedAt: supplement.promotedAt,
     };
   }
 
@@ -536,12 +648,18 @@ ${finalUrl}
     let oracleFirstImageUrl: string | undefined;
 
     try {
-      const metadata = await oracle.fetchMetadata(job.normalizedUrl);
+      const oracleRuntime = oracle as unknown as {
+        fetchMetadata?: (url: string) => Promise<{ title: string; chapters: Array<{ url: string }> }>;
+        fetchChapterImages?: (url: string) => Promise<Array<{ url: string }>>;
+      };
+      if (!oracleRuntime.fetchMetadata) return undefined;
+      const metadata = await oracleRuntime.fetchMetadata(job.normalizedUrl);
       oracleTitle = metadata.title;
       oracleChapterCount = metadata.chapters.length;
       oracleFirstChapterUrl = metadata.chapters[0]?.url;
       if (oracleFirstChapterUrl) {
-        const images = await oracle.fetchChapterImages(oracleFirstChapterUrl);
+        if (!oracleRuntime.fetchChapterImages) return undefined;
+        const images = await oracleRuntime.fetchChapterImages(oracleFirstChapterUrl);
         oracleImageCount = images.length;
         oracleFirstImageUrl = images[0]?.url;
       } else {
@@ -590,6 +708,10 @@ ${finalUrl}
   }
 }
 
+function hasCompleteImageSelectors(selectors: DynamicSiteAdapterManifest['selectors']['images'] | undefined): boolean {
+  return Boolean(selectors?.item && selectors.srcAttr);
+}
+
 function tryExtractRepresentativeChapterUrl(markdown: string, baseUrl: string): string | undefined {
   try {
     return extractRepresentativeChapterUrl(markdown, baseUrl);
@@ -623,11 +745,11 @@ function createChapterOnlyPhase1Markdown(finalUrl: string): string {
 - Snapshot source: fetched chapter reader HTML.
 - Discovery target: chapter-only adapter.
 
-## Metadata Selectors
+## Title Extraction
 
 - Not required for chapter-only discovery.
 
-## Chapter List Selectors
+## Chapter List Extraction
 
 - Not required for chapter-only discovery.
 

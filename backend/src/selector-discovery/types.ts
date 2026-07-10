@@ -41,6 +41,8 @@ export interface SelectorDiscoveryJob {
   hostname: string;
   status: 'queued' | 'known_adapter' | 'configuration_required' | 'running' | 'awaiting_review' | 'invalid' | 'failed';
   target?: 'full' | 'chapter-only';
+  promotionMode?: 'create' | 'augment';
+  baseAdapterId?: string;
   adapterId?: string;
   adapterName?: string;
   model?: string;

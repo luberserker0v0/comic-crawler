@@ -16,7 +16,7 @@ const HAPPYMH_SELF_AO_CANDIDATE = `# HappyMH Selector Candidate
 
 ## Metadata Selectors
 
-- Title: h1, .detail-title, meta[property="og:title"]
+- Title: .detail-title, .comic-title, .manga-title, meta[property="og:title"], title, h1
 - Author: .detail-author, .author
 - Cover: meta[property="og:image"], .detail-cover img, .cover img
 - Status: .status
@@ -68,7 +68,7 @@ describe('HappyMH Self-AO candidate', () => {
     expect(validation.valid).toBe(true);
     expect(parsed.adapterId).toBe('happymh');
     expect(parsed.domains).toContain('m.happymh.com');
-    expect(parsed.selectors.metadata?.title).toContain('h1');
+    expect(parsed.selectors.metadata?.title).toContain('.detail-title');
     expect(parsed.selectors.chapters?.url).toBe('a[href*="/mangaread/"]');
     expect(parsed.selectors.images?.item).toContain('img[data-original]');
 

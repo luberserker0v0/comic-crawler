@@ -4,6 +4,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { TaskManagerPage } from './pages/TaskManagerPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AgentPage } from './pages/AgentPage';
+import { AdapterLabPage } from './pages/AdapterLabPage';
 import { SUPPORTED_LOCALES, type LocaleCode, useI18n } from './text/i18n';
 
 const App: React.FC = () => {
@@ -45,6 +46,12 @@ const App: React.FC = () => {
                   >
                     {text.nav.agent}
                   </Link>
+                  <Link
+                    to="/adapter-lab"
+                    className="inline-flex items-center border-b-2 border-transparent px-1 pt-1 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                  >
+                    Adapter Lab
+                  </Link>
                 </div>
               </div>
 
@@ -76,6 +83,7 @@ const App: React.FC = () => {
             <Route path="/tasks/:taskId" element={<TaskManagerPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/agent" element={<AgentPage />} />
+            <Route path="/adapter-lab" element={<AdapterLabPage />} />
           </Routes>
         </main>
       </div>

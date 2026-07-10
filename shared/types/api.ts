@@ -1,6 +1,6 @@
 import type { AdapterCapabilities, AdapterInfo } from './adapter';
 import type { GlobalConfig } from './config';
-import type { TaskStatus } from './task';
+import type { ChapterListSummary, CrawlStage, TaskStatus } from './task';
 
 export interface ApiResponse<T> {
   data: T;
@@ -35,6 +35,53 @@ export interface AdapterListItem {
   name: string;
   domains: string[];
   capabilities: AdapterCapabilities;
+}
+
+export type AdapterFunctionCapability = 'common' | 'verification' | 'metadata' | 'chapterImages';
+export type AdapterFunctionInputKind = 'url' | 'mangaUrl' | 'chapterUrl';
+
+export interface AdapterFunctionDescriptor {
+  id: string;
+  label: string;
+  capability: AdapterFunctionCapability;
+  implemented: boolean;
+  inputKind: AdapterFunctionInputKind;
+  notes: string;
+}
+
+export interface AdapterCapabilityDetailResponse {
+  adapter: Pick<AdapterInfo, 'id' | 'name' | 'domains' | 'parseMode' | 'capabilities'>;
+  functions: AdapterFunctionDescriptor[];
+}
+
+export interface AdapterFunctionSourceResponse {
+  adapterId: string;
+  functionId: string;
+  language: 'typescript' | 'json' | 'markdown';
+  sourceKind: 'builtin-source' | 'dynamic-manifest' | 'pipeline-summary';
+  source: string;
+  notes: string;
+}
+
+export interface AdapterFunctionTestRequest {
+  url: string;
+  challengeDiscoveryId?: string;
+}
+
+export type AdapterFunctionTestStatus = 'passed' | 'failed' | 'verification_required';
+
+export interface AdapterFunctionTestResponse {
+  ok: boolean;
+  status: AdapterFunctionTestStatus;
+  adapterId: string;
+  functionId: string;
+  durationMs: number;
+  resultSummary?: Record<string, unknown>;
+  error?: string;
+  requiresVerification: boolean;
+  challengeDiscoveryId?: string;
+  retryableAfterVerification?: boolean;
+  verificationMessage?: string;
 }
 
 export interface CreateTaskRequest {
@@ -91,6 +138,7 @@ export interface TaskStats {
 export interface TaskSummary {
   id: string;
   url: string;
+  mode?: CrawlMode;
   status: TaskStatus | 'interrupted';
   priority: number;
   createdAt: string;
@@ -114,7 +162,11 @@ export interface TaskProgressSummary {
   completedItems: number;
   failedItems: number;
   percentage: number;
+  stage?: CrawlStage;
+  stageDetail?: string;
   currentItems?: string;
+  metadata?: Record<string, unknown>;
+  chapterListSummary?: ChapterListSummary;
 }
 
 export interface TaskResultSummary {
@@ -199,6 +251,8 @@ export interface SelectorDiscoveryJobSummary {
   hostname: string;
   status: string;
   target?: SelectorDiscoveryTarget;
+  promotionMode?: 'create' | 'augment';
+  baseAdapterId?: string;
   createdAt: string;
   updatedAt: string;
   candidateMarkdown?: string;

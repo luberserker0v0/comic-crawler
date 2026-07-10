@@ -43,6 +43,8 @@ export function setupWebSocket(httpServer: HttpServer, eventBus: EventBus): void
     'task:created',
     'task:started',
     'task:progress',
+    'task:metadata_extracted',
+    'task:chapter_list_extracted',
     'task:paused',
     'task:resumed',
     'task:waiting_verification',

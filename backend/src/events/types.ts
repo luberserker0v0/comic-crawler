@@ -1,7 +1,11 @@
+import type { ChapterListSummary, CrawlStage, TaskPreviewFile } from '@comiccrawler/shared';
+
 export interface EventMap {
   'task:created': { taskId: string; url: string };
   'task:started': { taskId: string };
   'task:progress': { taskId: string; progress: TaskProgress };
+  'task:metadata_extracted': { taskId: string; metadata: Record<string, unknown>; chapterListSummary?: ChapterListSummary };
+  'task:chapter_list_extracted': { taskId: string; chapterListSummary: ChapterListSummary };
   'task:paused': { taskId: string };
   'task:resumed': { taskId: string };
   'task:waiting_verification': { taskId: string; challengeDiscoveryId: string; challengeStatus?: string; message: string };
@@ -9,7 +13,7 @@ export interface EventMap {
   'task:failed': { taskId: string; error: Error };
   'task:cancelled': { taskId: string };
 
-  'image:downloaded': { taskId: string; imageUrl: string; path: string };
+  'image:downloaded': { taskId: string; imageUrl: string; path: string; previewFile?: TaskPreviewFile };
   'image:failed': { taskId: string; imageUrl: string; error: Error };
   'image:duplicate': { taskId: string; imageUrl: string };
   'chapter:completed': { taskId: string; chapterId: string };
@@ -32,8 +36,11 @@ export interface TaskProgress {
   totalImages: number;
   completedImages: number;
   failedImages: number;
+  stage?: CrawlStage;
+  stageDetail?: string;
   currentChapter?: string;
-  metadata?: unknown;
+  metadata?: Record<string, unknown>;
+  chapterListSummary?: ChapterListSummary;
   outputPath?: string;
 }
 

@@ -1,6 +1,10 @@
 import axios, { AxiosInstance } from 'axios';
 import type {
   AdapterListItem,
+  AdapterCapabilityDetailResponse,
+  AdapterFunctionSourceResponse,
+  AdapterFunctionTestRequest,
+  AdapterFunctionTestResponse,
   AdapterResolveRequest,
   AdapterResolveResponse,
   ApiResponse,
@@ -185,6 +189,25 @@ export class ApiClient {
 
   async resolveAdapter(input: AdapterResolveRequest): Promise<ApiResponse<AdapterResolveResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.adapters}/resolve`, input);
+    return response.data;
+  }
+
+  async getAdapterCapabilities(id: string): Promise<ApiResponse<AdapterCapabilityDetailResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/capabilities`);
+    return response.data;
+  }
+
+  async getAdapterFunctionSource(id: string, functionId: string): Promise<ApiResponse<AdapterFunctionSourceResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/functions/${functionId}/source`);
+    return response.data;
+  }
+
+  async testAdapterFunction(
+    id: string,
+    functionId: string,
+    input: AdapterFunctionTestRequest
+  ): Promise<ApiResponse<AdapterFunctionTestResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.adapters}/${id}/functions/${functionId}/test`, input);
     return response.data;
   }
 

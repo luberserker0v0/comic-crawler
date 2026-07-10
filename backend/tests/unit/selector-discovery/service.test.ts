@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import type { IComicAdapter, ComicMetadata, ImageInfo } from '@comiccrawler/shared';
 import { AdapterRegistry } from '../../../src/adapter/registry';
 import { SelectorDiscoveryService } from '../../../src/selector-discovery/service';
+import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../../src/adapter/dynamic-site-adapter';
 import type { IStorage } from '../../../src/storage/types';
 import type { SelectorDiscoveryJob } from '../../../src/selector-discovery/types';
 
@@ -55,6 +56,176 @@ class OracleAdapter implements IComicAdapter {
 }
 
 describe('SelectorDiscoveryService shadow promotion', () => {
+  it('augments an existing chapter-only dynamic adapter instead of registering a second adapter', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const baseManifest: DynamicSiteAdapterManifest = {
+      adapterId: 'example-dynamic',
+      name: 'Example Dynamic',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/manga/*/chapter-*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: {
+        images: {
+          container: '.reader',
+          item: '.reader img[data-src]',
+          srcAttr: 'data-src',
+        },
+      },
+      sourceDiscoveryId: 'disc-chapter-only',
+      promotedAt: '2026-06-25T00:00:00.000Z',
+    };
+    registry.register(new DynamicSiteAdapter(baseManifest));
+    await storage.write('selector-discovery-active-adapters', [baseManifest]);
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-augment',
+      url: 'https://example.com/manga/demo',
+      normalizedUrl: 'https://example.com/manga/demo',
+      hostname: 'example.com',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'augment',
+      baseAdapterId: 'example-dynamic',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      parsedCandidate: {
+        adapterId: 'example-dynamic',
+        name: 'Example Dynamic Full',
+        domains: ['example.com'],
+        urlPatterns: ['https://example.com/manga/*'],
+        selectors: {
+          metadata: {
+            title: 'h1',
+            author: '.author',
+            cover: '.cover img',
+            status: '.status',
+            tags: '.tag',
+          },
+          chapters: {
+            list: '.chapters',
+            item: 'a[href*="/chapter-"]',
+            title: 'a',
+            url: 'a',
+          },
+          images: {
+            item: '',
+            srcAttr: '',
+          },
+        },
+        rawSections: {},
+      },
+    };
+    await storage.write('selector-discovery-job-disc-augment', job);
+    await storage.write('selector-discovery-index', ['disc-augment']);
+
+    const promoted = await service.promote('disc-augment');
+    const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
+
+    expect(registry.size).toBe(1);
+    expect(promoted.adapterId).toBe('example-dynamic');
+    expect(promoted.capabilities).toEqual({ verification: true, metadata: true, chapterImages: true });
+    expect(promoted.selectors.metadata?.title).toBe('h1');
+    expect(promoted.selectors.images).toEqual(baseManifest.selectors.images);
+    expect(active).toHaveLength(1);
+    expect(active?.[0]?.adapterId).toBe('example-dynamic');
+    expect(registry.get('example-dynamic')?.capabilities).toEqual({ verification: true, metadata: true, chapterImages: true });
+  });
+
+  it('rejects augment promotion when the candidate changes adapter identity', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const baseManifest: DynamicSiteAdapterManifest = {
+      adapterId: 'example-dynamic',
+      name: 'Example Dynamic',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/manga/*/chapter-*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-chapter-only',
+      promotedAt: '2026-06-25T00:00:00.000Z',
+    };
+    registry.register(new DynamicSiteAdapter(baseManifest));
+    await storage.write('selector-discovery-active-adapters', [baseManifest]);
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-bad-augment',
+      url: 'https://example.com/manga/demo',
+      normalizedUrl: 'https://example.com/manga/demo',
+      hostname: 'example.com',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'augment',
+      baseAdapterId: 'example-dynamic',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      parsedCandidate: {
+        adapterId: 'example-full-new',
+        name: 'Example Full New',
+        domains: ['example.com'],
+        urlPatterns: ['https://example.com/manga/*'],
+        selectors: {
+          metadata: { title: 'h1', author: '', cover: '', status: '', tags: '' },
+          chapters: { list: '.chapters', item: 'a', url: 'a' },
+          images: { item: '', srcAttr: '' },
+        },
+        rawSections: {},
+      },
+    };
+    await storage.write('selector-discovery-job-disc-bad-augment', job);
+    await storage.write('selector-discovery-index', ['disc-bad-augment']);
+
+    await expect(service.promote('disc-bad-augment')).rejects.toThrow('must keep existing adapter id "example-dynamic"');
+    expect(registry.size).toBe(1);
+  });
+
+  it('creates augment jobs for full discovery when only a same-domain chapter-only adapter exists', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    registry.register(new DynamicSiteAdapter({
+      adapterId: 'example-dynamic',
+      name: 'Example Dynamic',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/mangaread/*/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-chapter-only',
+      promotedAt: '2026-06-25T00:00:00.000Z',
+    }));
+    const service = new SelectorDiscoveryService(storage, registry);
+
+    const job = await service.create({ url: 'https://example.com/manga/demo', target: 'full', forceDiscovery: true });
+
+    expect(job.status).toBe('configuration_required');
+    expect(job.promotionMode).toBe('augment');
+    expect(job.baseAdapterId).toBe('example-dynamic');
+  });
+
+  it('prunes active dynamic manifests that are superseded by an existing same-domain adapter', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const staleManifest: DynamicSiteAdapterManifest = {
+      adapterId: 'example-chapter-only-self-ao',
+      name: 'Example Chapter-only Self-AO Candidate',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/mangaread/*/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'self-ao-example',
+      promotedAt: '2026-06-25T00:00:00.000Z',
+    };
+    registry.register(new OracleAdapter());
+    await storage.write('selector-discovery-active-adapters', [staleManifest]);
+    const service = new SelectorDiscoveryService(storage, registry);
+
+    await service.loadActiveDynamicAdapters();
+
+    const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
+    expect(active).toEqual([]);
+    expect(registry.get('oracle')).toBeDefined();
+    expect(registry.get('example-chapter-only-self-ao')).toBeUndefined();
+  });
+
   it('returns known_adapter for a matching adapter unless discovery is forced', async () => {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();

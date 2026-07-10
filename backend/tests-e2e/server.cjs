@@ -42,6 +42,16 @@ async function start() {
     domains: ['kuronavi.one'],
     parseMode: 'static',
     matchUrl: (url) => url.includes('kuronavi.one'),
+    capabilities: { verification: false, metadata: true, chapterImages: true },
+    loadDocument: async () => ({}),
+    extractTitle: async () => 'Fixture',
+    extractAuthor: async () => undefined,
+    extractDescription: async () => undefined,
+    extractCoverUrl: async () => undefined,
+    extractTags: async () => [],
+    extractStatus: async () => 'unknown',
+    extractChapterList: async () => [],
+    extractChapterImageUrls: async () => [],
     fetchMetadata: async () => ({ id: 'fixture', title: 'Fixture', chapters: [] }),
     fetchChapterImages: async () => [],
   });
@@ -387,8 +397,9 @@ function installFakeAo(app) {
   app.post('/__ao/api/conversations/:id/message', async (request, reply) => {
     const conversation = getConversation(conversations, request.params.id);
     const text = request.body?.text || '';
-    const output = text.includes('Selector Discovery Phase 2') ? fakeCandidateMarkdown(text) : fakePhase1Markdown(text);
-    const outputPath = text.includes('Selector Discovery Phase 2') ? 'outputs/candidate-output.md' : 'outputs/phase1-output.md';
+    const isCandidateTask = text.includes('Selector Discovery Phase 2') || text.includes('Selector Discovery Chapter-Only Candidate');
+    const output = isCandidateTask ? fakeCandidateMarkdown(text) : fakePhase1Markdown(text);
+    const outputPath = isCandidateTask ? 'outputs/candidate-output.md' : 'outputs/phase1-output.md';
     conversation.files.set(outputPath, output);
     conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
     reply.send({ messageId: `msg-${conversation.messages.length}`, text: output });

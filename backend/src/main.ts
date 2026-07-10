@@ -86,6 +86,8 @@ async function main(): Promise<void> {
               totalImages: 0,
               completedImages: 0,
               failedImages: 0,
+              stage: 'verification',
+              stageDetail: 'human verification detected; queued verification handoff',
               currentChapter: 'human verification detected; queued verification handoff',
             },
           });

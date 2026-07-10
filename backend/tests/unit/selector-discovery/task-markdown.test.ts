@@ -22,7 +22,7 @@ describe('selector discovery task Markdown', () => {
 
     expect(markdown).toContain('chapter-only adapter');
     expect(markdown).toContain('Metadata selectors are not required.');
-    expect(markdown).toContain('Image selectors are required.');
+    expect(markdown).toContain('Chapter Image URL Extraction is required.');
     expect(markdown).not.toContain('Choose one representative chapter URL');
   });
 

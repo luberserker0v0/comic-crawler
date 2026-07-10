@@ -1,13 +1,26 @@
 import * as cheerio from 'cheerio';
 import type { SafeHtmlFetchResult } from './safe-fetch';
 import type { ParsedMarkdownCandidate } from './types';
+import type { AdapterCapabilities, SiteSelectors } from '@comiccrawler/shared';
 
-export function createPhase1TaskMarkdown(input: { url: string; metadataFetch: SafeHtmlFetchResult }): string {
+export interface ExistingAdapterCapabilityContext {
+  adapterId: string;
+  name: string;
+  capabilities: AdapterCapabilities;
+  imageSelectors?: SiteSelectors['images'];
+  note?: string;
+}
+
+export function createPhase1TaskMarkdown(input: {
+  url: string;
+  metadataFetch: SafeHtmlFetchResult;
+  existingAdapter?: ExistingAdapterCapabilityContext;
+}): string {
   return `# Selector Discovery Phase 1
 
 ## Goal
 
-Analyze the comic metadata page and discover stable selectors for metadata and chapter list extraction.
+Analyze the comic metadata page and discover stable, fine-grained extraction selectors.
 
 Important rules:
 
@@ -24,6 +37,8 @@ Important rules:
 
 ${input.url}
 
+${formatExistingAdapterCapability(input.existingAdapter)}
+
 ## Safe Fetch Summary
 
 - Final URL: ${input.metadataFetch.finalUrl}
@@ -39,7 +54,7 @@ ${summarizeHtmlForAgent(input.metadataFetch.html, input.metadataFetch.finalUrl, 
 Analyze in this order:
 
 1. Identify the primary content container.
-2. Analyze metadata signals: title, author, cover, status, tags, and description.
+2. Analyze each metadata field separately: title, author, cover URL, status, tags, and description.
 3. Analyze chapter-list signals: list container, chapter item, chapter title, and chapter URL.
 4. Choose one representative chapter URL that is likely to contain reader images.
 5. Note whether the chapter list may be collapsed or incomplete.
@@ -51,12 +66,13 @@ export function createPhase2TaskMarkdown(input: {
   url: string;
   phase1Markdown: string;
   chapterFetch: SafeHtmlFetchResult;
+  existingAdapter?: ExistingAdapterCapabilityContext;
 }): string {
   return `# Selector Discovery Phase 2
 
 ## Goal
 
-Use the Phase 1 result and the representative chapter page to produce a final human-reviewable Markdown selector candidate.
+Use the Phase 1 result and the representative chapter page to produce a final human-reviewable Markdown selector candidate with fine-grained extraction sections.
 
 Important rules:
 
@@ -79,6 +95,8 @@ Important rules:
 
 ${input.url}
 
+${formatExistingAdapterCapability(input.existingAdapter)}
+
 ## Phase 1 Result
 
 ${input.phase1Markdown}
@@ -100,8 +118,28 @@ Analyze in this order:
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
 3. Separate comic page images from cover/logo/icon/UI/ad images.
 4. Choose image item selector and source attribute.
-5. Combine the Phase 1 selectors with the image selectors.
+5. Combine the Phase 1 fine-grained selectors with chapter image URL extraction.
 6. Write the final output using the Markdown outline in contracts/candidate-output.md.
+`;
+}
+
+function formatExistingAdapterCapability(existing?: ExistingAdapterCapabilityContext): string {
+  if (!existing) return '';
+  return `## Existing Adapter Capability
+
+- Adapter ID: ${existing.adapterId}
+- Name: ${existing.name}
+- Current capabilities:
+  - verification: ${existing.capabilities.verification ? 'true' : 'false'}
+  - metadata: ${existing.capabilities.metadata ? 'true' : 'false'}
+  - chapterImages: ${existing.capabilities.chapterImages ? 'true' : 'false'}
+- Existing image selectors:
+  - Container: ${existing.imageSelectors?.container ?? ''}
+  - Item: ${existing.imageSelectors?.item ?? ''}
+  - Source Attribute: ${existing.imageSelectors?.srcAttr ?? ''}
+- Required work this run: add metadata and chapter-list selectors to this same adapter identity.
+- Adapter identity rule: keep Adapter ID as ${existing.adapterId}; do not create a new adapter for the same domain.
+- Note: ${existing.note ?? 'Reuse already reviewed image selectors unless the representative chapter explicitly proves a safer replacement.'}
 `;
 }
 
@@ -115,11 +153,11 @@ export function createChapterOnlyTaskMarkdown(input: {
 
 Analyze a comic reader chapter page and produce a chapter-only Markdown selector candidate.
 
-This target implements only chapter image extraction:
+This target implements only chapter image URL extraction:
 
 - Metadata selectors are not required.
 - Chapter list selectors are not required.
-- Image selectors are required.
+- Chapter Image URL Extraction is required.
 - Write Markdown only.
 - Do not output JSON.
 - Do not generate adapter code.
@@ -161,7 +199,7 @@ Analyze in this order:
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
 3. Separate comic page images from cover/logo/icon/UI/ad images.
 4. Choose image item selector and source attribute.
-5. Mark metadata and chapter-list selectors as not required for chapter-only discovery.
+5. Mark metadata and chapter-list extraction sections as not required for chapter-only discovery.
 6. Write the final output using the Markdown outline in contracts/candidate-output.md.
 `;
 }

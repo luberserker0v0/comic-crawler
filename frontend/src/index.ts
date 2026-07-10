@@ -13,6 +13,7 @@ export { StatsCard } from './components/StatsCard';
 
 export { DashboardPage } from './pages/DashboardPage';
 export { TaskManagerPage } from './pages/TaskManagerPage';
+export { AdapterLabPage } from './pages/AdapterLabPage';
 export { SettingsPage } from './pages/SettingsPage';
 export { I18nProvider, useI18n, SUPPORTED_LOCALES } from './text/i18n';
 

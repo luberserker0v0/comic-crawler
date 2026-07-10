@@ -9,7 +9,7 @@ import { getAdapterCapabilities } from '../../adapter/registry';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
 
-interface TaskPreviewFile {
+interface LocalTaskPreviewFile {
   name: string;
   relativePath: string;
   size: number;
@@ -27,8 +27,8 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-async function collectPreviewFiles(rootDir: string, limit = 24): Promise<TaskPreviewFile[]> {
-  const previewFiles: TaskPreviewFile[] = [];
+async function collectPreviewFiles(rootDir: string, limit = 24): Promise<LocalTaskPreviewFile[]> {
+  const previewFiles: LocalTaskPreviewFile[] = [];
 
   async function walk(currentDir: string): Promise<void> {
     if (previewFiles.length >= limit) {
@@ -145,6 +145,7 @@ export function setupTasksRoutes(
         tasks: tasks.map((t) => ({
           id: t.id,
           url: t.data.url,
+          mode: t.data.mode,
           status: t.status,
           priority: t.priority,
           createdAt: t.createdAt,
@@ -196,6 +197,7 @@ export function setupTasksRoutes(
         task: {
           id: task.id,
           url: task.data.url,
+          mode: task.data.mode,
           status: task.status,
           priority: task.priority,
           createdAt: task.createdAt,
@@ -330,7 +332,9 @@ export function setupTasksRoutes(
     } else {
       const matchedAdapter = adapterRegistry.findByUrlWithCapabilities(lookupUrl, requiredCapabilities);
       if (!matchedAdapter) {
-        const anyMatchedAdapter = adapterRegistry.findByUrl(lookupUrl);
+        const exactMatchedAdapter = adapterRegistry.findByUrl(lookupUrl);
+        const domainSupplementAdapter = mode === 'all' ? adapterRegistry.findByUrlDomain(lookupUrl) : undefined;
+        const anyMatchedAdapter = exactMatchedAdapter ?? domainSupplementAdapter;
         if (discoveryService) {
           if (!anyMatchedAdapter && challengeDiscoveryService) {
             const challengeProbe = await challengeDiscoveryService.probe(lookupUrl);

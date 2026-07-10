@@ -54,6 +54,31 @@ describe('HappyMhAdapter', () => {
     expect(metadata.chapters[0]).toMatchObject(expected.chapters[0]);
   });
 
+  it('ignores generic HappyMH headings and cleans site suffixes from manga title', async () => {
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <title>我在星际国家当恶德领主 - 嗨皮漫画</title>
+          <meta property="og:title" content="我在星际国家当恶德领主漫画全集" />
+          <meta name="twitter:title" content="漫画评分" />
+        </head>
+        <body>
+          <h1>漫画评分</h1>
+          <section class="chapter-list">
+            <a href="/mangaread/wozaixingjiguojiadangedelingzhu/3279871">第1话</a>
+          </section>
+        </body>
+      </html>
+    `;
+    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
+
+    const metadata = await adapter.fetchMetadata('https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
+
+    expect(metadata.title).toBe('我在星际国家当恶德领主');
+    expect(metadata.chapters).toHaveLength(1);
+  });
+
   it('parses chapter image URLs from fixture HTML', async () => {
     const html = readFileSync(join(FIXTURES_DIR, 'chapter-page.html'), 'utf-8');
     const expected = JSON.parse(readFileSync(join(FIXTURES_DIR, 'expected-images.json'), 'utf-8')) as string[];

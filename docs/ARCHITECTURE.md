@@ -1,4 +1,4 @@
-# ComicCrawler Architecture
+﻿# ComicCrawler Architecture
 
 ComicCrawler is a local-first monorepo application for adapter-based comic
 crawling. The current runtime is built around a React WebUI, a Fastify backend,
@@ -45,6 +45,12 @@ Adapters identify supported domains and declare capabilities:
 - `chapterImages` - fetch images from chapter URLs.
 - `verification` - participate in verification handoff.
 
+Runtime adapter code is split into an adapter shell plus capability handlers.
+The shell owns identity, domains, fetch/render helpers, and runtime composition;
+handlers own the small extraction functions for `common`, `metadata`,
+`chapterImages`, and `verification`. Agent-generated TypeScript should implement
+capability handlers, not the runtime facade methods.
+
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. Built-in adapters have priority over
 dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
@@ -53,16 +59,16 @@ candidates.
 Selector discovery is intentionally modular:
 
 - Chapter-only discovery is the base unit. It analyzes a chapter reader page and
-  produces image selectors for `fetchChapterImages`.
+  produces selectors for the `chapterImages.extractChapterImageUrls` capability.
 - Full discovery adds metadata/catalog analysis before the same chapter image
   selector step. In other words, a full adapter is metadata/chapter-list
   discovery plus one or more chapter-only image extraction checks.
 
 HappyMH is a representative full-adapter case that requires human verification
 handoff before the crawler can see real manga DOM. Static probes of its catalog
-pages can return a Chinese verification page such as `嗨皮漫画——人机验证`; that
-HTML must be classified as anti-bot content and must not be sent into selector
-discovery or promoted as an adapter candidate.
+pages can return a Chinese human-verification page; that HTML must be classified
+as anti-bot content and must not be sent into selector discovery or promoted as
+an adapter candidate.
 
 ## Crawler rendering
 

@@ -51,8 +51,8 @@ describe('DynamicSiteAdapter capabilities', () => {
     `;
 
     await expect(adapter.fetchChapterImages('https://example.com/manga/demo/chapter-1')).resolves.toEqual([
-      { url: 'https://example.com/images/1.webp', index: 0 },
-      { url: 'https://cdn.example.com/2.webp', index: 1 },
+      { url: 'https://example.com/images/1.webp', index: 0, filename: '001.webp' },
+      { url: 'https://cdn.example.com/2.webp', index: 1, filename: '002.webp' },
     ]);
     await adapter.dispose();
   });
@@ -84,7 +84,7 @@ describe('DynamicSiteAdapter capabilities', () => {
     await expect(
       adapter.withHtmlFetchMode('headless', () => adapter.fetchChapterImages('https://example.com/manga/demo/chapter-1'))
     ).resolves.toEqual([
-      { url: 'https://example.com/rendered/1.webp', index: 0 },
+      { url: 'https://example.com/rendered/1.webp', index: 0, filename: '001.webp' },
     ]);
     expect(render).toHaveBeenCalledWith('https://example.com/manga/demo/chapter-1');
     await adapter.dispose();

@@ -1,5 +1,8 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import type { ComicMetadata, ImageInfo } from '@comiccrawler/shared';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { BaseAdapter } from '../../../src/adapter/base';
 import { CrawlerEngine } from '../../../src/crawler/engine';
 import { ComicError, ErrorType } from '../../../src/error/types';
@@ -43,6 +46,67 @@ class FixtureAdapter extends BaseAdapter {
 }
 
 describe('CrawlerEngine progress tracking', () => {
+  it('should emit metadata, chapter list, stage, and websocket preview payloads', async () => {
+    const eventBus = { emit: jest.fn() };
+    const downloadDir = await fs.mkdtemp(join(tmpdir(), 'comiccrawler-engine-'));
+    const engine = new CrawlerEngine({
+      downloadDir,
+      concurrency: 2,
+      eventBus: eventBus as any,
+    });
+    const metadata = createSingleChapterMetadata();
+    const images: ImageInfo[] = [{ url: 'https://img.example.com/1.jpg', index: 1 }];
+    const adapter = new FixtureAdapter({
+      metadata: () => metadata,
+      images: () => images,
+    });
+    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue('<html></html>');
+
+    await (engine as any).imageDownloader.dispose();
+    (engine as any).imageDownloader = {
+      downloadBatch: jest.fn(async (batch: ImageInfo[], options: { outputDir: string; onProgress?: (completed: number, total: number, result: { path: string }, image: ImageInfo) => void }) => {
+        await fs.mkdir(options.outputDir, { recursive: true });
+        const filePath = join(options.outputDir, '001.jpg');
+        await fs.writeFile(filePath, 'image');
+        options.onProgress?.(1, batch.length, { path: filePath }, batch[0]!);
+        return [{ path: filePath, size: 5, url: batch[0]!.url }];
+      }),
+      dispose: jest.fn(),
+    };
+
+    await engine.crawl(adapter, 'https://example.com/manga/demo', { taskId: 'task-live' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const metadataEvent = eventBus.emit.mock.calls.find(([eventName]) => eventName === 'task:metadata_extracted');
+    const chapterListEvent = eventBus.emit.mock.calls.find(([eventName]) => eventName === 'task:chapter_list_extracted');
+    const previewEvent = eventBus.emit.mock.calls.find(([eventName]) => eventName === 'image:downloaded');
+    const stageProgress = eventBus.emit.mock.calls
+      .filter(([eventName]) => eventName === 'task:progress')
+      .map(([, payload]) => payload as { progress: { stage?: string; stageDetail?: string } });
+
+    expect(metadataEvent?.[1]).toMatchObject({
+      taskId: 'task-live',
+      metadata: expect.objectContaining({ title: 'Demo' }),
+    });
+    expect(chapterListEvent?.[1]).toMatchObject({
+      taskId: 'task-live',
+      chapterListSummary: expect.objectContaining({ totalChapters: 1 }),
+    });
+    expect(stageProgress.some((payload) => payload.progress.stage === 'metadata')).toBe(true);
+    expect(stageProgress.some((payload) => payload.progress.stage === 'downloading')).toBe(true);
+    expect(previewEvent?.[1]).toMatchObject({
+      taskId: 'task-live',
+      imageUrl: images[0]!.url,
+      previewFile: expect.objectContaining({
+        relativePath: expect.stringContaining('001.jpg'),
+        isImage: true,
+        url: expect.stringContaining('/api/tasks/task-live/preview-file'),
+      }),
+    });
+    await adapter.dispose();
+    await engine.dispose();
+    await fs.rm(downloadDir, { recursive: true, force: true });
+  });
+
   it('should determine total images before reporting download progress', async () => {
     const eventBus = { emit: jest.fn() };
     const engine = new CrawlerEngine({

@@ -126,6 +126,22 @@ test.describe('ComicCrawler E2E', () => {
     await expect(preview).toContainText('Images O');
   });
 
+  test('should inspect and live-test an adapter function in Adapter Lab', async ({ page }) => {
+    await page.goto('/adapter-lab');
+    await page.getByTestId('adapter-lab-url').fill('https://kuronavi.one/manga/test');
+    await page.getByTestId('adapter-lab-resolve').click();
+
+    await expect(page.getByText(/Status:/)).toBeVisible();
+    await page.getByRole('button', { name: /Manga metadata/i }).click();
+    await page.getByRole('button', { name: /extractTitle/i }).click();
+    await expect(page.getByText(/builtin-source/i)).toBeVisible();
+    await expect(page.getByText(/async extractTitle/i)).toBeVisible();
+
+    await page.getByTestId('adapter-lab-test').click();
+    await expect(page.locator('.font-semibold').filter({ hasText: /Test passed/ })).toBeVisible();
+    await expect(page.getByText(/"title": "Fixture"/)).toBeVisible();
+  });
+
   test('should discover, promote, and use a new chapter-only dynamic adapter', async ({ request }) => {
     await configureSelectorDiscovery(request);
     const chapterUrl = 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';

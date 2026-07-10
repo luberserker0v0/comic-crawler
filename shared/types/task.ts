@@ -12,10 +12,29 @@ export interface TaskProgress {
   completedChapters: number;
   totalImages: number;
   completedImages: number;
+  stage?: CrawlStage;
+  stageDetail?: string;
   currentChapter?: string;
   currentImage?: number;
   failedImages: number;
   skippedImages: number;
+  metadata?: Record<string, unknown>;
+  chapterListSummary?: ChapterListSummary;
+}
+
+export type CrawlStage =
+  | 'adapter'
+  | 'verification'
+  | 'metadata'
+  | 'chapter_list'
+  | 'chapter_images'
+  | 'downloading'
+  | 'completed'
+  | 'failed';
+
+export interface ChapterListSummary {
+  totalChapters: number;
+  chapters: Array<Pick<ChapterInfo, 'id' | 'title' | 'url'>>;
 }
 
 export interface TaskOptions {

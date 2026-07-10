@@ -35,7 +35,7 @@ export class IncrementalUpdater {
     const localRecord = await this.getLocalRecord(url);
     if (!localRecord) return [];
 
-    const metadata = await adapter.fetchMetadata(url);
+    const metadata = await fetchMetadataForRuntime(adapter, url);
     const updates = this.findNewChapters(localRecord, metadata);
 
     if (updates.length > 0) {
@@ -54,7 +54,17 @@ export class IncrementalUpdater {
     for (const record of records) {
       try {
         const adapterId = record.adapterId;
-        const updates = await this.checkForUpdates({ id: adapterId, name: '', domains: [], parseMode: 'static', matchUrl: () => true, fetchMetadata: async () => ({ id: record.id, title: record.title, chapters: record.chapters }), fetchChapterImages: async () => [] } as IComicAdapter, record.url);
+        const updates = await this.checkForUpdates({
+          id: adapterId,
+          name: '',
+          domains: [],
+          parseMode: 'static',
+          capabilities: { verification: false, metadata: true, chapterImages: false },
+          matchUrl: () => true,
+          loadDocument: async () => ({}),
+          extractTitle: () => record.title,
+          extractChapterList: () => record.chapters,
+        } as unknown as IComicAdapter, record.url);
         results[record.id] = updates;
       } catch {
         results[record.id] = [];
@@ -119,4 +129,23 @@ export class IncrementalUpdater {
       chapterId: chapter.id,
     }));
   }
+}
+
+async function fetchMetadataForRuntime(adapter: IComicAdapter, url: string): Promise<ComicMetadata> {
+  const runtime = adapter as unknown as { fetchMetadata?: (url: string) => Promise<ComicMetadata>; loadDocument?: (url: string) => Promise<unknown> };
+  if (runtime.fetchMetadata) return runtime.fetchMetadata(url);
+  if (!runtime.loadDocument || !adapter.extractTitle || !adapter.extractChapterList) {
+    throw new Error(`Adapter "${adapter.id}" does not expose metadata extraction methods.`);
+  }
+  const document = await runtime.loadDocument(url);
+  return {
+    id: new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? adapter.id,
+    title: await adapter.extractTitle(document, url),
+    author: await adapter.extractAuthor?.(document, url),
+    coverUrl: await adapter.extractCoverUrl?.(document, url),
+    status: await adapter.extractStatus?.(document, url) ?? 'unknown',
+    tags: await adapter.extractTags?.(document, url) ?? [],
+    description: await adapter.extractDescription?.(document, url),
+    chapters: await adapter.extractChapterList(document, url),
+  };
 }

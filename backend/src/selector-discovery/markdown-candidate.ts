@@ -3,9 +3,14 @@ import type { MarkdownCandidateValidation, ParsedMarkdownCandidate } from './typ
 export const REQUIRED_CANDIDATE_HEADINGS = [
   'Adapter Identity',
   'URL Patterns',
-  'Metadata Selectors',
-  'Chapter Selectors',
-  'Image Selectors',
+  'Title Extraction',
+  'Author Extraction',
+  'Description Extraction',
+  'Cover URL Extraction',
+  'Tags Extraction',
+  'Status Extraction',
+  'Chapter List Extraction',
+  'Chapter Image URL Extraction',
   'Evidence',
   'Confidence',
   'Reviewer Checklist',
@@ -32,7 +37,7 @@ export function splitMarkdownSections(markdown: string): Record<string, string> 
 
 export function validateMarkdownCandidate(
   markdown: string,
-  options?: { target?: 'full' | 'chapter-only' }
+  options?: { target?: 'full' | 'chapter-only'; allowExistingImageSelectors?: boolean }
 ): MarkdownCandidateValidation {
   const sections = splitMarkdownSections(markdown);
   const parsed = parseMarkdownCandidate(markdown);
@@ -52,7 +57,9 @@ export function validateMarkdownCandidate(
     warnings.push(`Candidate did not use every exact contract heading: ${missingHeadings.join(', ')}`);
   }
 
-  const hasMinimumImageSelectors = Boolean(parsed.selectors.images?.item && parsed.selectors.images?.srcAttr);
+  const hasMinimumImageSelectors = options?.allowExistingImageSelectors
+    ? true
+    : Boolean(parsed.selectors.images?.item && parsed.selectors.images?.srcAttr);
   const hasMinimumSelectors = options?.target === 'chapter-only'
     ? hasMinimumImageSelectors
     : Boolean(
@@ -74,20 +81,30 @@ export function parseMarkdownCandidate(markdown: string): ParsedMarkdownCandidat
   const sourceHostname = sourceUrl ? new URL(sourceUrl).hostname : undefined;
   const identity = rawSections['Adapter Identity'] ?? '';
   const metadata = rawSections['Metadata Selectors'] ?? '';
-  const chapters = rawSections['Chapter Selectors'] ?? '';
+  const titleExtraction = rawSections['Title Extraction'] ?? '';
+  const authorExtraction = rawSections['Author Extraction'] ?? '';
+  const descriptionExtraction = rawSections['Description Extraction'] ?? '';
+  const coverExtraction = rawSections['Cover URL Extraction'] ?? rawSections['Cover Extraction'] ?? '';
+  const tagsExtraction = rawSections['Tags Extraction'] ?? '';
+  const statusExtraction = rawSections['Status Extraction'] ?? '';
+  const chapters = rawSections['Chapter Selectors'] ?? rawSections['Chapter List Extraction'] ?? '';
   const images = [
     rawSections['Image Selectors'] ?? '',
+    rawSections['Chapter Image URL Extraction'] ?? '',
     rawSections['Image Lazy-Loading Candidates (For Optimization)'] ?? '',
     rawSections['Image Lazy-Loading Candidates'] ?? '',
   ].filter(Boolean).join('\n\n');
   const chapterLink = readSelector(chapters, 'Individual Chapter Link')
     ?? readSelectorFromSections(rawSections, 'Chapter Item')
+    ?? readSelector(chapters, 'URL Selector')
+    ?? readSelector(chapters, 'Item Selector')
     ?? readSelector(chapters, 'URL')
     ?? readSelector(chapters, 'Url')
     ?? '';
   const imageItem = readSelector(images, 'Lazy-Loaded Image Item')
     ?? readSelector(images, 'Primary Chapter Image Item')
     ?? readSelectorFromSections(rawSections, 'Image Item Selector')
+    ?? readSelector(images, 'Item Selector')
     ?? readSelector(images, 'Item')
     ?? '';
 
@@ -98,17 +115,17 @@ export function parseMarkdownCandidate(markdown: string): ParsedMarkdownCandidat
     urlPatterns: [...readList(rawSections['URL Patterns'] ?? '', 'Pattern'), ...(sourceUrl ? [`${new URL(sourceUrl).origin}/manga/*`] : [])].filter(unique),
     selectors: {
       metadata: {
-        title: readSelector(metadata, 'Title') ?? readSelectorFromSections(rawSections, 'Title') ?? '',
-        author: readSelector(metadata, 'Author') ?? readSelectorFromSections(rawSections, 'Author') ?? '',
-        cover: readSelector(metadata, 'Cover Image') ?? readSelector(metadata, 'Cover') ?? readSelectorFromSections(rawSections, 'Cover Image URL') ?? '',
-        status: readSelector(metadata, 'Status') ?? readSelectorFromSections(rawSections, 'Status') ?? '',
-        tags: readSelector(metadata, 'Tags') ?? readSelectorFromSections(rawSections, 'Tags') ?? '',
-        description: readSelector(metadata, 'Description') ?? readSelectorFromSections(rawSections, 'Description'),
+        title: readSelector(titleExtraction, 'Selector') ?? readSelector(metadata, 'Title') ?? readSelectorFromSections(rawSections, 'Title') ?? '',
+        author: readSelector(authorExtraction, 'Selector') ?? readSelector(metadata, 'Author') ?? readSelectorFromSections(rawSections, 'Author') ?? '',
+        cover: readSelector(coverExtraction, 'Selector') ?? readSelector(metadata, 'Cover Image') ?? readSelector(metadata, 'Cover') ?? readSelectorFromSections(rawSections, 'Cover Image URL') ?? '',
+        status: readSelector(statusExtraction, 'Selector') ?? readSelector(metadata, 'Status') ?? readSelectorFromSections(rawSections, 'Status') ?? '',
+        tags: readSelector(tagsExtraction, 'Selector') ?? readSelector(metadata, 'Tags') ?? readSelectorFromSections(rawSections, 'Tags') ?? '',
+        description: readSelector(descriptionExtraction, 'Selector') ?? readSelector(metadata, 'Description') ?? readSelectorFromSections(rawSections, 'Description'),
       },
       chapters: {
-        list: readSelector(chapters, 'Chapter List Container') ?? readSelector(chapters, 'List') ?? readSelectorFromSections(rawSections, 'Chapter List Container') ?? '',
-        item: readSelector(chapters, 'Item') ?? chapterLink,
-        title: readSelector(chapters, 'Title'),
+        list: readSelector(chapters, 'List Selector') ?? readSelector(chapters, 'Chapter List Container') ?? readSelector(chapters, 'List') ?? readSelectorFromSections(rawSections, 'Chapter List Container') ?? '',
+        item: readSelector(chapters, 'Item Selector') ?? readSelector(chapters, 'Item') ?? chapterLink,
+        title: readSelector(chapters, 'Title Selector') ?? readSelector(chapters, 'Title'),
         url: chapterLink,
       },
       images: {
@@ -127,6 +144,8 @@ function normalizeHeading(heading: string): string {
     heading === required || heading.startsWith(`${required} `) || heading.startsWith(`${required} (`)
   );
   if (direct) return direct;
+  if (/^Metadata Selectors\b/i.test(heading)) return 'Metadata Selectors';
+  if (/^Image Selectors\b/i.test(heading)) return 'Image Selectors';
   if (/^Chapter List Selectors\b/i.test(heading)) return 'Chapter Selectors';
   if (/^Summary of Findings|Confidence Assessment|Validation/i.test(heading)) return 'Confidence';
   return heading;

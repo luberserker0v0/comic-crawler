@@ -100,7 +100,9 @@ export class ComicCrawlerServer {
       this.options.challengeDiscoveryService
     );
     setupConfigRoutes(this.app, this.options.configManager);
-    setupAdaptersRoutes(this.app, this.options.adapterRegistry);
+    setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
+      challengeDiscoveryService: this.options.challengeDiscoveryService,
+    });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
     if (this.options.selectorDiscoveryService && this.options.selectorDiscoverySettingsStore) {
       setupSelectorDiscoveryRoutes(

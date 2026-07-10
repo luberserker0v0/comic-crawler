@@ -2,7 +2,7 @@ import type { SiteSelectors } from '@comiccrawler/shared';
 
 export const HAPPYMH_SELECTORS: SiteSelectors = {
   metadata: {
-    title: 'h1, .comic-title, .detail-title, .manga-title, meta[property="og:title"], title',
+    title: '.detail-title, .comic-title, .manga-title, meta[property="og:title"], meta[name="twitter:title"], title, h1',
     author: '.author, .comic-author, .detail-author, a[href*="author"]',
     cover: 'meta[property="og:image"], .cover img, .comic-cover img, .detail-cover img, img[src*="cover"]',
     status: '.status, .comic-status, .detail-status',

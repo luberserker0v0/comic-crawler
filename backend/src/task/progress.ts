@@ -1,3 +1,4 @@
+import type { ChapterListSummary, CrawlStage } from '@comiccrawler/shared';
 import type { EventBus } from '../events/bus';
 
 export interface TaskProgress {
@@ -5,7 +6,11 @@ export interface TaskProgress {
   totalItems: number;
   completedItems: number;
   failedItems: number;
+  stage?: CrawlStage;
+  stageDetail?: string;
   currentItems?: string;
+  metadata?: Record<string, unknown>;
+  chapterListSummary?: ChapterListSummary;
   percentage: number;
   startedAt: Date;
   updatedAt: Date;
@@ -115,7 +120,11 @@ export class ProgressTracker {
         totalImages: progress.totalItems,
         completedImages: progress.completedItems,
         failedImages: progress.failedItems,
+        stage: progress.stage,
+        stageDetail: progress.stageDetail,
         currentChapter: progress.currentItems,
+        metadata: progress.metadata,
+        chapterListSummary: progress.chapterListSummary,
       },
     });
   }
