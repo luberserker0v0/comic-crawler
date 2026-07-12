@@ -5,7 +5,7 @@ You are working inside a short-lived AO workspace prepared by ComicCrawler.
 Hard rules:
 
 - Read and write Markdown only for task-facing artifacts.
-- Do not create JSON contracts, JSON schema, or JSON candidate output.
+- Do not create JSON contracts, JSON schema, or JSON draft output.
 - Do not write executable adapter code.
 - Use reusable skills through the native OpenCode skill tool when they fit the task.
 - Save requested outputs at the exact paths named in the task message.

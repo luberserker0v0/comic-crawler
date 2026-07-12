@@ -25,15 +25,12 @@ export function looksLikeAntiBotChallenge(html: string): boolean {
 
   const imageCount = (html.match(/<img\b/gi) ?? []).length;
   const anchorCount = (html.match(/<a\s/gi) ?? []).length;
+  const isSparseChallengeDocument = imageCount === 0 && anchorCount === 0;
   return (
-    (imageCount === 0 && anchorCount === 0) ||
+    isSparseChallengeDocument ||
     lower.includes('attention required! | cloudflare') ||
     lower.includes('sorry, you have been blocked') ||
-    lower.includes('you are unable to access') ||
-    lower.includes('人机验证') ||
-    lower.includes('人機驗證') ||
-    lower.includes('嗨皮漫画——人机验证') ||
-    lower.includes('嗨皮漫畫——人機驗證')
+    lower.includes('you are unable to access')
   );
 }
 

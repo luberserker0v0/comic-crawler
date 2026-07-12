@@ -1,6 +1,6 @@
 ---
 name: challenge-diagnosis
-description: Diagnose browser challenge pages from rendered page evidence without producing selector candidates.
+description: Diagnose browser challenge pages from rendered page evidence without producing selector drafts.
 ---
 
 # Skill

@@ -1,4 +1,4 @@
-# Final Candidate Output Contract
+# Final Draft Output Contract
 
 Use these exact second-level headings. Do not rename them, do not add parenthetical suffixes, and do not replace them with prose headings.
 

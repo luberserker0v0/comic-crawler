@@ -137,7 +137,13 @@ export function setupChallengeDiscoveryRoutes(
   app.post('/api/challenge-discovery/:id/complete-human-verification', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
-      reply.code(202).send({ data: await challengeDiscoveryService.completeHumanVerification(id) });
+      const body = request.body as { settle?: boolean; allowNavigate?: boolean } | undefined;
+      reply.code(202).send({
+        data: await challengeDiscoveryService.completeHumanVerification(id, {
+          settle: body?.settle,
+          allowNavigate: body?.allowNavigate,
+        }),
+      });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

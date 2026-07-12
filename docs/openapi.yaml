@@ -188,7 +188,7 @@ paths:
           $ref: "#/components/responses/Error"
   /api/selector-discovery/{id}/promote:
     post:
-      summary: Promote a reviewed selector candidate
+      summary: Promote a reviewed selector draft
       parameters:
         - $ref: "#/components/parameters/DiscoveryId"
       responses:

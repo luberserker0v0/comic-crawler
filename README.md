@@ -105,9 +105,16 @@ Environment variables override persisted config for process-level deployment set
 | Frontend dev port | `COMICCRAWLER_FRONTEND_PORT`, `FRONTEND_PORT` | `5173` |
 | Frontend API proxy target | `COMICCRAWLER_API_TARGET` | `http://<backend-host>:<backend-port>` |
 | Frontend WS proxy target | `COMICCRAWLER_WS_TARGET` | `ws://<backend-host>:<backend-port>` |
-| Data path | `COMICCRAWLER_DATA_PATH`, `DATA_PATH` | `./data` |
+| Data path | `COMICCRAWLER_DATA_PATH`, `DATA_PATH` | dev: `./data`; packaged/production: OS app data directory |
 | Agent workspace path | `AGENT_WORKSPACE_PATH` | `<data-path>/agent-workspaces` |
 | Static frontend dir | `STATIC_DIR` | unset |
+
+ComicCrawler resolves a single data root at bootstrap. Environment variables have
+highest priority; otherwise development uses `repo/data/`, while packaged or
+production runs use the OS application data directory such as
+`%LOCALAPPDATA%/ComicCrawler` on Windows. New runtime areas are grouped under
+`config/`, `user/`, `runtime/`, `agent-workspaces/`, and `logs/`; legacy flat
+files in `data/` remain supported during migration.
 
 Example:
 

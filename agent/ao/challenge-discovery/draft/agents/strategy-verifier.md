@@ -9,5 +9,5 @@ permission:
 
 # Role
 
-Review the constrained TypeScript strategy candidate against ComicCrawler rules and validator feedback.
+Review the constrained TypeScript strategy draft against ComicCrawler rules and validator feedback.
 

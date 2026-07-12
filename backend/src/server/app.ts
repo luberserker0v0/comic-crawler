@@ -7,6 +7,8 @@ import type { EventBus } from '../events/bus';
 import type { AgentAdminService } from '../agent/admin-service';
 import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '../selector-discovery';
 import type { ChallengeDiscoveryService } from '../challenge';
+import type { AdapterDraftService } from '../adapter-drafts/service';
+import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -14,6 +16,8 @@ import { setupSearchRoutes } from './routes/search';
 import { setupAgentRoutes } from './routes/agent';
 import { setupSelectorDiscoveryRoutes } from './routes/selector-discovery';
 import { setupChallengeDiscoveryRoutes } from './routes/challenge-discovery';
+import { setupFixtureRoutes } from './routes/fixtures';
+import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { logger } from '../utils/logger';
@@ -30,6 +34,8 @@ export interface ServerOptions {
   selectorDiscoveryService?: SelectorDiscoveryService;
   selectorDiscoverySettingsStore?: SelectorDiscoverySettingsStore;
   challengeDiscoveryService?: ChallengeDiscoveryService;
+  adapterDraftService?: AdapterDraftService;
+  fixtureCaptureService?: FixtureCaptureService;
   staticDir?: string;
   cors?: { origin: string[] };
   auth?: { username: string; password: string };
@@ -102,8 +108,15 @@ export class ComicCrawlerServer {
     setupConfigRoutes(this.app, this.options.configManager);
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
+      fixtureCaptureService: this.options.fixtureCaptureService,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
+    setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
+    if (this.options.adapterDraftService) {
+      setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
+        challengeDiscoveryService: this.options.challengeDiscoveryService,
+      });
+    }
     if (this.options.selectorDiscoveryService && this.options.selectorDiscoverySettingsStore) {
       setupSelectorDiscoveryRoutes(
         this.app,

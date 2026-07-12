@@ -72,6 +72,22 @@ describe('anti-bot challenge detection', () => {
     expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).toThrow(ComicError);
   });
 
+  it('does not flag normal HappyMH comic DOM that only keeps verification words in scripts', () => {
+    const html = `<!doctype html>
+      <html>
+        <head><title>我在星际国家当恶德领主 - 嗨皮漫画</title></head>
+        <body>
+          <h1>我在星际国家当恶德领主</h1>
+          <a href="/mangaread/demo/1">第1话</a>
+          <img src="/cover/demo.jpg" />
+          <script>window.i18n = {"challengeLabel":"人机验证"}</script>
+        </body>
+      </html>`;
+
+    expect(looksLikeAntiBotChallenge(html)).toBe(false);
+    expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).not.toThrow();
+  });
+
   it('waits for JavaScript challenge pages to become normal DOM', async () => {
     const challengeHtml = `<!doctype html><title>Attention Required! | Cloudflare</title><script src="/cdn-cgi/challenge-platform/x.js"></script>`;
     const normalHtml = `<!doctype html><a href="/chapter-1">Chapter 1</a><img src="/page-1.jpg" />`;

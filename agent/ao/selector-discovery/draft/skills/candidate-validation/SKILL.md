@@ -1,6 +1,6 @@
 ---
 name: candidate-validation
-description: Validate Markdown selector candidates for completeness, confidence, evidence, and reviewer readiness.
+description: Validate Markdown selector drafts for completeness, confidence, evidence, and reviewer readiness.
 compatibility: opencode
 metadata:
   project: ComicCrawler

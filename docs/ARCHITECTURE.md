@@ -17,8 +17,22 @@ repo/
   data/            ignored runtime state
 ```
 
-`repo/` is the source-of-truth Git root. Runtime data belongs under `data/` and
-is not committed.
+`repo/` is the source-of-truth Git root. Runtime data is ignored and not
+committed. Development defaults to `repo/data/`; packaged or production runs use
+the OS application data directory unless `COMICCRAWLER_DATA_PATH` overrides it.
+
+The resolved data root is organized for new features as:
+
+```text
+<data-root>/
+  config/           app and integration settings
+  user/             user-owned drafts and preferences
+  runtime/          task/challenge/checkpoint state
+  agent-workspaces/ Agent/AO discovery, fixtures, eval artifacts
+  logs/
+```
+
+Legacy flat files directly under `data/` remain supported during migration.
 
 ## Main flow
 
@@ -55,7 +69,7 @@ capability handlers only, not runtime composer facade functions.
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. Built-in adapters have priority over
 dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
-candidates.
+drafts.
 
 Selector discovery is intentionally modular:
 
@@ -69,7 +83,7 @@ HappyMH is a representative full-adapter case that requires human verification
 handoff before the crawler can see real manga DOM. Static probes of its catalog
 pages can return a Chinese human-verification page; that HTML must be classified
 as anti-bot content and must not be sent into selector discovery or promoted as
-an adapter candidate.
+an adapter draft.
 
 ## Crawler rendering
 
@@ -119,14 +133,14 @@ again.
 
 AO bundle sources live under `agent/ao/`.
 
-- `selector-discovery` produces Markdown selector candidates for unknown or
+- `selector-discovery` produces Markdown selector drafts for unknown or
   capability-missing sites.
 - Human verification is handled in the current public flow through handoff jobs
   exposed under the historical `/api/challenge-discovery/*` namespace.
-- Restricted challenge strategy candidates are experimental/internal work and
+- Restricted challenge strategy drafts are experimental/internal work and
   are not the normal crawl path.
 
-Agent-facing task and candidate artifacts use Markdown section contracts rather
+Agent-facing task and draft artifacts use Markdown section contracts rather
 than JSON contracts. JSON remains limited to system settings such as
 `opencode.json`, provider documents, API payloads, and internal manifests.
 

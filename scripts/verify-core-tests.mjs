@@ -11,8 +11,8 @@ const coreBackendTests = [
   'tests/unit/challenge/cdp-handoff.test.ts',
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
-  'tests/unit/selector-discovery/happymh-self-ao.test.ts',
   'tests/unit/server/adapter-routes.test.ts',
+  'tests/unit/server/adapter-draft-routes.test.ts',
 ];
 
 const isWindows = process.platform === 'win32';

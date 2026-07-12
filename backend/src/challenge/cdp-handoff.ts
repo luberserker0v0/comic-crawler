@@ -35,24 +35,36 @@ export async function inspectCdpBrowser(cdpUrl: string): Promise<CdpConnectionSu
 export async function findCdpPageHtml(input: {
   cdpUrl: string;
   targetUrl: string;
+  settle?: boolean;
+  expandCatalog?: boolean;
+  allowNavigate?: boolean;
 }): Promise<{ url: string; title: string; html: string }> {
   const endpoint = validateLocalCdpUrl(input.cdpUrl);
   const target = new URL(input.targetUrl);
+  const allowNavigate = input.allowNavigate ?? true;
   const browser = await chromium.connectOverCDP(endpoint.href);
   try {
     const pages = browser.contexts().flatMap((context) => context.pages());
     const page = pages.find((candidate) => samePage(candidate.url(), target.href))
-      ?? pages.find((candidate) => sameHostname(candidate.url(), target.hostname));
+      ?? (allowNavigate ? pages.find((candidate) => sameHostname(candidate.url(), target.hostname)) : undefined);
     if (!page) {
       throw new Error(`No CDP page matched ${target.href}. Open the target page in your browser first.`);
     }
     if (!samePage(page.url(), target.href)) {
+      if (!allowNavigate) {
+        throw new Error(`No CDP page matched ${target.href}. Current page is ${page.url()}.`);
+      }
       await page.goto(target.href, {
         waitUntil: 'domcontentloaded',
         timeout: 60000,
       });
     }
-    await settleLazyLoadedImages(page);
+    if (input.expandCatalog) {
+      await expandCatalogControls(page);
+    }
+    if (input.settle ?? true) {
+      await settleLazyLoadedImages(page);
+    }
     return {
       url: page.url(),
       title: await page.title().catch(() => ''),
@@ -91,19 +103,18 @@ async function settleLazyLoadedImages(page: import('playwright').Page): Promise<
 
 async function expandCatalogControls(page: import('playwright').Page): Promise<void> {
   const expandLabels = [
-    '全部章节',
-    '全部章節',
-    '展开全部',
-    '展開全部',
-    '显示全部',
-    '顯示全部',
-    '更多章节',
-    '更多章節',
-    '展开',
-    '展開',
-    '更多',
+    '\u5168\u90e8\u7ae0\u8282',
+    '\u5168\u90e8\u7ae0\u7bc0',
+    '\u5c55\u5f00\u5168\u90e8',
+    '\u5c55\u958b\u5168\u90e8',
+    '\u663e\u793a\u5168\u90e8',
+    '\u986f\u793a\u5168\u90e8',
+    '\u66f4\u591a\u7ae0\u8282',
+    '\u66f4\u591a\u7ae0\u7bc0',
+    '\u5c55\u5f00',
+    '\u5c55\u958b',
+    '\u66f4\u591a',
   ];
-
   for (const label of expandLabels) {
     const locator = page.locator('button, a, [role="button"]')
       .filter({ hasText: label })

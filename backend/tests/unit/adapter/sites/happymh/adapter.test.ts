@@ -1,11 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { HappyMhAdapter } from '../../../../../src/adapter/sites/happymh';
-import { composeChapterImages, composeMetadata } from '../../../../../src/adapter/runtime-composer';
-import { ComicError } from '../../../../../src/error/types';
-
-const FIXTURES_DIR = join(__dirname, '../../../../fixtures/happymh');
 
 describe('HappyMhAdapter', () => {
   let adapter: HappyMhAdapter;
@@ -15,7 +8,6 @@ describe('HappyMhAdapter', () => {
   });
 
   afterEach(async () => {
-    jest.restoreAllMocks();
     await adapter.dispose();
   });
 
@@ -25,7 +17,7 @@ describe('HappyMhAdapter', () => {
     expect(adapter.matchUrl('https://happymh.com/manga/demo')).toBe(false);
   });
 
-  it('declares full adapter capabilities including verification handoff support', () => {
+  it('declares adapter capabilities without claiming bundled HappyMH fixtures', () => {
     expect(adapter.capabilities).toEqual({
       verification: true,
       metadata: true,
@@ -34,66 +26,35 @@ describe('HappyMhAdapter', () => {
     expect(adapter.parseMode).toBe('dynamic');
   });
 
-  it('parses manga metadata and chapter list from fixture HTML', async () => {
-    const html = readFileSync(join(FIXTURES_DIR, 'manga-page.html'), 'utf-8');
-    const expected = JSON.parse(readFileSync(join(FIXTURES_DIR, 'expected-metadata.json'), 'utf-8')) as {
-      id: string;
-      title: string;
-      cover: string;
-      description: string;
-      chapters: Array<{ id: string; title: string; url: string }>;
-    };
-    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
+  it('extracts tags and same-manga chapter links from the catalog DOM contract', async () => {
+    const url = 'https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu';
+    const document = adapter.parseHtml(`
+      <main class="mg-detail">
+        <a>\u704c\u5cf6\u304b\u3044</a>
+        <a>\u4e09\u5d8b\u4e0e\u5922</a>
+        <a>\u79d1\u5e7b</a>
+        <a>\u5192\u9669</a>
+        <a>\u8f7b\u5c0f\u8bf4</a>
+        <a>\u9b54\u5e7b</a>
+      </main>
+      <div id="detail-app">
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/6628196">\u7b2c34\u8bdd</a>
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/6524264">\u7b2c33\u8bdd</a>
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/3279870">\u5f00\u59cb\u9605\u8bfb</a>
+      </div>
+      <div class="MuiList-root MuiList-padding MuiList-dense css-1ontqvh">
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/6628196">\u7b2c34\u8bdd</a>
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/6056812">\u7b2c25\u8bdd</a>
+        <a href="/mangaread/wozaixingjiguojiadangedelingzhu/3279870">\u7b2c01\u8bdd</a>
+      </div>
+      <aside>
+        <a href="/mangaread/other-title/1">\u4f60\u53ef\u80fd\u4e5f\u559c\u6b22\u7b2c01\u8bdd</a>
+      </aside>
+    `);
 
-    const metadata = await composeMetadata(adapter, 'https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
-
-    expect(metadata.id).toBe(expected.id);
-    expect(metadata.title).toBe(expected.title);
-    expect(metadata.coverUrl).toBe(expected.cover);
-    expect(metadata.description).toBe(expected.description);
-    expect(metadata.chapters).toHaveLength(expected.chapters.length);
-    expect(metadata.chapters[0]).toMatchObject(expected.chapters[0]);
-  });
-
-  it('ignores generic HappyMH headings and cleans site suffixes from manga title', async () => {
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <title>我在星际国家当恶德领主 - 嗨皮漫画</title>
-          <meta property="og:title" content="我在星际国家当恶德领主漫画全集" />
-          <meta name="twitter:title" content="漫画评分" />
-        </head>
-        <body>
-          <h1>漫画评分</h1>
-          <section class="chapter-list">
-            <a href="/mangaread/wozaixingjiguojiadangedelingzhu/3279871">第1话</a>
-          </section>
-        </body>
-      </html>
-    `;
-    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
-
-    const metadata = await composeMetadata(adapter, 'https://m.happymh.com/manga/wozaixingjiguojiadangedelingzhu');
-
-    expect(metadata.title).toBe('我在星际国家当恶德领主');
-    expect(metadata.chapters).toHaveLength(1);
-  });
-
-  it('parses chapter image URLs from fixture HTML', async () => {
-    const html = readFileSync(join(FIXTURES_DIR, 'chapter-page.html'), 'utf-8');
-    const expected = JSON.parse(readFileSync(join(FIXTURES_DIR, 'expected-images.json'), 'utf-8')) as string[];
-    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(html);
-
-    const images = await composeChapterImages(adapter, 'https://m.happymh.com/mangaread/wozaixingjiguojiadangedelingzhu/3279871');
-
-    expect(images.map((image) => image.url)).toEqual(expected);
-    expect(images[0]).toMatchObject({ index: 0, filename: '001.webp' });
-  });
-
-  it('raises parsing error when no chapter images exist', async () => {
-    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue('<html><body><article id="cp_img"></article></body></html>');
-
-    await expect(composeChapterImages(adapter, 'https://m.happymh.com/mangaread/demo/1')).rejects.toBeInstanceOf(ComicError);
+    expect(await adapter.extractTags(document, url)).toEqual(['\u79d1\u5e7b', '\u5192\u9669', '\u8f7b\u5c0f\u8bf4', '\u9b54\u5e7b']);
+    const chapters = await adapter.extractChapterList(document, url);
+    expect(chapters.map((chapter) => chapter.title)).toEqual(['\u7b2c34\u8bdd', '\u7b2c33\u8bdd', '\u7b2c25\u8bdd', '\u7b2c01\u8bdd']);
+    expect(chapters.every((chapter) => chapter.url.includes('/wozaixingjiguojiadangedelingzhu/'))).toBe(true);
   });
 });

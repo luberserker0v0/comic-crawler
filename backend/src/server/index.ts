@@ -2,6 +2,7 @@ export { ComicCrawlerServer } from './app';
 export { setupTasksRoutes } from './routes/tasks';
 export { setupConfigRoutes } from './routes/config';
 export { setupAdaptersRoutes } from './routes/adapters';
+export { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 export { setupSearchRoutes } from './routes/search';
 export { setupAgentRoutes } from './routes/agent';
 export { setupSelectorDiscoveryRoutes } from './routes/selector-discovery';

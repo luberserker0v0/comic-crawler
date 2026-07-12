@@ -4,6 +4,7 @@ import { runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '.
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { resolveRuntimeConfig } from '../../config/runtime';
+import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 
 export function setupSelectorDiscoveryRoutes(
   app: FastifyInstance,
@@ -132,6 +133,18 @@ function setupDiscoveryJobRoutes(
       }
       if (body.target && body.target !== 'chapter-only') {
         reply.code(400).send({ error: 'HTML snapshot discovery currently supports only chapter-only target.' });
+        return;
+      }
+      const readiness = new DomReadinessChecker().check({
+        url: body.finalUrl ?? body.url,
+        html: body.html,
+        target: 'chapterImages',
+      });
+      if (readiness.status !== 'ready') {
+        reply.code(400).send({
+          error: `HTML snapshot is not trusted enough for selector discovery: ${readiness.reasons.join(' ')}`,
+          data: { readiness },
+        });
         return;
       }
 

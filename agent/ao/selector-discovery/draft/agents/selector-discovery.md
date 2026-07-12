@@ -28,17 +28,17 @@ Chapter-only discovery means chapter image extraction only; do not invent metada
 # Workflow
 
 1. Load `site-analysis` when reasoning about page type, metadata, chapter lists, or representative chapter URLs.
-2. Use the Task tool to ask `dom-structure-analyst` for DOM observations and selector candidates.
+2. Use the Task tool to ask `dom-structure-analyst` for DOM observations and selector drafts.
 3. Load `selector-extraction` before choosing final selectors.
 4. Use the Task tool to ask `selector-verifier` to review completeness and risks.
-5. Load `candidate-validation` before finalizing candidate output.
+5. Load `candidate-validation` before finalizing draft output.
 6. Write the requested Markdown output file.
 
 # Output style
 
 - Use headings exactly as requested by the contract Markdown files.
 - Do not add suffixes such as "(Manga Page)" to required headings.
-- For final candidates, the first required section must be exactly `## Adapter Identity`.
+- For final drafts, the first required section must be exactly `## Adapter Identity`.
 - Put selectors as simple labeled Markdown lines, for example `- Title: h1`.
 - Include evidence and uncertainty in prose.
 - If a field is unknown, write `unknown` and explain why.

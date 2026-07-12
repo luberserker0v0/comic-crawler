@@ -192,25 +192,25 @@ async function start() {
       </html>`);
   });
 
-  server.getApp().get('/api/fixtures/self-ao-generated-chapter', async (_request, reply) => {
+  server.getApp().get('/api/fixtures/fixture-replay-generated-chapter', async (_request, reply) => {
     reply.type('text/html').send(`<!doctype html>
       <html>
-        <head><title>Self-AO Generated Chapter</title></head>
+        <head><title>Fixture Replay Generated Chapter</title></head>
         <body>
           <main id="reader">
-            <img class="self-ao-page" data-src="/api/fixtures/discovery-image.jpg" />
+            <img class="fixture-replay-page" data-src="/api/fixtures/discovery-image.jpg" />
           </main>
         </body>
       </html>`);
   });
 
-  server.getApp().get('/api/fixtures/self-ao-promote-chapter', async (_request, reply) => {
+  server.getApp().get('/api/fixtures/fixture-replay-draft-chapter', async (_request, reply) => {
     reply.type('text/html').send(`<!doctype html>
       <html>
-        <head><title>Self-AO Promote Chapter</title></head>
+        <head><title>Fixture Replay Draft Chapter</title></head>
         <body>
           <main id="reader">
-            <img class="self-ao-promote-page" data-src="/api/fixtures/discovery-image.jpg" />
+            <img class="fixture-replay-draft-page" data-src="/api/fixtures/discovery-image.jpg" />
           </main>
         </body>
       </html>`);
@@ -270,7 +270,7 @@ async function start() {
     reply.send({ host, verified: true });
   });
 
-  server.getApp().post('/__test/register-self-ao-generated-adapter', async (request, reply) => {
+  server.getApp().post('/__test/register-fixture-replay-generated-adapter', async (request, reply) => {
     const manifest = request.body;
     if (adapterRegistry.has(manifest.adapterId)) {
       adapterRegistry.unregister(manifest.adapterId);
@@ -453,15 +453,15 @@ function fakeCandidateMarkdown(text = '') {
   const sourceUrl = extractSourceUrl(text) || 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';
   const source = new URL(sourceUrl);
   const isChallengeClears = sourceUrl.includes('challenge-clears');
-  const isSelfAoPromote = sourceUrl.includes('self-ao-promote');
-  const adapterId = isSelfAoPromote ? 'self-ao-promote-e2e' : isChallengeClears ? 'challenge-clears-e2e' : 'discovery-e2e';
-  const name = isSelfAoPromote ? 'Self-AO Promote E2E' : isChallengeClears ? 'Challenge Clears E2E' : 'Discovery E2E';
+  const isFixtureReplayDraft = sourceUrl.includes('fixture-replay-draft');
+  const adapterId = isFixtureReplayDraft ? 'fixture-replay-draft-e2e' : isChallengeClears ? 'challenge-clears-e2e' : 'discovery-e2e';
+  const name = isFixtureReplayDraft ? 'Fixture Replay Draft E2E' : isChallengeClears ? 'Challenge Clears E2E' : 'Discovery E2E';
   const pattern = isChallengeClears
     ? `${source.origin}/api/fixtures/challenge-*`
-    : isSelfAoPromote
-      ? `${source.origin}/api/fixtures/self-ao-promote-*`
+    : isFixtureReplayDraft
+      ? `${source.origin}/api/fixtures/fixture-replay-draft-*`
     : `${source.origin}/api/fixtures/discovery-*`;
-  const imageItemSelector = isSelfAoPromote ? 'img.self-ao-promote-page' : 'img.page-image';
+  const imageItemSelector = isFixtureReplayDraft ? 'img.fixture-replay-draft-page' : 'img.page-image';
   return `## Adapter Identity
 
 - Adapter ID: ${adapterId}

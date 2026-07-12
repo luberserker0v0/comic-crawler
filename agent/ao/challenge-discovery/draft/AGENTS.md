@@ -8,5 +8,5 @@ Important rules:
 - Write evidence in Markdown.
 - Strategy code may be TypeScript, but it must only use the provided `ctx` API.
 - Do not use imports, require, process, page.evaluate, mouse, keyboard, direct clicks, stealth, fingerprint changes, or external solving services.
-- Do not produce selector candidates from challenge DOM.
+- Do not produce selector drafts from challenge DOM.
 

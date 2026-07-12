@@ -3,7 +3,7 @@
   "type": "negative",
   "enabled": false,
   "live": true,
-  "description": "Kuronavi search page should not become a comic metadata adapter candidate. Disabled until live negative AO runs are explicitly scheduled.",
+  "description": "Kuronavi search page should not become a comic metadata adapter draft. Disabled until live negative AO runs are explicitly scheduled.",
   "url": "https://kuronavi.one/search/manga",
   "defaultRuns": 1,
   "expectations": {

@@ -210,13 +210,13 @@ describe('SelectorDiscoveryService shadow promotion', () => {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const staleManifest: DynamicSiteAdapterManifest = {
-      adapterId: 'example-chapter-only-self-ao',
-      name: 'Example Chapter-only Self-AO Candidate',
+      adapterId: 'example-chapter-only-fixture-replay',
+      name: 'Example Chapter-only Fixture Replay Candidate',
       domains: ['example.com'],
       urlPatterns: ['https://example.com/mangaread/*/*'],
       capabilities: { verification: true, metadata: false, chapterImages: true },
       selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-      sourceDiscoveryId: 'self-ao-example',
+      sourceDiscoveryId: 'fixture-replay-example',
       promotedAt: '2026-06-25T00:00:00.000Z',
     };
     registry.register(new OracleAdapter());
@@ -228,7 +228,7 @@ describe('SelectorDiscoveryService shadow promotion', () => {
     const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
     expect(active).toEqual([]);
     expect(registry.get('oracle')).toBeDefined();
-    expect(registry.get('example-chapter-only-self-ao')).toBeUndefined();
+    expect(registry.get('example-chapter-only-fixture-replay')).toBeUndefined();
   });
 
   it('returns known_adapter for a matching adapter unless discovery is forced', async () => {

@@ -14,25 +14,50 @@ describe('runtime config', () => {
     delete process.env.COMICCRAWLER_HOST;
     delete process.env.HOST;
 
-    expect(resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } })).toMatchObject({
+    const runtime = resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } });
+    expect(runtime).toMatchObject({
       port: 4200,
       host: '0.0.0.0',
-      dataPath: './data',
-      agentWorkspacePath: './data/agent-workspaces',
+      dataPath: '../data',
     });
+    expect(runtime.agentWorkspacePath).toMatch(/\.\.[\\/]data[\\/]agent-workspaces$/);
+    expect(runtime.dataLayout.root).toBe('../data');
+    expect(runtime.dataLayout.configPath).toMatch(/[\\/]config$/);
+    expect(runtime.dataLayout.userPath).toMatch(/[\\/]user$/);
+    expect(runtime.dataLayout.runtimePath).toMatch(/[\\/]runtime$/);
+    expect(runtime.dataLayout.agentWorkspacePath).toMatch(/[\\/]agent-workspaces$/);
+    expect(runtime.dataLayout.logsPath).toMatch(/[\\/]logs$/);
   });
 
   it('lets COMICCRAWLER_* env vars override persisted server config', () => {
     process.env.COMICCRAWLER_PORT = '3200';
     process.env.COMICCRAWLER_HOST = '127.0.0.1';
     process.env.COMICCRAWLER_DATA_PATH = './runtime-data';
+    process.env.AGENT_WORKSPACE_PATH = './custom-agent-workspaces';
 
     expect(resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } })).toMatchObject({
       port: 3200,
       host: '127.0.0.1',
       dataPath: './runtime-data',
-      agentWorkspacePath: './runtime-data/agent-workspaces',
+      agentWorkspacePath: './custom-agent-workspaces',
+      dataLayout: {
+        root: './runtime-data',
+        agentWorkspacePath: './custom-agent-workspaces',
+      },
     });
+  });
+
+  it('uses OS app data path for packaged or production runtime when data env is absent', () => {
+    delete process.env.COMICCRAWLER_DATA_PATH;
+    delete process.env.DATA_PATH;
+    process.env.COMICCRAWLER_PACKAGED = '1';
+
+    const runtime = resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } });
+
+    expect(runtime.dataPath).toContain(process.platform === 'linux' ? 'comiccrawler' : 'ComicCrawler');
+    expect(runtime.dataPath).not.toBe('./data');
+    expect(runtime.dataLayout.userPath).toContain('user');
+    expect(runtime.dataLayout.agentWorkspacePath).toContain('agent-workspaces');
   });
 
   it('rejects invalid env ports early', () => {

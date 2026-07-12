@@ -271,23 +271,23 @@ test.describe('ComicCrawler E2E', () => {
     }
   });
 
-  test('should run a crawl with a self-AO generated chapter-only adapter without AO', async ({ request }) => {
-    const chapterUrl = 'http://127.0.0.1:4173/api/fixtures/self-ao-generated-chapter';
-    const register = await request.post('/__test/register-self-ao-generated-adapter', {
+  test('should run a crawl with a fixture replay generated chapter-only adapter without AO', async ({ request }) => {
+    const chapterUrl = 'http://127.0.0.1:4173/api/fixtures/fixture-replay-generated-chapter';
+    const register = await request.post('/__test/register-fixture-replay-generated-adapter', {
       data: {
-        adapterId: 'self-ao-generated-e2e',
-        name: 'Self-AO Generated E2E',
+        adapterId: 'fixture-replay-generated-e2e',
+        name: 'Fixture Replay Generated E2E',
         domains: ['127.0.0.1'],
-        urlPatterns: ['http://127.0.0.1:4173/api/fixtures/self-ao-generated-*'],
+        urlPatterns: ['http://127.0.0.1:4173/api/fixtures/fixture-replay-generated-*'],
         capabilities: { verification: true, metadata: false, chapterImages: true },
         selectors: {
           images: {
             container: '#reader',
-            item: 'img.self-ao-page',
+            item: 'img.fixture-replay-page',
             srcAttr: 'data-src',
           },
         },
-        sourceDiscoveryId: 'self-ao-generated-e2e',
+        sourceDiscoveryId: 'fixture-replay-generated-e2e',
         promotedAt: new Date().toISOString(),
       },
     });
@@ -307,7 +307,7 @@ test.describe('ComicCrawler E2E', () => {
     expect(completed.result.downloadedImages).toBe(1);
   });
 
-  test('should create and promote a challenge strategy when an unknown URL is blocked by a browser challenge', async ({ request }) => {
+  test('should create a human verification handoff when an unknown URL is blocked by a browser challenge', async ({ request }) => {
     await configureSelectorDiscovery(request);
     const challengeUrl = 'http://127.0.0.1:4173/api/fixtures/challenge-never-clears';
 
@@ -322,20 +322,15 @@ test.describe('ComicCrawler E2E', () => {
     expect(response.status()).toBe(202);
     const body = await response.json();
     expect(body.data.kind).toBe('challengeDiscoveryQueued');
-    const job = await waitForChallengeDiscovery(request, body.data.challengeDiscoveryId, 'strategy_awaiting_review');
-    expect(job.candidateSource).toContain('export const strategy');
-    expect(job.validation.valid).toBe(true);
-
-    const promote = await request.post(`/api/challenge-discovery/${job.id}/promote`);
-    expect(promote.status()).toBe(200);
-    const promoted = await promote.json();
-    expect(promoted.data.strategyId).toBe('127-0-0-1-challenge');
+    const job = await waitForChallengeDiscovery(request, body.data.challengeDiscoveryId, 'challenge_required');
+    expect(job.candidateSource).toBeUndefined();
+    expect(job.diagnosisMarkdown).toContain('human verification handoff');
   });
 
   test('should create verification handoff when a matched dynamic adapter throws a challenge error while crawling', async ({ request, page }) => {
     test.setTimeout(90000);
     const challengeUrl = 'http://127-0-0-1.nip.io:4173/api/fixtures/challenge-never-clears?matched-adapter=1';
-    const register = await request.post('/__test/register-self-ao-generated-adapter', {
+    const register = await request.post('/__test/register-fixture-replay-generated-adapter', {
       data: {
         adapterId: 'matched-challenge-e2e',
         name: 'Matched Challenge E2E',
@@ -454,8 +449,8 @@ test.describe('ComicCrawler E2E', () => {
 
     const status = page.getByTestId('challenge-build-task-status');
     await expect(status).toBeVisible();
-    await expect(status).toContainText('Browser challenge strategy task created.');
-    await expect(status).toContainText('strategy_awaiting_review');
+    await expect(status).toContainText('Human verification handoff job created.');
+    await expect(status).toContainText('challenge_required');
     await expect(status).toContainText('Create Task only queues challenge/discovery work.');
     await expect(status).not.toContainText('Promote strategy');
     await expect(status).not.toContainText('Open headed browser');

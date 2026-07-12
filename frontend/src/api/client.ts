@@ -2,9 +2,15 @@ import axios, { AxiosInstance } from 'axios';
 import type {
   AdapterListItem,
   AdapterCapabilityDetailResponse,
+  AdapterImplementationResponse,
+  AdapterDraftDetailResponse,
+  AdapterDraftListResponse,
   AdapterFunctionSourceResponse,
   AdapterFunctionTestRequest,
   AdapterFunctionTestResponse,
+  CompleteHumanVerificationRequest,
+  DomReadinessCheckRequest,
+  DomReadinessCheckResponse,
   AdapterResolveRequest,
   AdapterResolveResponse,
   ApiResponse,
@@ -14,8 +20,13 @@ import type {
   CreateSelectorDiscoverySnapshotRequest,
   CreateTaskRequest,
   CreateTaskResponse,
+  FixtureCaptureRequest,
+  FixtureCaptureResponse,
+  FixtureDetailResponse,
+  FixtureFunctionTestRequest,
   MessageResponse,
   OpenVerificationBrowserRequest,
+  SaveAdapterDraftContentRequest,
   SelectorDiscoveryConfigRequest,
   SelectorDiscoveryJobSummary,
   SelectorDiscoverySettingsSummary,
@@ -37,6 +48,9 @@ const API_ENDPOINTS = {
   selectorDiscovery: '/api/selector-discovery',
   challengeDiscovery: '/api/challenge-discovery',
   selectorDiscoveryConfig: '/api/config/selector-discovery',
+  domReadiness: '/api/dom-readiness',
+  fixtures: '/api/fixtures',
+  adapterDrafts: '/api/adapter-drafts',
   status: '/api/status',
 } as const;
 
@@ -197,6 +211,11 @@ export class ApiClient {
     return response.data;
   }
 
+  async getAdapterImplementation(id: string): Promise<ApiResponse<AdapterImplementationResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/implementation`);
+    return response.data;
+  }
+
   async getAdapterFunctionSource(id: string, functionId: string): Promise<ApiResponse<AdapterFunctionSourceResponse>> {
     const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/functions/${functionId}/source`);
     return response.data;
@@ -208,6 +227,74 @@ export class ApiClient {
     input: AdapterFunctionTestRequest
   ): Promise<ApiResponse<AdapterFunctionTestResponse>> {
     const response = await this.client.post(`${API_ENDPOINTS.adapters}/${id}/functions/${functionId}/test`, input);
+    return response.data;
+  }
+
+  async checkDomReadiness(input: DomReadinessCheckRequest): Promise<ApiResponse<DomReadinessCheckResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.domReadiness}/check`, input);
+    return response.data;
+  }
+
+  async captureFixture(input: FixtureCaptureRequest): Promise<ApiResponse<FixtureCaptureResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.fixtures}/capture`, input);
+    return response.data;
+  }
+
+  async getFixture(domain: string, id: string, includeHtml = false): Promise<ApiResponse<FixtureDetailResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.fixtures}/${domain}/${id}`, {
+      params: { includeHtml },
+    });
+    return response.data;
+  }
+
+  async testFixtureFunction(
+    domain: string,
+    id: string,
+    input: FixtureFunctionTestRequest
+  ): Promise<ApiResponse<any>> {
+    const response = await this.client.post(`${API_ENDPOINTS.fixtures}/${domain}/${id}/test-adapter-function`, input);
+    return response.data;
+  }
+
+  async getAdapterDrafts(): Promise<ApiResponse<AdapterDraftListResponse>> {
+    const response = await this.client.get(API_ENDPOINTS.adapterDrafts);
+    return response.data;
+  }
+
+  async createAdapterDraft(adapterId: string): Promise<ApiResponse<AdapterDraftDetailResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.adapters}/${adapterId}/drafts`);
+    return response.data;
+  }
+
+  async getAdapterDraft(draftId: string): Promise<ApiResponse<AdapterDraftDetailResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.adapterDrafts}/${draftId}`);
+    return response.data;
+  }
+
+  async saveAdapterDraftContent(
+    draftId: string,
+    input: SaveAdapterDraftContentRequest
+  ): Promise<ApiResponse<AdapterDraftDetailResponse>> {
+    const response = await this.client.put(`${API_ENDPOINTS.adapterDrafts}/${draftId}/content`, input);
+    return response.data;
+  }
+
+  async resetAdapterDraft(draftId: string): Promise<ApiResponse<AdapterDraftDetailResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.adapterDrafts}/${draftId}/reset`);
+    return response.data;
+  }
+
+  async discardAdapterDraft(draftId: string): Promise<ApiResponse<MessageResponse>> {
+    const response = await this.client.delete(`${API_ENDPOINTS.adapterDrafts}/${draftId}`);
+    return response.data;
+  }
+
+  async testAdapterDraftFunction(
+    draftId: string,
+    functionId: string,
+    input: AdapterFunctionTestRequest
+  ): Promise<ApiResponse<AdapterFunctionTestResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.adapterDrafts}/${draftId}/functions/${functionId}/test`, input);
     return response.data;
   }
 
@@ -334,8 +421,11 @@ export class ApiClient {
     return response.data;
   }
 
-  async completeChallengeDiscoveryHumanVerification(id: string): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/complete-human-verification`);
+  async completeChallengeDiscoveryHumanVerification(
+    id: string,
+    input?: CompleteHumanVerificationRequest
+  ): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
+    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/complete-human-verification`, input ?? {});
     return response.data;
   }
 

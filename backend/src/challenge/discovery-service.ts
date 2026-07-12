@@ -10,7 +10,6 @@ import { getGlobalChallengeStrategyRegistry } from './registry';
 import { getGlobalVerifiedBrowserSessionRegistry, type VerifiedBrowserSession } from './verified-browser-sessions';
 import { loadChallengeStrategyFromSource } from './strategy-loader';
 import { validateChallengeStrategySource } from './strategy-validator';
-import { runSelfAoChallengeDiscovery } from './self-ao';
 import type { ChallengeDiscoveryJob } from './discovery-types';
 import { findCdpPageHtml, inspectCdpBrowser, type CdpConnectionSummary } from './cdp-handoff';
 import {
@@ -222,7 +221,7 @@ export class ChallengeDiscoveryService {
     return this.getRequiredJob(id);
   }
 
-  async readCdpPageSnapshot(id: string, cdpUrl?: string): Promise<{
+  async readCdpPageSnapshot(id: string, cdpUrl?: string, options: { settle?: boolean; expandCatalog?: boolean; allowNavigate?: boolean } = {}): Promise<{
     job: ChallengeDiscoveryJob;
     page: { url: string; title: string; html: string };
   }> {
@@ -231,7 +230,13 @@ export class ChallengeDiscoveryService {
     if (!resolved) {
       throw new Error('CDP URL is required. Configure browser.handoff.cdpUrl or pass cdpUrl.');
     }
-    const page = await findCdpPageHtml({ cdpUrl: resolved, targetUrl: job.normalizedUrl });
+    const page = await findCdpPageHtml({
+      cdpUrl: resolved,
+      targetUrl: job.normalizedUrl,
+      settle: options.settle,
+      expandCatalog: options.expandCatalog,
+      allowNavigate: options.allowNavigate,
+    });
     if (looksLikeAccessBlocked(page.html)) {
       const message = `Attached browser page is blocked: ${page.title || page.url}`;
       await this.updateJob(id, {
@@ -264,7 +269,7 @@ export class ChallengeDiscoveryService {
     return { job: await this.getRequiredJob(id), page };
   }
 
-  async completeHumanVerification(id: string): Promise<ChallengeDiscoveryJob> {
+  async completeHumanVerification(id: string, options: { settle?: boolean; allowNavigate?: boolean } = {}): Promise<ChallengeDiscoveryJob> {
     const job = await this.getRequiredJob(id);
     if (job.status === 'external_browser_opening') {
       await this.updateJob(id, {
@@ -286,7 +291,7 @@ export class ChallengeDiscoveryService {
       }
 
       try {
-        await this.readCdpPageSnapshot(id, job.browserCdpUrl);
+        await this.readCdpPageSnapshot(id, job.browserCdpUrl, options);
         await this.registerVerifiedSession({
           hostname: job.hostname,
           userDataDir: job.browserProfileDir ?? '',
@@ -418,18 +423,34 @@ export class ChallengeDiscoveryService {
         await this.updateJob(id, { status: 'failed', error: error instanceof Error ? error.message : String(error) });
         return this.getRequiredJob(id);
       }
-      const selfAo = runSelfAoChallengeDiscovery({
-        url: job.normalizedUrl,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      const validation = validateChallengeStrategySource(selfAo.candidateSource);
+      const message = error instanceof Error ? error.message : String(error);
       await this.updateJob(id, {
-        status: isAccessBlockedError(error) ? 'access_blocked' : validation.valid ? 'strategy_awaiting_review' : 'failed',
-        diagnosisMarkdown: selfAo.diagnosisMarkdown,
-        evidenceMarkdown: selfAo.evidenceMarkdown,
-        candidateSource: selfAo.candidateSource,
-        validation,
-        error: validation.valid ? undefined : validation.errors.join(' '),
+        status: isAccessBlockedError(error) ? 'access_blocked' : 'challenge_required',
+        diagnosisMarkdown: [
+          '# Challenge Diagnosis',
+          '',
+          '## Status',
+          '',
+          `- Status: ${isAccessBlockedError(error) ? 'access_blocked' : 'challenge_required'}`,
+          `- URL: ${job.normalizedUrl}`,
+          '- Next step: use the human verification handoff flow.',
+          '',
+        ].join('\n'),
+        evidenceMarkdown: [
+          '# Browser Render Evidence',
+          '',
+          '## Source URL',
+          '',
+          job.normalizedUrl,
+          '',
+          '## Render Result',
+          '',
+          `- Error: ${message}`,
+          '',
+        ].join('\n'),
+        candidateSource: undefined,
+        validation: undefined,
+        error: message,
       });
       return this.getRequiredJob(id);
     }

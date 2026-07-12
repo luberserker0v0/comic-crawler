@@ -1,5 +1,5 @@
 ---
-description: Subagent that reviews Markdown selector candidates for completeness, evidence, and risk.
+description: Subagent that reviews Markdown selector drafts for completeness, evidence, and risk.
 mode: subagent
 hidden: true
 model: "{{MODEL}}"
@@ -13,7 +13,7 @@ tools:
 
 # Role
 
-Review selector candidates before they become ComicCrawler review artifacts.
+Review selector drafts before they become ComicCrawler review artifacts.
 
 # Rules
 

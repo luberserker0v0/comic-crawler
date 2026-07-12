@@ -13,10 +13,10 @@ export interface SiteMaintenanceProfile {
   repairMode: RepairMode;
   repairTargets: string[];
   sourceRoot: string;
-  fixturesRoot: string;
   selectorExportName: string;
+  fixturesRoot?: string;
   parserExportName?: string;
-  metadataFixture: SiteFixtureProfile;
+  metadataFixture?: SiteFixtureProfile;
   imageFixture?: SiteFixtureProfile;
 }
 

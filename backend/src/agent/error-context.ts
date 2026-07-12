@@ -6,7 +6,7 @@ export interface ExtractionFailureContext {
   parseMode: 'static' | 'dynamic' | 'interactive';
   repairMode: 'selector-only' | 'parser-hook';
   repairTargets: string[];
-  fixturesRoot: string;
+  fixturesRoot?: string;
   fixtureRefs: string[];
   pageType: 'metadata' | 'chapters' | 'images' | 'unknown';
   selector?: string;
@@ -28,8 +28,8 @@ export function buildExtractionFailureContext(options: {
 }): ExtractionFailureContext {
   const { adapterId, manifest, pageType, selector, selectorName, url, html, message } = options;
   const fixtureRefs = [
-    manifest.maintenance.metadataFixture.htmlFile,
-    manifest.maintenance.metadataFixture.expectedFile,
+    manifest.maintenance.metadataFixture?.htmlFile,
+    manifest.maintenance.metadataFixture?.expectedFile,
     manifest.maintenance.imageFixture?.htmlFile,
     manifest.maintenance.imageFixture?.expectedFile,
   ].filter((value): value is string => Boolean(value));

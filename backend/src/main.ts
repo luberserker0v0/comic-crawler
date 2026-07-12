@@ -8,7 +8,7 @@ import { AgentTriggerMonitor } from './agent/trigger-monitor';
 import { createGracefulShutdownManager } from './bootstrap/graceful-shutdown';
 import { JsonFileStore } from './storage/json-store';
 import { ConfigManager } from './config/manager';
-import { resolveRuntimeConfig } from './config/runtime';
+import { resolveRuntimeConfig, type DataDirectoryLayout } from './config/runtime';
 import { EventBus } from './events/bus';
 import { AdapterRegistry } from './adapter/registry';
 import { TaskManager, type TaskDefinition } from './task/manager';
@@ -19,6 +19,8 @@ import { KuronaviAdapter } from './adapter/sites/kuronavi';
 import { HappyMhAdapter } from './adapter/sites/happymh';
 import { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from './selector-discovery';
 import { ChallengeDiscoveryService } from './challenge';
+import { AdapterDraftService } from './adapter-drafts/service';
+import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import { logger } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -26,6 +28,7 @@ async function main(): Promise<void> {
     const timing = createBootstrapTiming();
     const eventBus = new EventBus();
     const bootstrapRuntime = resolveRuntimeConfig();
+    await ensureDataDirectoryLayout(bootstrapRuntime.dataLayout);
     await importLegacyRuntimeState(bootstrapRuntime.dataPath);
     timing.mark('legacy runtime import');
     const storage = new JsonFileStore({ basePath: bootstrapRuntime.dataPath });
@@ -54,6 +57,8 @@ async function main(): Promise<void> {
       getBrowserConfig: async () => (await configManager.get()).browser,
       getNetworkConfig: async () => (await configManager.get()).network,
     });
+    const adapterDraftService = new AdapterDraftService(runtime.dataLayout.userPath, adapterRegistry);
+    const fixtureCaptureService = new FixtureCaptureService(challengeDiscoveryService, runtime.agentWorkspacePath);
 
     const crawlerEngine = new CrawlerEngine({
       downloadDir: config.download.directory,
@@ -135,6 +140,8 @@ async function main(): Promise<void> {
       selectorDiscoveryService,
       selectorDiscoverySettingsStore,
       challengeDiscoveryService,
+      adapterDraftService,
+      fixtureCaptureService,
       staticDir: runtime.staticDir,
     });
 
@@ -149,6 +156,17 @@ async function main(): Promise<void> {
 }
 
 main();
+
+async function ensureDataDirectoryLayout(layout: DataDirectoryLayout): Promise<void> {
+  await Promise.all([
+    fs.mkdir(layout.root, { recursive: true }),
+    fs.mkdir(layout.configPath, { recursive: true }),
+    fs.mkdir(layout.userPath, { recursive: true }),
+    fs.mkdir(layout.runtimePath, { recursive: true }),
+    fs.mkdir(layout.agentWorkspacePath, { recursive: true }),
+    fs.mkdir(layout.logsPath, { recursive: true }),
+  ]);
+}
 
 function createBootstrapTiming() {
   const startedAt = performance.now();

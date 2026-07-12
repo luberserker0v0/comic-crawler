@@ -284,12 +284,12 @@ export const NewTaskForm: React.FC = () => {
           role="status"
           data-testid="challenge-build-task-status"
         >
-          <div className="font-medium">Browser challenge strategy task created.</div>
+          <div className="font-medium">Human verification handoff job created.</div>
           <div className="mt-1 break-all">{challengeBuildTask.normalizedUrl}</div>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
             <div>Status: {challengeBuildTask.status}</div>
             <div className="break-all">Job ID: {challengeBuildTask.challengeDiscoveryId}</div>
-            <div className="break-all">Strategy: {challengeBuildTask.strategyId ?? '-'}</div>
+            <div className="break-all">Handoff: {challengeBuildTask.challengeDiscoveryId}</div>
             <div>Validation: {challengeBuildTask.validation?.valid === true ? 'passed' : '-'}</div>
           </div>
 
@@ -453,7 +453,7 @@ export const NewTaskForm: React.FC = () => {
 function getChallengeStatusMessage(status: string): string {
   switch (status) {
     case 'strategy_awaiting_review':
-      return 'ComicCrawler detected a browser challenge and queued challenge handling work. This page does not run human verification.';
+      return 'Legacy diagnostic strategy review status. The normal crawl path uses human verification handoff from Task Details.';
     case 'strategy_promoted':
       return 'Challenge handling is available. If a crawl task later needs human verification, continue from that task detail page.';
     case 'browser_open':

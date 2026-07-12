@@ -15,3 +15,11 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+.adapter-lab-selected-line {
+  background: rgba(37, 99, 235, 0.24);
+}
+
+.adapter-lab-selected-line-margin {
+  background: rgba(37, 99, 235, 0.45);
+}

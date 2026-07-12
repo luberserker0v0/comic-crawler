@@ -153,7 +153,7 @@ POST /api/selector-discovery/:id/validate
 POST /api/selector-discovery/:id/revalidate
 ```
 
-After human review, promote the candidate:
+After human review, approve the draft:
 
 ```http
 POST /api/selector-discovery/:id/promote
@@ -177,6 +177,14 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
+| `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
+| `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
+| `GET` | `/api/adapter-drafts` | List user-owned adapter drafts. |
+| `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
+| `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |
+| `POST` | `/api/adapter-drafts/:id/reset` | Reset draft content from the active adapter. |
+| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest draft with a temporary adapter. Built-in TS drafts are not executed. |
+| `DELETE` | `/api/adapter-drafts/:id` | Discard a draft. |
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |
 | `POST` | `/api/tasks/:id/pause` | Pause a running task when supported. |

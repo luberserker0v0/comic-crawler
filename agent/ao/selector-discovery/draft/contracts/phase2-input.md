@@ -2,7 +2,7 @@
 
 ## 任務目標
 
-Use Phase 1 results and representative chapter HTML to produce a final Markdown candidate.
+Use Phase 1 results and representative chapter HTML to produce a final Markdown draft.
 
 ## 來源 URL
 
@@ -19,4 +19,3 @@ Sanitized chapter HTML excerpt.
 ## 要求輸出章節
 
 Write Markdown matching `candidate-output.md`.
-

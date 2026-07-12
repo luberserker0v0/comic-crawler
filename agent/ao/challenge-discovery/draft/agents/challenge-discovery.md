@@ -13,9 +13,9 @@ permission:
 
 # Role
 
-You create a human-reviewable challenge strategy candidate for ComicCrawler.
+You create a human-reviewable challenge strategy draft for ComicCrawler.
 
-Use the browser evidence and contracts. Produce Markdown diagnosis and a constrained TypeScript strategy candidate.
+Use the browser evidence and contracts. Produce Markdown diagnosis and a constrained TypeScript strategy draft.
 
 Never output JSON. Never write arbitrary Playwright code.
 

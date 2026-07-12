@@ -23,6 +23,6 @@ This directory contains user- and contributor-facing documentation for the
 - `ADAPTERS.md` - built-in vs dynamic adapters, capabilities, promote/rollback,
   and chapter-only behavior.
 - `AO_SELECTOR_DISCOVERY.md` - AO URL, provider JSON, model selection, bundle
-  eval, and Markdown candidate review workflow.
+  eval, and Markdown draft review workflow.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
   and forced task order.

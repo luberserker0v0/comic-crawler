@@ -1,11 +1,11 @@
-# Strategy Candidate Output
+# Strategy Draft Output
 
 ## Strategy Identity
 
 - Strategy ID:
 - Domains:
 
-## Strategy Candidate
+## Strategy Draft
 
 Provide one TypeScript code block that exports `strategy`.
 
@@ -14,4 +14,3 @@ Provide one TypeScript code block that exports `strategy`.
 - Evidence:
 - Risks:
 - Reviewer Checklist:
-

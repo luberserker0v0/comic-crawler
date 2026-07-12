@@ -63,12 +63,101 @@ export interface AdapterFunctionSourceResponse {
   notes: string;
 }
 
+export type AdapterImplementationSourceType = 'built-in' | 'dynamic' | 'summary';
+export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
+
+export interface AdapterImplementationSymbol {
+  id: string;
+  label: string;
+  capability?: AdapterFunctionCapability;
+  kind: AdapterImplementationSymbolKind;
+  startLine?: number;
+  endLine?: number;
+}
+
+export interface AdapterImplementationResponse {
+  adapterId: string;
+  sourceType: AdapterImplementationSourceType;
+  language: 'typescript' | 'json' | 'markdown';
+  filePath?: string;
+  content: string;
+  outline: AdapterImplementationSymbol[];
+  notes: string;
+}
+
+export type AdapterDraftSourceKind = 'built-in-source' | 'dynamic-manifest';
+export type AdapterDraftStatus = 'editing' | 'testing' | 'ready_for_review' | 'promoted' | 'discarded';
+
+export interface AdapterDraftSummary {
+  draftId: string;
+  baseAdapterId: string;
+  baseAdapterName: string;
+  sourceKind: AdapterDraftSourceKind;
+  language: 'typescript' | 'json';
+  status: AdapterDraftStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdapterDraftDetailResponse {
+  draft: AdapterDraftSummary;
+  language: 'typescript' | 'json';
+  content: string;
+}
+
+export interface AdapterDraftListResponse {
+  drafts: AdapterDraftSummary[];
+}
+
+export interface CreateAdapterDraftResponse extends AdapterDraftDetailResponse {}
+
+export interface SaveAdapterDraftContentRequest {
+  content: string;
+}
+
 export interface AdapterFunctionTestRequest {
   url: string;
   challengeDiscoveryId?: string;
 }
 
+export interface CompleteHumanVerificationRequest {
+  settle?: boolean;
+  allowNavigate?: boolean;
+}
+
 export type AdapterFunctionTestStatus = 'passed' | 'failed' | 'verification_required';
+
+export type AdapterDomSource = 'static' | 'rendered' | 'verified-fixture' | 'handoff-required';
+export type DomReadinessStatus =
+  | 'ready'
+  | 'human_verification_required'
+  | 'needs_fixture_or_manual_review'
+  | 'failed';
+export type DomReadinessTarget = 'metadata' | 'chapterImages' | 'verification' | 'common';
+export type AdapterFunctionRecommendedAction =
+  | 'continue'
+  | 'human_verification_handoff'
+  | 'capture_verified_fixture'
+  | 'manual_review';
+
+export interface DomReadinessReport {
+  status: DomReadinessStatus;
+  target: DomReadinessTarget;
+  confidence: number;
+  reasons: string[];
+  recommendedAction: AdapterFunctionRecommendedAction;
+}
+
+export interface FixtureSummary {
+  id: string;
+  domain: string;
+  url: string;
+  title: string;
+  htmlLength: number;
+  capturedAt: string;
+  path: string;
+  readiness: DomReadinessReport;
+}
 
 export interface AdapterFunctionTestResponse {
   ok: boolean;
@@ -76,12 +165,53 @@ export interface AdapterFunctionTestResponse {
   adapterId: string;
   functionId: string;
   durationMs: number;
+  domSource: AdapterDomSource;
+  readiness: DomReadinessReport;
+  recommendedAction: AdapterFunctionRecommendedAction;
+  fixtureId?: string;
+  fixturePath?: string;
   resultSummary?: Record<string, unknown>;
   error?: string;
   requiresVerification: boolean;
   challengeDiscoveryId?: string;
   retryableAfterVerification?: boolean;
   verificationMessage?: string;
+}
+
+export interface DomReadinessCheckRequest {
+  url: string;
+  html: string;
+  target: DomReadinessTarget;
+  functionId?: string;
+}
+
+export interface DomReadinessCheckResponse {
+  url: string;
+  readiness: DomReadinessReport;
+}
+
+export interface FixtureCaptureRequest {
+  challengeDiscoveryId: string;
+  target: DomReadinessTarget;
+  functionId?: string;
+  expectedUrl?: string;
+  settle?: boolean;
+  expandCatalog?: boolean;
+  allowNavigate?: boolean;
+}
+
+export interface FixtureCaptureResponse {
+  fixture: FixtureSummary;
+}
+
+export interface FixtureDetailResponse {
+  fixture: FixtureSummary;
+  html?: string;
+}
+
+export interface FixtureFunctionTestRequest {
+  adapterId: string;
+  functionId: string;
 }
 
 export interface CreateTaskRequest {

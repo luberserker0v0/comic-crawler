@@ -303,6 +303,7 @@ export class CrawlerEngine {
 
         const chapterDir = join(outputRoot, chapter.title);
         const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(chapter.url);
+        const previewEventPromises: Array<Promise<void>> = [];
         const downloadOptions: DownloadOptions = {
           outputDir: chapterDir,
           concurrency: this.concurrency,
@@ -348,7 +349,7 @@ export class CrawlerEngine {
               },
             });
             if (result) {
-              void this.createPreviewFile(taskId, outputRoot, result.path).then((previewFile) => {
+              const previewEventPromise = this.createPreviewFile(taskId, outputRoot, result.path).then((previewFile) => {
                 this.eventBus?.emit('image:downloaded', {
                   taskId,
                   imageUrl: progressImage.url,
@@ -356,6 +357,7 @@ export class CrawlerEngine {
                   ...(previewFile ? { previewFile } : {}),
                 });
               });
+              previewEventPromises.push(previewEventPromise);
             } else if (result === null) {
               this.eventBus?.emit('image:failed', {
                 taskId,
@@ -367,6 +369,7 @@ export class CrawlerEngine {
         };
 
         await this.imageDownloader.downloadBatch(remainingImages, downloadOptions);
+        await Promise.allSettled(previewEventPromises);
         const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
         totalImages = counts.totalImages;
         downloadedImages = counts.completedImages;

@@ -28,7 +28,6 @@
     "test:backend": "npm run -w backend test",
     "test:frontend": "npm run -w frontend test",
     "test:e2e": "npm run -w backend test:e2e",
-    "test:e2e:self-ao": "npm run -w backend test:e2e:self-ao",
     "test:core": "node ./scripts/verify-core-tests.mjs",
     "test:api": "npm run -w backend test -- tests/integration/rest-only-flow.test.ts",
     "verify:quick": "npm run test:dev && npm run build && npm run verify:utf8 && npm run test:core && npm run test:api",

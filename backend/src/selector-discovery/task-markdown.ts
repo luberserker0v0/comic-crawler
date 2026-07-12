@@ -72,7 +72,7 @@ export function createPhase2TaskMarkdown(input: {
 
 ## Goal
 
-Use the Phase 1 result and the representative chapter page to produce a final human-reviewable Markdown selector candidate with fine-grained extraction sections.
+Use the Phase 1 result and the representative chapter page to produce a final human-reviewable Markdown selector draft with fine-grained extraction sections.
 
 Important rules:
 
@@ -151,7 +151,7 @@ export function createChapterOnlyTaskMarkdown(input: {
 
 ## Goal
 
-Analyze a comic reader chapter page and produce a chapter-only Markdown selector candidate.
+Analyze a comic reader chapter page and produce a chapter-only Markdown selector draft.
 
 This target implements only chapter image URL extraction:
 

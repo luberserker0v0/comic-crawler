@@ -1,12 +1,23 @@
 import { DEFAULTS } from '@comiccrawler/shared';
 import type { GlobalConfig } from '@comiccrawler/shared';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
+
+export interface DataDirectoryLayout {
+  root: string;
+  configPath: string;
+  userPath: string;
+  runtimePath: string;
+  agentWorkspacePath: string;
+  logsPath: string;
+}
 
 export interface RuntimeConfig {
   host: string;
   port: number;
   dataPath: string;
   agentWorkspacePath: string;
+  dataLayout: DataDirectoryLayout;
   staticDir?: string;
 }
 
@@ -25,7 +36,8 @@ export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): Run
   const envPort = parsePort(firstEnv(ENV_KEYS.port));
   const port = envPort ?? normalizeLegacyDefaultPort(config?.server.port) ?? DEFAULTS.server.port;
   const dataPath = firstEnv(ENV_KEYS.dataPath) ?? defaultDataPath();
-  const agentWorkspacePath = firstEnv(ENV_KEYS.agentWorkspacePath) ?? `${dataPath.replace(/[\\/]$/, '')}/agent-workspaces`;
+  const dataLayout = resolveDataDirectoryLayout(dataPath, firstEnv(ENV_KEYS.agentWorkspacePath));
+  const agentWorkspacePath = dataLayout.agentWorkspacePath;
   const staticDir = firstEnv(ENV_KEYS.staticDir);
 
   return {
@@ -33,12 +45,44 @@ export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): Run
     port,
     dataPath,
     agentWorkspacePath,
+    dataLayout,
     staticDir,
   };
 }
 
+export function resolveDataDirectoryLayout(dataPath = firstEnv(ENV_KEYS.dataPath) ?? defaultDataPath(), agentWorkspacePath = firstEnv(ENV_KEYS.agentWorkspacePath)): DataDirectoryLayout {
+  const root = trimTrailingSlash(dataPath);
+  return {
+    root,
+    configPath: join(root, 'config'),
+    userPath: join(root, 'user'),
+    runtimePath: join(root, 'runtime'),
+    agentWorkspacePath: agentWorkspacePath ?? join(root, 'agent-workspaces'),
+    logsPath: join(root, 'logs'),
+  };
+}
+
 function defaultDataPath(): string {
+  if (isProductionRuntime()) return defaultOsDataPath();
   return basename(process.cwd()).toLowerCase() === 'backend' ? '../data' : './data';
+}
+
+function defaultOsDataPath(): string {
+  if (process.platform === 'win32') {
+    return join(process.env.LOCALAPPDATA ?? homedir(), 'ComicCrawler');
+  }
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'ComicCrawler');
+  }
+  return join(process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'comiccrawler');
+}
+
+function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.COMICCRAWLER_PACKAGED === '1';
+}
+
+function trimTrailingSlash(path: string): string {
+  return path.replace(/[\\/]$/, '');
 }
 
 function normalizeLegacyDefaultHost(host?: string): string | undefined {

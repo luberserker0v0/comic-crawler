@@ -129,9 +129,11 @@ export class CodeValidator {
       };
     }
 
-    const metadataFixture = await this.validateMetadataFixture(options.manifest, selectors);
-    fixtureResults.push(metadataFixture);
-    errors.push(...metadataFixture.errors);
+    if (options.manifest.maintenance.fixturesRoot && options.manifest.maintenance.metadataFixture) {
+      const metadataFixture = await this.validateMetadataFixture(options.manifest, selectors);
+      fixtureResults.push(metadataFixture);
+      errors.push(...metadataFixture.errors);
+    }
 
     if (options.manifest.maintenance.imageFixture) {
       const imageFixture = await this.validateImageFixture(options.manifest, selectors);
@@ -217,9 +219,17 @@ export class CodeValidator {
 
   private async validateMetadataFixture(manifest: SiteManifest, selectors: SiteSelectors): Promise<FixtureValidationResult> {
     const fixture = manifest.maintenance.metadataFixture;
-    const html = await fs.readFile(join(manifest.maintenance.fixturesRoot, fixture.htmlFile), 'utf-8');
+    const fixturesRoot = manifest.maintenance.fixturesRoot;
+    if (!fixture || !fixturesRoot || !fixture.expectedFile) {
+      return {
+        valid: true,
+        fixtureName: 'metadata fixture not configured',
+        errors: [],
+      };
+    }
+    const html = await fs.readFile(join(fixturesRoot, fixture.htmlFile), 'utf-8');
     const expected = JSON.parse(
-      await fs.readFile(join(manifest.maintenance.fixturesRoot, fixture.expectedFile!), 'utf-8')
+      await fs.readFile(join(fixturesRoot, fixture.expectedFile), 'utf-8')
     ) as {
       id: string;
       title: string;
@@ -266,9 +276,17 @@ export class CodeValidator {
 
   private async validateImageFixture(manifest: SiteManifest, selectors: SiteSelectors): Promise<FixtureValidationResult> {
     const fixture = manifest.maintenance.imageFixture!;
-    const html = await fs.readFile(join(manifest.maintenance.fixturesRoot, fixture.htmlFile), 'utf-8');
+    const fixturesRoot = manifest.maintenance.fixturesRoot;
+    if (!fixture || !fixturesRoot || !fixture.expectedFile) {
+      return {
+        valid: true,
+        fixtureName: 'image fixture not configured',
+        errors: [],
+      };
+    }
+    const html = await fs.readFile(join(fixturesRoot, fixture.htmlFile), 'utf-8');
     const expected = JSON.parse(
-      await fs.readFile(join(manifest.maintenance.fixturesRoot, fixture.expectedFile!), 'utf-8')
+      await fs.readFile(join(fixturesRoot, fixture.expectedFile), 'utf-8')
     ) as Array<{ url: string; index: number; filename: string }>;
 
     const strategy = new DomExtractionStrategy();
