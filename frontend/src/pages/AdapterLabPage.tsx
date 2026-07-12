@@ -48,6 +48,11 @@ function getChapterSummaryItems(summary: Record<string, unknown> | undefined): C
   return summary.chapters.filter(isChapterSummaryItem);
 }
 
+function getImageUrls(summary: Record<string, unknown> | undefined): string[] {
+  if (!summary || !Array.isArray(summary.imageUrls)) return [];
+  return summary.imageUrls.filter((value): value is string => typeof value === 'string');
+}
+
 function renderChapterRows(chapters: ChapterSummaryItem[]) {
   return chapters.map((chapter, index) => (
     <li key={`${chapter.id ?? chapter.url ?? index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
@@ -68,6 +73,7 @@ function renderChapterRows(chapters: ChapterSummaryItem[]) {
 
 const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, unknown> }> = ({ summary }) => {
   const chapters = getChapterSummaryItems(summary);
+  const imageUrls = getImageUrls(summary);
   if (chapters.length > 0) {
     const chapterCount = typeof summary.chapterCount === 'number' ? summary.chapterCount : chapters.length;
     return (
@@ -91,7 +97,31 @@ const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, unknown> 
         )}
         <details className="mt-3">
           <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
-          <pre className="mt-2 overflow-auto rounded bg-gray-50 p-3 text-xs text-gray-800">
+          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
+            {JSON.stringify(summary, null, 2)}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+
+  if (imageUrls.length > 0) {
+    const imageUrlCount = typeof summary.imageUrlCount === 'number' ? summary.imageUrlCount : imageUrls.length;
+    return (
+      <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
+        <div className="text-sm font-semibold text-gray-900">Extracted image URLs</div>
+        <div className="text-gray-600">{imageUrlCount} image URLs returned by the adapter function.</div>
+        <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
+          {imageUrls.map((url, index) => (
+            <li key={`${url}-${index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
+              <div className="text-[11px] uppercase tracking-wide text-gray-500">#{index + 1}</div>
+              <div className="mt-1 break-all text-xs text-gray-700">{url}</div>
+            </li>
+          ))}
+        </ol>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
+          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
             {JSON.stringify(summary, null, 2)}
           </pre>
         </details>
@@ -100,7 +130,7 @@ const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, unknown> 
   }
 
   return (
-    <pre className="mt-3 overflow-auto rounded bg-white p-3 text-xs text-gray-800">
+    <pre className="mt-3 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-white p-3 text-xs text-gray-800">
       {JSON.stringify(summary, null, 2)}
     </pre>
   );
@@ -779,7 +809,7 @@ export const AdapterLabPage: React.FC = () => {
           </div>
 
           {testResult && (
-            <div className={`mt-4 rounded-md border p-4 text-sm ${
+            <div className={`mt-4 min-w-0 rounded-md border p-4 text-sm ${
               testResult.status === 'passed'
                 ? 'border-emerald-200 bg-emerald-50'
                 : testResult.status === 'verification_required'

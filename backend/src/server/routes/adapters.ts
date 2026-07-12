@@ -706,7 +706,7 @@ export async function testAdapterFunction(
         const urls = await adapter.extractChapterImageUrls?.(document, url) ?? [];
         return {
           imageUrlCount: urls.length,
-          firstImageUrls: urls.slice(0, 5),
+          imageUrls: urls,
           ...(verifiedDocument ? verifiedDocumentSourceSummary(verifiedDocument) : {}),
         };
       });

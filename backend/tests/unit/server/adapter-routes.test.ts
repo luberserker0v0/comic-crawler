@@ -273,7 +273,13 @@ describe('Adapter routes', () => {
     expect(images.json().data).toMatchObject({
       ok: true,
       domSource: 'static',
-      resultSummary: { imageUrlCount: 2 },
+      resultSummary: {
+        imageUrlCount: 2,
+        imageUrls: [
+          'https://example.com/images/1.jpg',
+          'https://example.com/images/2.jpg',
+        ],
+      },
     });
 
     await app.close();
