@@ -696,6 +696,7 @@ export async function testAdapterFunction(
           return {
             chapterCount: chapters.length,
             chapters,
+            chapterDiagnostics: analyzeChapterExtractionInput(adapter, document, url, chapters),
             ...sourceSummary,
           };
         });
@@ -969,6 +970,67 @@ function verifiedDocumentSourceSummary(verifiedDocument: VerifiedChallengeDocume
     sourcePageTitle: verifiedDocument.page.title,
     sourceHtmlLength: verifiedDocument.page.html.length,
   };
+}
+
+function analyzeChapterExtractionInput(
+  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
+  document: unknown,
+  sourceUrl: string,
+  chapters: Array<{ url: string; title?: string }>
+): Record<string, unknown> {
+  const maybeCheerioAdapter = adapter as unknown as { asCheerio?: (document: unknown) => cheerio.CheerioAPI };
+  if (!maybeCheerioAdapter.asCheerio) {
+    return { available: false, reason: 'Adapter does not expose a Cheerio document helper.' };
+  }
+
+  const $ = maybeCheerioAdapter.asCheerio(document);
+  const sourceSlug = extractPathSegment(sourceUrl, ['manga', 'mangaread']);
+  const allMangareadLinks = collectLinks($, sourceUrl, 'a[href*="/mangaread/"]');
+  const sameSlugLinks = sourceSlug
+    ? allMangareadLinks.filter((link) => link.pathname.includes(`/mangaread/${sourceSlug}/`))
+    : [];
+  const returnedUrls = new Set(chapters.map((chapter) => chapter.url));
+  const notReturned = sameSlugLinks
+    .filter((link) => !returnedUrls.has(link.url))
+    .slice(0, 10)
+    .map(({ text, url }) => ({ text, url }));
+
+  return {
+    available: true,
+    sourceSlug,
+    allMangareadLinkCount: allMangareadLinks.length,
+    sameSlugLinkCount: sameSlugLinks.length,
+    returnedChapterCount: chapters.length,
+    notReturnedSample: notReturned,
+  };
+}
+
+function collectLinks($: cheerio.CheerioAPI, sourceUrl: string, selector: string): Array<{ text: string; url: string; pathname: string }> {
+  const links: Array<{ text: string; url: string; pathname: string }> = [];
+  $(selector).each((_, element) => {
+    const href = $(element).attr('href') ?? '';
+    if (!href) return;
+    try {
+      const url = new URL(href, sourceUrl);
+      links.push({
+        text: $(element).text().replace(/\s+/g, ' ').trim(),
+        url: url.href,
+        pathname: url.pathname,
+      });
+    } catch {
+      // Ignore malformed hrefs in diagnostics.
+    }
+  });
+  return links;
+}
+
+function extractPathSegment(url: string, prefixes: string[]): string | undefined {
+  try {
+    const segments = new URL(url).pathname.split('/').filter(Boolean);
+    return prefixes.includes(segments[0] ?? '') ? segments[1] : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function detectVerificationRequiredForUrl(

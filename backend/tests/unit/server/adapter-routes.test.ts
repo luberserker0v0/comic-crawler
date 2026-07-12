@@ -495,6 +495,12 @@ describe('Adapter routes', () => {
       domSource: 'verified-fixture',
       resultSummary: {
         chapterCount: 1,
+        chapterDiagnostics: {
+          available: true,
+          allMangareadLinkCount: 1,
+          sameSlugLinkCount: 1,
+          returnedChapterCount: 1,
+        },
         chapters: [
           expect.objectContaining({ title: 'Chapter 1' }),
         ],
