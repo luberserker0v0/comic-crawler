@@ -23,6 +23,31 @@ const capabilityLabels: Record<AdapterFunctionCapability, string> = {
 const capabilityOrder: AdapterFunctionCapability[] = ['common', 'verification', 'metadata', 'chapterImages'];
 
 type AdapterChoice = NonNullable<AdapterResolveResponse['adapter']>;
+type AdapterLabUrlKind = 'manga' | 'chapter' | 'unknown';
+
+function getUrlKind(value: string): AdapterLabUrlKind {
+  try {
+    const pathname = new URL(value).pathname;
+    if (/\/mangaread\//i.test(pathname)) return 'chapter';
+    if (/\/manga\//i.test(pathname)) return 'manga';
+  } catch {
+    // Treat unparseable input as unknown until resolve validates it.
+  }
+  return 'unknown';
+}
+
+function isCapabilityAllowedForUrlKind(capability: AdapterFunctionCapability, kind: AdapterLabUrlKind): boolean {
+  if (capability === 'common' || capability === 'verification') return true;
+  if (capability === 'metadata') return kind === 'manga';
+  if (capability === 'chapterImages') return kind === 'chapter';
+  return false;
+}
+
+function urlKindDescription(kind: AdapterLabUrlKind): string {
+  if (kind === 'manga') return 'This URL looks like a manga catalog page. Metadata functions are available; chapter image functions require a chapter URL.';
+  if (kind === 'chapter') return 'This URL looks like a chapter page. Chapter image functions are available; metadata functions require a manga catalog URL.';
+  return 'Enter a manga catalog URL or chapter URL to unlock matching adapter functions.';
+}
 
 function formatLineRange(symbol: AdapterImplementationSymbol): string {
   if (!symbol.startLine) return '';
@@ -158,14 +183,20 @@ export const AdapterLabPage: React.FC = () => {
   const [loading, setLoading] = useState<string | null>(null);
   const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const urlKind = useMemo(() => getUrlKind(url), [url]);
+  const selectedCapabilityAllowed = isCapabilityAllowedForUrlKind(selectedCapability, urlKind);
 
   const functionsForCapability = useMemo(() => {
+    if (!selectedCapabilityAllowed) return [];
     return capabilityDetail?.functions.filter((item) => item.capability === selectedCapability) ?? [];
-  }, [capabilityDetail, selectedCapability]);
+  }, [capabilityDetail, selectedCapability, selectedCapabilityAllowed]);
 
   const selectedFunction = useMemo(() => {
     return capabilityDetail?.functions.find((item) => item.id === selectedFunctionId);
   }, [capabilityDetail, selectedFunctionId]);
+  const selectedFunctionAllowed = selectedFunction
+    ? isCapabilityAllowedForUrlKind(selectedFunction.capability, urlKind)
+    : false;
 
   const selectedSymbol = useMemo(() => {
     return implementation?.outline.find((item) => item.id === selectedFunctionId);
@@ -259,9 +290,10 @@ export const AdapterLabPage: React.FC = () => {
       setImplementation(implementationResponse.data);
       setDrafts(draftListResponse.data.drafts);
       const firstCapability = capabilityOrder.find((capability) =>
-        response.data.functions.some((fn) => fn.capability === capability)
+        isCapabilityAllowedForUrlKind(capability, getUrlKind(url)) &&
+        response.data.functions.some((fn) => fn.capability === capability && fn.implemented)
       ) ?? 'common';
-      const firstFunction = response.data.functions.find((fn) => fn.capability === firstCapability);
+      const firstFunction = response.data.functions.find((fn) => fn.capability === firstCapability && fn.implemented);
       setSelectedCapability(firstCapability);
       setSelectedFunctionId(firstFunction?.id ?? '');
     } catch (err) {
@@ -368,6 +400,14 @@ export const AdapterLabPage: React.FC = () => {
       setError('Select an adapter and function before running the test.');
       return;
     }
+    if (!selectedFunctionAllowed) {
+      setError(urlKind === 'manga'
+        ? 'This is a manga catalog URL. Use a chapter URL to test Chapter Images.'
+        : urlKind === 'chapter'
+          ? 'This is a chapter URL. Use a manga catalog URL to test Metadata.'
+          : 'Enter a manga catalog URL or chapter URL before testing adapter functions.');
+      return;
+    }
     if (draft && !canExecuteDraft) {
       setError('Built-in TypeScript draft execution is not supported yet. Save the draft, then test the active adapter or wait for TS draft sandbox support.');
       return;
@@ -459,13 +499,22 @@ export const AdapterLabPage: React.FC = () => {
   }
 
   function handleCapabilityChange(capability: AdapterFunctionCapability) {
+    if (!isCapabilityAllowedForUrlKind(capability, urlKind)) {
+      setError(urlKindDescription(urlKind));
+      return;
+    }
     setSelectedCapability(capability);
-    const firstFunction = capabilityDetail?.functions.find((fn) => fn.capability === capability);
+    const firstFunction = capabilityDetail?.functions.find((fn) => fn.capability === capability && fn.implemented);
     setSelectedFunctionId(firstFunction?.id ?? '');
     setTestResult(null);
   }
 
   function handleFunctionChange(functionId: string) {
+    const fn = capabilityDetail?.functions.find((item) => item.id === functionId);
+    if (fn && !isCapabilityAllowedForUrlKind(fn.capability, urlKind)) {
+      setError(urlKindDescription(urlKind));
+      return;
+    }
     setSelectedFunctionId(functionId);
     setTestResult(null);
   }
@@ -565,22 +614,30 @@ export const AdapterLabPage: React.FC = () => {
             <>
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">2. Capability</h2>
+                <p className="mt-1 text-xs text-gray-500">{urlKindDescription(urlKind)}</p>
                 <div className="mt-2 grid grid-cols-1 gap-2">
                   {capabilityOrder.map((capability) => {
                     const implemented = capabilityDetail.functions.some((fn) => fn.capability === capability && fn.implemented);
+                    const allowed = isCapabilityAllowedForUrlKind(capability, urlKind);
                     return (
                       <button
                         key={capability}
                         type="button"
                         onClick={() => handleCapabilityChange(capability)}
+                        disabled={!allowed || !implemented}
                         className={`rounded-md border px-3 py-2 text-left text-sm ${
-                          selectedCapability === capability ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
+                          selectedCapability === capability
+                            ? 'border-blue-500 bg-blue-50'
+                            : allowed && implemented
+                              ? 'border-gray-200 bg-white hover:bg-gray-50'
+                              : 'border-gray-100 bg-gray-50 text-gray-400'
                         }`}
                       >
                         <span className="font-medium">{capabilityLabels[capability]}</span>
                         <span className={implemented ? 'ml-2 text-emerald-700' : 'ml-2 text-rose-700'}>
                           {implemented ? 'O' : 'X'}
                         </span>
+                        {!allowed && <div className="mt-1 text-xs text-gray-400">Locked for this URL type</div>}
                       </button>
                     );
                   })}
@@ -590,13 +647,23 @@ export const AdapterLabPage: React.FC = () => {
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">3. Function</h2>
                 <div className="mt-2 space-y-2">
+                  {!selectedCapabilityAllowed && (
+                    <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                      This capability is locked for the current URL type.
+                    </div>
+                  )}
                   {functionsForCapability.map((fn) => (
                     <button
                       key={fn.id}
                       type="button"
                       onClick={() => handleFunctionChange(fn.id)}
+                      disabled={!fn.implemented || !isCapabilityAllowedForUrlKind(fn.capability, urlKind)}
                       className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                        selectedFunctionId === fn.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
+                        selectedFunctionId === fn.id
+                          ? 'border-blue-500 bg-blue-50'
+                          : fn.implemented
+                            ? 'border-gray-200 bg-white hover:bg-gray-50'
+                            : 'border-gray-100 bg-gray-50 text-gray-400'
                       }`}
                     >
                       <div className="font-mono text-xs">{fn.label}</div>
@@ -630,7 +697,7 @@ export const AdapterLabPage: React.FC = () => {
               type="button"
               data-testid="adapter-lab-test"
               onClick={() => void runTest()}
-              disabled={!selectedFunctionId || !url || loading === 'test' || Boolean(draft && !canExecuteDraft)}
+              disabled={!selectedFunctionId || !selectedFunctionAllowed || !url || loading === 'test' || Boolean(draft && !canExecuteDraft)}
               className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-gray-300"
             >
               {loading === 'test' ? 'Testing...' : draft ? 'Test draft' : 'Test'}
