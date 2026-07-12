@@ -442,7 +442,7 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
-  it('expands catalog controls without page scrolling when testing chapter-list extraction', async () => {
+  it('tests chapter-list extraction without hidden catalog expansion or fixture capture', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
     const adapter = new DynamicSiteAdapter({
@@ -461,7 +461,8 @@ describe('Adapter routes', () => {
     });
     registry.register(adapter);
     const readCdpPageSnapshot = jest.fn(async (_id: string, _cdpUrl?: string, options?: { settle?: boolean; expandCatalog?: boolean; allowNavigate?: boolean }) => {
-      expect(options).toMatchObject({ settle: false, expandCatalog: true, allowNavigate: false });
+      expect(options).toMatchObject({ settle: false, allowNavigate: false });
+      expect(options).not.toHaveProperty('expandCatalog');
       return {
         job: { id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222', normalizedUrl: 'https://example.com/manga/demo' },
         page: {
@@ -491,6 +492,7 @@ describe('Adapter routes', () => {
     expect(response.json().data).toMatchObject({
       ok: true,
       status: 'passed',
+      domSource: 'verified-fixture',
       resultSummary: {
         chapterCount: 1,
         chapters: [
@@ -498,7 +500,12 @@ describe('Adapter routes', () => {
         ],
       },
     });
-    expect(readCdpPageSnapshot).toHaveBeenCalled();
+    expect(response.json().data.timings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step: 'dom_acquisition' }),
+      expect.objectContaining({ step: 'extraction' }),
+      expect.objectContaining({ step: 'readiness' }),
+    ]));
+    expect(readCdpPageSnapshot).toHaveBeenCalledTimes(1);
 
     await app.close();
   });

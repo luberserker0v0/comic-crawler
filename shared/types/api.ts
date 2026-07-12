@@ -165,6 +165,7 @@ export interface AdapterFunctionTestResponse {
   adapterId: string;
   functionId: string;
   durationMs: number;
+  timings?: Array<{ step: string; durationMs: number }>;
   domSource: AdapterDomSource;
   readiness: DomReadinessReport;
   recommendedAction: AdapterFunctionRecommendedAction;
@@ -196,7 +197,6 @@ export interface FixtureCaptureRequest {
   functionId?: string;
   expectedUrl?: string;
   settle?: boolean;
-  expandCatalog?: boolean;
   allowNavigate?: boolean;
 }
 

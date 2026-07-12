@@ -36,7 +36,6 @@ export async function findCdpPageHtml(input: {
   cdpUrl: string;
   targetUrl: string;
   settle?: boolean;
-  expandCatalog?: boolean;
   allowNavigate?: boolean;
 }): Promise<{ url: string; title: string; html: string }> {
   const endpoint = validateLocalCdpUrl(input.cdpUrl);
@@ -59,9 +58,6 @@ export async function findCdpPageHtml(input: {
         timeout: 60000,
       });
     }
-    if (input.expandCatalog) {
-      await expandCatalogControls(page);
-    }
     if (input.settle ?? true) {
       await settleLazyLoadedImages(page);
     }
@@ -76,7 +72,6 @@ export async function findCdpPageHtml(input: {
 }
 
 async function settleLazyLoadedImages(page: import('playwright').Page): Promise<void> {
-  await expandCatalogControls(page);
   await page.evaluate(async () => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const maxScrollTop = () => Math.max(
@@ -99,32 +94,6 @@ async function settleLazyLoadedImages(page: import('playwright').Page): Promise<
 
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
   await page.waitForTimeout(500).catch(() => undefined);
-}
-
-async function expandCatalogControls(page: import('playwright').Page): Promise<void> {
-  const expandLabels = [
-    '\u5168\u90e8\u7ae0\u8282',
-    '\u5168\u90e8\u7ae0\u7bc0',
-    '\u5c55\u5f00\u5168\u90e8',
-    '\u5c55\u958b\u5168\u90e8',
-    '\u663e\u793a\u5168\u90e8',
-    '\u986f\u793a\u5168\u90e8',
-    '\u66f4\u591a\u7ae0\u8282',
-    '\u66f4\u591a\u7ae0\u7bc0',
-    '\u5c55\u5f00',
-    '\u5c55\u958b',
-    '\u66f4\u591a',
-  ];
-  for (const label of expandLabels) {
-    const locator = page.locator('button, a, [role="button"]')
-      .filter({ hasText: label })
-      .first();
-    if (await locator.count().catch(() => 0) === 0) {
-      continue;
-    }
-    await locator.click({ timeout: 1500 }).catch(() => undefined);
-    await page.waitForTimeout(300).catch(() => undefined);
-  }
 }
 
 function validateLocalCdpUrl(value: string): URL {

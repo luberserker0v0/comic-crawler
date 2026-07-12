@@ -13,7 +13,6 @@ export interface CaptureFixtureInput {
   functionId?: string;
   expectedUrl?: string;
   settle?: boolean;
-  expandCatalog?: boolean;
   allowNavigate?: boolean;
 }
 
@@ -36,7 +35,6 @@ export class FixtureCaptureService {
 
     const snapshot = await this.challengeDiscoveryService.readCdpPageSnapshot(input.challengeDiscoveryId, job.browserCdpUrl, {
       settle: input.settle,
-      expandCatalog: input.expandCatalog,
       allowNavigate: input.allowNavigate,
     });
     if (input.expectedUrl && !sameDocumentPath(snapshot.page.url, input.expectedUrl)) {

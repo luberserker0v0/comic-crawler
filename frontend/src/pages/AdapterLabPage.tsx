@@ -806,6 +806,19 @@ export const AdapterLabPage: React.FC = () => {
                   ))}
                 </ul>
               )}
+              {testResult.timings && testResult.timings.length > 0 && (
+                <div className="mt-3 rounded border border-gray-200 bg-white p-3 text-xs text-gray-700">
+                  <div className="font-semibold text-gray-900">Timing breakdown</div>
+                  <div className="mt-2 grid gap-1 sm:grid-cols-3">
+                    {testResult.timings.map((timing, index) => (
+                      <div key={`${timing.step}-${index}`} className="flex justify-between gap-3 rounded bg-gray-50 px-2 py-1">
+                        <span className="font-mono">{timing.step}</span>
+                        <span>{timing.durationMs}ms</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {testResult.requiresVerification && (
                 <div className="mt-3 space-y-3 text-amber-900">
                   <p>

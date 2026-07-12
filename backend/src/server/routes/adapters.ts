@@ -11,7 +11,6 @@ import type {
   AdapterDomSource,
   DomReadinessReport,
   DomReadinessTarget,
-  FixtureSummary,
 } from '@comiccrawler/shared';
 import { DEFAULTS } from '@comiccrawler/shared';
 import { existsSync } from 'node:fs';
@@ -26,7 +25,6 @@ import type { ChallengeDiscoveryJob } from '../../challenge/discovery-types';
 import { looksLikeAntiBotChallenge } from '../../crawler/anti-bot';
 import { PlaywrightHtmlRenderer } from '../../crawler/html-renderer';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
-import type { FixtureCaptureService } from '../../fixtures/fixture-capture-service';
 
 const STATIC_ADAPTER_FUNCTION_TIMEOUT_MS = 30_000;
 const PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS = 15 * 60 * 1000;
@@ -50,16 +48,32 @@ export type AdapterFunctionId =
 
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
-  fixtureCaptureService?: FixtureCaptureService;
 }
 
 interface VerifiedChallengeDocument {
   document: cheerio.CheerioAPI;
   page: { url: string; title: string; html: string };
-  fixture?: FixtureSummary;
 }
 
 type AdapterCrawlerMode = 'static' | 'playwright';
+type AdapterFunctionTiming = NonNullable<AdapterFunctionTestResponse['timings']>[number];
+
+class TimingCollector {
+  private readonly entries: AdapterFunctionTiming[] = [];
+
+  async measure<T>(step: string, operation: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await operation();
+    } finally {
+      this.entries.push({ step, durationMs: Date.now() - startedAt });
+    }
+  }
+
+  list(): AdapterFunctionTiming[] {
+    return [...this.entries];
+  }
+}
 
 export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegistry, options: AdapterRouteOptions = {}): void {
   app.get('/api/adapters', async (_request: FastifyRequest, reply: FastifyReply) => {
@@ -194,7 +208,6 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       const result = await testAdapterFunction(adapter, functionId, body.url, {
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,
-        fixtureCaptureService: options.fixtureCaptureService,
       });
     reply.send({ data: result });
   });
@@ -617,10 +630,10 @@ export async function testAdapterFunction(
   options: {
     challengeDiscoveryId?: string;
     challengeDiscoveryService?: ChallengeDiscoveryService;
-    fixtureCaptureService?: FixtureCaptureService;
   } = {}
 ): Promise<AdapterFunctionTestResponse> {
   const startedAt = Date.now();
+  const timings = new TimingCollector();
   const crawlerMode = defaultCrawlerModeForAdapter(adapter);
   const target = readinessTargetForFunction(functionId);
   const domSource = domSourceForCrawlerMode(crawlerMode);
@@ -636,65 +649,66 @@ export async function testAdapterFunction(
     if (renderer && typeof (adapter as unknown as { setHtmlRenderer?: (renderer: unknown) => void }).setHtmlRenderer === 'function') {
       (adapter as unknown as { setHtmlRenderer: (renderer: unknown) => void }).setHtmlRenderer(renderer);
     }
-    const verifiedDocument = options.challengeDiscoveryId
-      ? await loadVerifiedChallengeDocument(options.challengeDiscoveryService, options.challengeDiscoveryId, url, {
+    const challengeDiscoveryId = options.challengeDiscoveryId;
+    const verifiedDocument = challengeDiscoveryId
+      ? await timings.measure('dom_acquisition', () => loadVerifiedChallengeDocument(options.challengeDiscoveryService, challengeDiscoveryId, url, {
         settle: functionId === 'extractChapterImageUrls',
-        expandCatalog: functionId === 'extractChapterList',
         allowNavigate: false,
-        functionId,
-        target,
-        fixtureCaptureService: options.fixtureCaptureService,
-      })
+      }))
       : undefined;
-    const resultSummary = await withTimeout(() => runWithCrawlerMode(adapter, crawlerMode, async () => {
+    const resultSummary: Record<string, unknown> = await withTimeout(() => runWithCrawlerMode(adapter, crawlerMode, async (): Promise<Record<string, unknown>> => {
       if (functionId === 'matchUrl') {
-        return { matched: adapter.matchUrl(url), domSource };
+        return timings.measure('extraction', async () => ({ matched: adapter.matchUrl(url), domSource }));
       }
       if (functionId === 'detectVerificationRequired') {
         if (verifiedDocument) {
           const html = verifiedDocument.page.html;
-          return {
+          return timings.measure('extraction', async () => ({
             verificationRequired: looksLikeAntiBotChallenge(html),
             source: 'verified-browser-html',
             htmlLength: html.length,
             domSource: 'verified-fixture',
             ...verifiedDocumentSourceSummary(verifiedDocument),
-          };
+          }));
         }
-        return detectVerificationRequiredForUrl(adapter, url, crawlerMode);
+        return timings.measure('extraction', () => detectVerificationRequiredForUrl(adapter, url, crawlerMode));
       }
       if (functionId === 'describeVerificationHandoff') {
         const capabilities = getAdapterCapabilities(adapter);
-        return {
+        return timings.measure('extraction', async () => ({
           supported: capabilities.verification,
           matched: adapter.matchUrl(url),
           flow: await adapter.describeVerificationHandoff?.(),
           domSource,
-        };
+        }));
       }
       if (isMetadataFunction(functionId)) {
-        const document = verifiedDocument?.document ?? await loadAdapterDocument(adapter, url);
+        const document = verifiedDocument?.document ?? await timings.measure('dom_acquisition', () => loadAdapterDocument(adapter, url));
         const sourceSummary = verifiedDocument ? verifiedDocumentSourceSummary(verifiedDocument) : {};
-        if (functionId === 'extractTitle') return { title: await adapter.extractTitle?.(document, url), ...sourceSummary };
-        if (functionId === 'extractAuthor') return { author: await adapter.extractAuthor?.(document, url), ...sourceSummary };
-        if (functionId === 'extractDescription') return { description: await adapter.extractDescription?.(document, url), ...sourceSummary };
-        if (functionId === 'extractCoverUrl') return { coverUrl: await adapter.extractCoverUrl?.(document, url), ...sourceSummary };
-        if (functionId === 'extractTags') return { tags: await adapter.extractTags?.(document, url), ...sourceSummary };
-        if (functionId === 'extractStatus') return { status: await adapter.extractStatus?.(document, url), ...sourceSummary };
-        const chapters = await adapter.extractChapterList?.(document, url) ?? [];
-        return {
-          chapterCount: chapters.length,
-          chapters,
-          ...sourceSummary,
-        };
+        return timings.measure('extraction', async () => {
+          if (functionId === 'extractTitle') return { title: await adapter.extractTitle?.(document, url), ...sourceSummary };
+          if (functionId === 'extractAuthor') return { author: await adapter.extractAuthor?.(document, url), ...sourceSummary };
+          if (functionId === 'extractDescription') return { description: await adapter.extractDescription?.(document, url), ...sourceSummary };
+          if (functionId === 'extractCoverUrl') return { coverUrl: await adapter.extractCoverUrl?.(document, url), ...sourceSummary };
+          if (functionId === 'extractTags') return { tags: await adapter.extractTags?.(document, url), ...sourceSummary };
+          if (functionId === 'extractStatus') return { status: await adapter.extractStatus?.(document, url), ...sourceSummary };
+          const chapters = await adapter.extractChapterList?.(document, url) ?? [];
+          return {
+            chapterCount: chapters.length,
+            chapters,
+            ...sourceSummary,
+          };
+        });
       }
-      const document = verifiedDocument?.document ?? await loadAdapterDocument(adapter, url);
-      const urls = await adapter.extractChapterImageUrls?.(document, url) ?? [];
-      return {
-        imageUrlCount: urls.length,
-        firstImageUrls: urls.slice(0, 5),
-        ...(verifiedDocument ? verifiedDocumentSourceSummary(verifiedDocument) : {}),
-      };
+      const document = verifiedDocument?.document ?? await timings.measure('dom_acquisition', () => loadAdapterDocument(adapter, url));
+      return timings.measure('extraction', async () => {
+        const urls = await adapter.extractChapterImageUrls?.(document, url) ?? [];
+        return {
+          imageUrlCount: urls.length,
+          firstImageUrls: urls.slice(0, 5),
+          ...(verifiedDocument ? verifiedDocumentSourceSummary(verifiedDocument) : {}),
+        };
+      });
     }), adapterFunctionTimeoutMs(crawlerMode));
 
     if (crawlerMode === 'playwright' && functionId === 'detectVerificationRequired' && resultSummary.verificationRequired === true) {
@@ -702,6 +716,7 @@ export async function testAdapterFunction(
         adapterId: adapter.id,
         functionId,
         durationMs: Date.now() - startedAt,
+        timings: timings.list(),
         url,
         error: typeof resultSummary.error === 'string' ? resultSummary.error : 'The page requires human verification.',
         challengeDiscoveryService: options.challengeDiscoveryService,
@@ -710,12 +725,12 @@ export async function testAdapterFunction(
     }
 
     const readiness = combineReadiness(
-      verifiedDocument?.fixture?.readiness,
-      readinessForResult({
+      undefined,
+      await timings.measure('readiness', async () => readinessForResult({
         target,
         functionId,
         resultSummary,
-      })
+      }))
     );
     if (readiness.status !== 'ready') {
       return {
@@ -724,11 +739,10 @@ export async function testAdapterFunction(
         adapterId: adapter.id,
         functionId,
         durationMs: Date.now() - startedAt,
+        timings: timings.list(),
         domSource: verifiedDocument ? 'verified-fixture' : domSource,
         readiness,
         recommendedAction: readiness.recommendedAction,
-        fixtureId: verifiedDocument?.fixture?.id,
-        fixturePath: verifiedDocument?.fixture?.path,
         resultSummary,
         error: `DOM readiness is not trusted enough for this function: ${readiness.reasons.join(' ')}`,
         requiresVerification: false,
@@ -741,11 +755,10 @@ export async function testAdapterFunction(
       adapterId: adapter.id,
       functionId,
       durationMs: Date.now() - startedAt,
+      timings: timings.list(),
       domSource: verifiedDocument ? 'verified-fixture' : domSource,
       readiness,
       recommendedAction: readiness.recommendedAction,
-      fixtureId: verifiedDocument?.fixture?.id,
-      fixturePath: verifiedDocument?.fixture?.path,
       resultSummary,
       requiresVerification: false,
     };
@@ -756,6 +769,7 @@ export async function testAdapterFunction(
         adapterId: adapter.id,
         functionId,
         durationMs: Date.now() - startedAt,
+        timings: timings.list(),
         url,
         error: message,
         challengeDiscoveryService: options.challengeDiscoveryService,
@@ -768,6 +782,7 @@ export async function testAdapterFunction(
       adapterId: adapter.id,
       functionId,
       durationMs: Date.now() - startedAt,
+      timings: timings.list(),
       domSource,
       readiness: failureReadiness(target, message),
       recommendedAction: looksLikeVerificationRequired(message) ? 'human_verification_handoff' : 'manual_review',
@@ -786,6 +801,7 @@ async function createVerificationRequiredResponse(input: {
   adapterId: string;
   functionId: AdapterFunctionId;
   durationMs: number;
+  timings?: AdapterFunctionTiming[];
   url: string;
   error: string;
   challengeDiscoveryService?: ChallengeDiscoveryService;
@@ -801,6 +817,7 @@ async function createVerificationRequiredResponse(input: {
     adapterId: input.adapterId,
     functionId: input.functionId,
     durationMs: input.durationMs,
+    timings: input.timings,
     domSource: 'handoff-required',
     readiness: {
       status: 'human_verification_required',
@@ -835,7 +852,7 @@ async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): P
 }
 
 function looksLikeVerificationRequired(message: string): boolean {
-  return /anti-bot|human verification|challenge|cloudflare|sorry, you have been blocked|unable to access|人机验证|人機驗證|HTTP\s+(?:401|403|429|503)\b/i.test(message);
+  return /anti-bot|human verification|人机验证|人機驗證|验证|驗證|challenge|cloudflare|sorry, you have been blocked|unable to access|HTTP\s+(?:401|403|429|503)\b/i.test(message);
 }
 
 function shouldOfferHandoffForPlaywrightTest(message: string): boolean {
@@ -896,11 +913,7 @@ async function loadVerifiedChallengeDocument(
   url: string,
   options: {
     settle?: boolean;
-    expandCatalog?: boolean;
     allowNavigate?: boolean;
-    functionId?: AdapterFunctionId;
-    target?: DomReadinessTarget;
-    fixtureCaptureService?: FixtureCaptureService;
   } = {}
 ): Promise<VerifiedChallengeDocument> {
   if (!challengeDiscoveryService) {
@@ -917,27 +930,14 @@ async function loadVerifiedChallengeDocument(
 
   const snapshot = await challengeDiscoveryService.readCdpPageSnapshot(challengeDiscoveryId, job.browserCdpUrl, {
     settle: options.settle,
-    expandCatalog: options.expandCatalog,
     allowNavigate: options.allowNavigate,
   });
   if (!sameDocumentPath(snapshot.page.url, url)) {
     throw new Error(`Verified browser page does not match the test URL. Browser page: ${snapshot.page.url}`);
   }
-  const fixture = options.functionId && options.target && options.fixtureCaptureService
-    ? await options.fixtureCaptureService.captureBrowserDocument({
-      challengeDiscoveryId,
-      target: options.target,
-      functionId: options.functionId,
-      expectedUrl: url,
-      settle: options.settle,
-      expandCatalog: options.expandCatalog,
-      allowNavigate: options.allowNavigate,
-    })
-    : undefined;
   return {
     document: cheerio.load(snapshot.page.html),
     page: snapshot.page,
-    fixture,
   };
 }
 
@@ -968,10 +968,6 @@ function verifiedDocumentSourceSummary(verifiedDocument: VerifiedChallengeDocume
     sourcePageUrl: verifiedDocument.page.url,
     sourcePageTitle: verifiedDocument.page.title,
     sourceHtmlLength: verifiedDocument.page.html.length,
-    ...(verifiedDocument.fixture ? {
-      sourceFixtureId: verifiedDocument.fixture.id,
-      sourceFixturePath: verifiedDocument.fixture.path,
-    } : {}),
   };
 }
 

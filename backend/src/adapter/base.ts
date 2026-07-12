@@ -263,5 +263,5 @@ export class VerificationCapability implements VerificationCapabilityContract {
 }
 
 function defaultVerificationDetection(input: string): boolean {
-  return /anti-bot|human verification|challenge|cloudflare|sorry, you have been blocked|unable to access|人机验证|人機驗證|HTTP\s+(?:401|403|429|503)\b/i.test(input);
+  return /anti-bot|human verification|人机验证|人機驗證|验证|驗證|challenge|cloudflare|sorry, you have been blocked|unable to access|HTTP\s+(?:401|403|429|503)\b/i.test(input);
 }

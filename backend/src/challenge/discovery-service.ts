@@ -221,7 +221,7 @@ export class ChallengeDiscoveryService {
     return this.getRequiredJob(id);
   }
 
-  async readCdpPageSnapshot(id: string, cdpUrl?: string, options: { settle?: boolean; expandCatalog?: boolean; allowNavigate?: boolean } = {}): Promise<{
+  async readCdpPageSnapshot(id: string, cdpUrl?: string, options: { settle?: boolean; allowNavigate?: boolean } = {}): Promise<{
     job: ChallengeDiscoveryJob;
     page: { url: string; title: string; html: string };
   }> {
@@ -234,7 +234,6 @@ export class ChallengeDiscoveryService {
       cdpUrl: resolved,
       targetUrl: job.normalizedUrl,
       settle: options.settle,
-      expandCatalog: options.expandCatalog,
       allowNavigate: options.allowNavigate,
     });
     if (looksLikeAccessBlocked(page.html)) {

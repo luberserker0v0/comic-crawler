@@ -108,7 +108,6 @@ export class ComicCrawlerServer {
     setupConfigRoutes(this.app, this.options.configManager);
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
-      fixtureCaptureService: this.options.fixtureCaptureService,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
     setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
