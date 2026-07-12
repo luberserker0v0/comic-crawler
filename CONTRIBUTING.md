@@ -125,7 +125,8 @@ fix(task): resume waiting verification tasks from checkpoint
 
 ## Adapter contributions
 
-Adapters should expose accurate capabilities:
+Adapters extend `AdapterBase`, declare `parseMode`, and expose accurate
+capabilities:
 
 - `metadata` for manga metadata and chapter lists.
 - `chapterImages` for image extraction from chapter URLs.
@@ -135,9 +136,15 @@ Do not fake unsupported capabilities. A chapter-only adapter is valid, but it
 must not claim metadata support until metadata extraction has been implemented
 and verified.
 
-Built-in adapters should include unit fixtures. Dynamic adapters should come
-from reviewed selector candidates and should be promoted through the existing
-agent adapter review flow.
+Site strategy must be visible in the adapter implementation or reviewed dynamic
+manifest. Runtime and Adapter Lab should not hide site-specific behavior behind
+generic pre-extraction button clicking or DOM preparation.
+
+Built-in adapters should include focused unit tests. Verified DOM fixtures may
+be captured from real browser sessions for local diagnosis, but hand-written
+fake site fixtures must not be used to imply live-site correctness. Dynamic
+adapters should come from reviewed selector drafts and should be promoted
+through the existing adapter review flow.
 
 ## AO, selector discovery, and verification handoff
 

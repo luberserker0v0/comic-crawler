@@ -10,6 +10,8 @@ This directory contains user- and contributor-facing documentation for the
 - `API.md` - concise reference for the currently implemented backend routes.
 - `openapi.yaml` - machine-readable contract for the public REST crawl flow.
 - `ARCHITECTURE.md` - current subsystem overview and runtime data flow.
+- `ADAPTERS.md` - adapter contract, capabilities, Adapter Lab, drafts, and
+  verified fixture policy.
 
 ## Documentation boundary
 
@@ -20,8 +22,6 @@ This directory contains user- and contributor-facing documentation for the
 
 ## Missing docs to add
 
-- `ADAPTERS.md` - built-in vs dynamic adapters, capabilities, promote/rollback,
-  and chapter-only behavior.
 - `AO_SELECTOR_DISCOVERY.md` - AO URL, provider JSON, model selection, bundle
   eval, and Markdown draft review workflow.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,

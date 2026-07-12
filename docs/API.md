@@ -177,7 +177,10 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
+| `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
+| `GET` | `/api/adapters/:id/functions/:functionId/source` | Read the legacy function source snippet view. Prefer `/implementation` for review. |
+| `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
 | `GET` | `/api/adapter-drafts` | List user-owned adapter drafts. |
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
@@ -196,6 +199,22 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/config/selector-discovery` | Read selector discovery settings without provider secrets. |
 | `PUT` | `/api/config/selector-discovery` | Save AO URL, provider document, and selected model. |
 | `POST` | `/api/config/selector-discovery/test` | Test selector discovery settings. |
+
+Adapter Lab function tests are diagnostic support APIs. The WebUI locks
+metadata tests to manga catalog URLs and chapter image tests to chapter URLs;
+API callers should follow the same input contract. `extractChapterImageUrls`
+returns the full `imageUrls` list plus `imageUrlCount`; it does not return a
+shortened `firstImageUrls` preview. Test responses may include timing breakdown
+entries such as `dom_acquisition`, `extraction`, and `readiness`.
+
+Verified fixture routes also exist for diagnostics:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/dom-readiness/check` | Check whether supplied HTML looks like trusted comic DOM. |
+| `POST` | `/api/fixtures/capture` | Capture verified DOM from a ready handoff browser session. |
+| `GET` | `/api/fixtures/:domain/:id` | Read captured fixture metadata, optionally with HTML. |
+| `POST` | `/api/fixtures/:domain/:id/test-adapter-function` | Test an adapter function against a captured fixture. |
 
 ## Internal or diagnostic endpoints
 

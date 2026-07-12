@@ -43,6 +43,36 @@ Adapters expose capabilities:
 A chapter-only dynamic adapter can download specific chapter URLs but cannot run
 all-chapter tasks until metadata selectors are discovered and promoted.
 
+## Adapter Lab
+
+Adapter Lab is for reviewing and testing what an adapter actually implements.
+It does not create crawl tasks.
+
+Enter a URL first:
+
+- Manga catalog URL - Adapter Lab unlocks metadata functions such as title,
+  author, tags, status, and chapter list extraction.
+- Chapter URL - Adapter Lab unlocks chapter image extraction.
+
+Common and verification functions remain available for diagnostics. Functions
+that do not match the URL type are locked in the UI, and the Test button is
+disabled for those functions.
+
+The implementation panel shows the full adapter source or dynamic selector
+manifest. Function selection only chooses the test target; helper functions and
+shared constants can still be part of the implementation.
+
+Editable drafts are user-owned copies. Built-in TypeScript drafts can be saved,
+reset, discarded, and diffed against the active adapter, but they are not
+executed yet. Dynamic manifest drafts can be tested without promoting or
+registering them.
+
+Adapter Lab tests use the adapter `parseMode` automatically. If a site requires
+human verification, use the verification handoff shown in the test result,
+complete verification in the opened browser, then continue the test. Adapter Lab
+does not secretly click generic "show all" buttons or rewrite the page before
+calling the selected adapter function.
+
 ## Human verification
 
 If a crawl reaches a human verification page, the task becomes

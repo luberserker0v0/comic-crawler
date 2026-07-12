@@ -56,6 +56,61 @@ paths:
                         $ref: "#/components/schemas/AdapterResolveResponse"
         "400":
           $ref: "#/components/responses/Error"
+  /api/adapters/{id}/capabilities:
+    get:
+      summary: Read Adapter Lab capabilities and function descriptors
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+      responses:
+        "200":
+          description: Adapter capability detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/adapters/{id}/implementation:
+    get:
+      summary: Read full Adapter Lab implementation source or manifest
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+      responses:
+        "200":
+          description: Adapter implementation artifact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/adapters/{id}/functions/{functionId}/test:
+    post:
+      summary: Run an Adapter Lab function test
+      description: Metadata functions expect manga catalog URLs. Chapter image functions expect chapter URLs.
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+        - $ref: "#/components/parameters/FunctionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdapterFunctionTestRequest"
+      responses:
+        "200":
+          description: Function test result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdapterFunctionTestResponse"
+        "400":
+          $ref: "#/components/responses/Error"
   /api/tasks:
     get:
       summary: List tasks
@@ -271,6 +326,18 @@ paths:
           $ref: "#/components/responses/Error"
 components:
   parameters:
+    AdapterId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    FunctionId:
+      name: functionId
+      in: path
+      required: true
+      schema:
+        type: string
     TaskId:
       name: id
       in: path
@@ -403,6 +470,62 @@ components:
         discoveryTarget:
           type: string
           enum: [full, chapter-only]
+    AdapterFunctionTestRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        challengeDiscoveryId:
+          type: string
+    AdapterFunctionTiming:
+      type: object
+      required: [step, durationMs]
+      properties:
+        step:
+          type: string
+        durationMs:
+          type: number
+    AdapterFunctionTestResponse:
+      type: object
+      required: [ok, status, adapterId, functionId, durationMs, domSource, readiness, recommendedAction, requiresVerification]
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+          enum: [passed, failed, verification_required]
+        adapterId:
+          type: string
+        functionId:
+          type: string
+        durationMs:
+          type: number
+        timings:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdapterFunctionTiming"
+        domSource:
+          type: string
+          enum: [static, rendered, verified-fixture, handoff-required]
+        readiness:
+          type: object
+        recommendedAction:
+          type: string
+        resultSummary:
+          type: object
+          description: For extractChapterImageUrls, includes imageUrlCount and the full imageUrls array.
+        error:
+          type: string
+        requiresVerification:
+          type: boolean
+        challengeDiscoveryId:
+          type: string
+        retryableAfterVerification:
+          type: boolean
+        verificationMessage:
+          type: string
     CreateTaskRequest:
       type: object
       required: [url]

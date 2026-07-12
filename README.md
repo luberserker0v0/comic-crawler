@@ -161,6 +161,8 @@ not the primary user flow.
   backend routes.
 - [Architecture](docs/ARCHITECTURE.md) - current subsystem overview and data
   flow.
+- [Adapters](docs/ADAPTERS.md) - adapter capabilities, Adapter Lab, drafts, and
+  verified DOM policy.
 - [Contributing](CONTRIBUTING.md) - development workflow and verification rules.
 
 ## Why `npm run dev` builds shared first

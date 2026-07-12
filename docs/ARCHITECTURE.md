@@ -59,17 +59,34 @@ Adapters identify supported domains and declare capabilities:
 - `chapterImages` - extract image URLs from a parsed chapter document.
 - `verification` - participate in verification handoff.
 
-Runtime adapter code is split into an `AdapterBase` shell plus capability
-handlers. The shell owns identity, domains, and fetch/render helpers; handlers
-own the small extraction functions for `common`, `metadata`, `chapterImages`,
-and `verification`. ComicCrawler runtime composes those functions into metadata
-and image results internally. Agent-generated TypeScript should implement
-capability handlers only, not runtime composer facade functions.
+Runtime adapter code is centered on `AdapterBase`. A site adapter declares its
+identity, `parseMode`, capabilities, and fine-grained extraction functions.
+ComicCrawler runtime composes those functions into metadata and image results
+internally. Agent-generated TypeScript should implement the BaseAdapter
+contract and must not expose old runtime facade functions such as
+`fetchMetadata()` or `fetchChapterImages()`.
+
+`parseMode` is only the DOM acquisition strategy:
+
+- `static` fetches HTML directly.
+- `dynamic` renders with Playwright before parsing.
+- `interactive` renders with Playwright and can enter human verification
+  handoff.
+
+Runtime may choose a DOM source, but site-specific strategy belongs in the
+adapter implementation or reviewed dynamic manifest. Adapter Lab and runtime do
+not perform hidden generic site operations such as scanning and clicking
+"show all chapters" controls before calling an extraction function.
 
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. Built-in adapters have priority over
 dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
 drafts.
+
+Adapter Lab is the human review workbench for this boundary. It displays the
+full adapter source or dynamic manifest, supports user-owned drafts, locks
+metadata tests to manga URLs and image tests to chapter URLs, and returns full
+`imageUrls` for image extraction tests.
 
 Selector discovery is intentionally modular:
 
