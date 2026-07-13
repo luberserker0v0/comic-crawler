@@ -5,6 +5,11 @@ The final AO result has two files:
 - `outputs/adapter-implementation.ts`
 - `outputs/review-notes.md`
 
+For staged discovery, produce capability drafts first by following
+`contracts/capability-pipeline.md`. The final adapter implementation is the
+compose step after Common, Verification, Metadata, and ChapterImages drafts have
+been reviewed.
+
 ## TypeScript Implementation Requirements
 
 The TypeScript file must:
@@ -16,6 +21,8 @@ The TypeScript file must:
 - declare adapter identity as readonly class fields, not constructor or
   `super(...)` options;
 - implement site URL matching through `CommonCapability`;
+- always implement `VerificationCapability`; it is the DOM trust gate even when
+  a normal page does not require human verification;
 - implement supported capability handlers using the `CommonCapability`,
   `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability`
   classes exported by ComicCrawler;

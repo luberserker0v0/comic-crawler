@@ -54,6 +54,7 @@ export interface SelectorDiscoveryJob {
   phase1Markdown?: string;
   inputSource?: 'live-fetch' | 'html-snapshot';
   candidateMarkdown?: string;
+  capabilityDrafts?: SelectorDiscoveryCapabilityDraft[];
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
   implementationValidation?: AdapterImplementationValidation;
@@ -126,6 +127,21 @@ export interface AdapterImplementationValidation {
   errors: string[];
   warnings: string[];
   syntaxValid: boolean;
+}
+
+export type SelectorDiscoveryCapabilityStage =
+  | 'common-verification'
+  | 'metadata'
+  | 'chapter-images'
+  | 'compose';
+
+export interface SelectorDiscoveryCapabilityDraft {
+  stage: SelectorDiscoveryCapabilityStage;
+  sourcePath: string;
+  reviewPath: string;
+  sourceTs?: string;
+  reviewMarkdown?: string;
+  validation?: AdapterImplementationValidation;
 }
 
 export interface ParsedMarkdownCandidate {

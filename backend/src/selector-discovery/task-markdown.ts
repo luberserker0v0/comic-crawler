@@ -11,6 +11,40 @@ export interface ExistingAdapterCapabilityContext {
   note?: string;
 }
 
+export function createCapabilityPipelineMarkdown(input: {
+  target: 'full' | 'chapter-only';
+  existingAdapter?: ExistingAdapterCapabilityContext;
+}): string {
+  const metadataStage = input.target === 'full'
+    ? '3. MetadataCapability: extract title, author, description, cover URL, tags, status, and the full chapter list from trusted metadata DOM.'
+    : '3. MetadataCapability: skipped for chapter-only discovery; do not invent metadata functions.';
+  const chapterStageNumber = input.target === 'full' ? '4' : '3';
+  const composeStageNumber = input.target === 'full' ? '5' : '4';
+  return `## Capability Pipeline
+
+Generate adapter behavior in capability stages. Do not treat discovery as one
+large unstructured adapter-writing task.
+
+1. CommonCapability: match supported URLs and reject unrelated domains/paths.
+2. VerificationCapability: always implement this capability. It detects blocked
+   or challenge DOM and describes the official human handoff. Normal pages may
+   return false, but the capability still exists because it gates DOM trust.
+${metadataStage}
+${chapterStageNumber}. ChapterImagesCapability: extract all comic page image URLs from trusted reader DOM.
+${composeStageNumber}. Compose: assemble the site adapter shell from reviewed capability handlers.
+
+Rules:
+
+- Later extraction stages must assume the DOM has already passed
+  VerificationCapability readiness.
+- Capability handlers are mutually scoped: metadata code does not implement
+  chapter image extraction, and chapter image code does not implement metadata.
+- Keep site-specific clicking, filtering, expansion, and extraction logic inside
+  the relevant capability source so humans can review it.
+- Promotion mode: ${input.existingAdapter ? 'augment existing adapter capability' : 'create new adapter'}.
+`;
+}
+
 export function createPhase1TaskMarkdown(input: {
   url: string;
   metadataFetch: SafeHtmlFetchResult;
@@ -44,6 +78,8 @@ Important rules:
 ${input.url}
 
 ${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
+
+${createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter })}
 
 ${formatExistingAdapterCapability(input.existingAdapter)}
 
@@ -128,6 +164,8 @@ Important rules:
 ${input.url}
 
 ${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
+
+${createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter })}
 
 ${formatExistingAdapterCapability(input.existingAdapter)}
 
@@ -218,6 +256,8 @@ ${input.url}
 
 ${adapterImplementationContract('create', 'chapter-only')}
 
+${createCapabilityPipelineMarkdown({ target: 'chapter-only' })}
+
 ## Discovery Target
 
 chapter-only adapter
@@ -256,15 +296,21 @@ function adapterImplementationContract(mode: 'create' | 'augment', target: 'full
 - Export exactly one site adapter class that extends AdapterBase.
 - Read and follow contracts/adapter-base-api.md for imports, capability class
   usage, method signatures, return shapes, helper methods, and parseMode meaning.
+- Discovery is capability-staged. Always produce CommonCapability and
+  VerificationCapability first; VerificationCapability gates whether the DOM is
+  trusted for later metadata or chapter-image extraction.
 - Import AdapterBase and capability classes from ComicCrawler adapter base.
 - Declare id, name, domains, parseMode, and capabilities.
 - Declare adapter identity as readonly class fields. Do not pass id/name/domains/parseMode/capabilities to constructor or super().
-- Capabilities must be boolean flags: { verification: boolean, metadata: boolean, chapterImages: boolean }.
+- Capabilities must be boolean flags: { verification: true, metadata: boolean, chapterImages: boolean }.
 - Capability handler instances must be separate readonly fields named common, verification, metadata, and chapterImages.
-- Do not instantiate CommonCapability, MetadataCapability, or ChapterImagesCapability directly. Create site-specific subclasses that extend them.
+- Do not instantiate CommonCapability, VerificationCapability, MetadataCapability, or ChapterImagesCapability directly. Create site-specific subclasses that extend them.
 - Do not write extraction methods directly on the adapter shell class; put them in the site-specific capability subclasses.
 - Implement CommonCapability.matchUrl for the site URL patterns.
-- If verification is supported, use VerificationCapability to detect blocked/challenge pages and describe the official human handoff. Do not bypass or automate CAPTCHA.
+- Always implement VerificationCapability to detect blocked/challenge pages and
+  describe the official human handoff. If no challenge is observed,
+  detectVerificationRequired still returns false for normal DOM and true for
+  generic blocked/challenge signals. Do not bypass or automate CAPTCHA.
 ${metadataRequirement}
 - Implement chapterImages.extractChapterImageUrls for chapter reader pages when chapterImages capability is true.
 - Use exact method names: extractTitle, extractAuthor, extractDescription, extractCoverUrl, extractTags, extractStatus, extractChapterList, extractChapterImageUrls. Do not rename them to matchTitle, matchChapterList, or matchChapterImageUrls.

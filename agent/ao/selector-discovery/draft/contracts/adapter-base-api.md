@@ -2,6 +2,9 @@
 
 Use this reference when writing `outputs/adapter-implementation.ts`.
 
+Before writing the composed adapter, follow `contracts/capability-pipeline.md`.
+Every adapter starts with `CommonCapability` and `VerificationCapability`.
+
 ## Imports
 
 Use this import style:
@@ -37,12 +40,13 @@ export class ExampleSiteAdapter extends AdapterBase {
   readonly domains = ['example.com'];
   readonly parseMode = 'static' as const;
   readonly capabilities = {
-    verification: false,
+    verification: true,
     metadata: true,
     chapterImages: true,
   };
 
   readonly common = new ExampleCommonCapability(this);
+  readonly verification = new ExampleVerificationCapability(this);
   readonly metadata = new ExampleMetadataCapability(this);
   readonly chapterImages = new ExampleChapterImagesCapability(this);
 }
@@ -54,9 +58,10 @@ declared as readonly class fields as shown above.
 `capabilities` is a boolean object only. Do not put `new CommonCapability()` or
 other handler instances inside `capabilities`. Handler instances must be separate
 readonly fields named `common`, `verification`, `metadata`, and `chapterImages`.
-Do not instantiate `CommonCapability`, `MetadataCapability`, or
-`ChapterImagesCapability` directly. They are base classes. Create site-specific
-subclasses such as `ExampleCommonCapability extends CommonCapability`.
+Do not instantiate `CommonCapability`, `VerificationCapability`,
+`MetadataCapability`, or `ChapterImagesCapability` directly. They are base
+classes. Create site-specific subclasses such as
+`ExampleCommonCapability extends CommonCapability`.
 Do not write extraction methods directly on the adapter shell class. The adapter
 shell only declares identity, capability flags, and handler fields. Fine-grained
 extraction methods belong in the capability handler subclasses.
@@ -83,7 +88,9 @@ for unrelated URLs on other domains or unsupported paths.
 
 ## Verification capability
 
-Use this only when the site may require human verification:
+Every adapter implements this capability. It is the DOM trust gate. If no
+verification is observed, return `false` for normal DOM and still detect generic
+blocked/challenge signals:
 
 ```ts
 class ExampleVerificationCapability extends VerificationCapability {
@@ -101,7 +108,8 @@ class ExampleVerificationCapability extends VerificationCapability {
 ```
 
 Do not bypass CAPTCHA, Cloudflare, browser fingerprinting, or any human
-verification. Only detect that handoff is required.
+verification. Only detect that handoff is required. ComicCrawler will use the
+official Task Detail handoff when a human needs to complete verification.
 
 ## Metadata capability
 

@@ -1,22 +1,36 @@
 import { describe, expect, it } from '@jest/globals';
-import { validateAdapterImplementationDraft } from '../../../src/selector-discovery/adapter-implementation';
+import { validateAdapterImplementationDraft, validateCapabilityDraft } from '../../../src/selector-discovery/adapter-implementation';
 
 const VALID_CHAPTER_ONLY_ADAPTER = `
-import { AdapterBase, ChapterImagesCapability, CommonCapability } from '../adapter/base';
+import { AdapterBase, ChapterImagesCapability, CommonCapability, VerificationCapability } from '../adapter/base';
 
 export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
   readonly domains = ['example.com'];
   readonly parseMode = 'static' as const;
-  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommonCapability(this);
+  readonly verification = new DemoVerificationCapability(this);
   readonly chapterImages = new DemoChapterImagesCapability(this);
 }
 
 class DemoCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
     return new URL(url).hostname === 'example.com';
+  }
+}
+
+class DemoVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean {
+    return /human verification|blocked|challenge|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+  }
+
+  describeVerificationHandoff(): Record<string, unknown> {
+    return {
+      supported: true,
+      flow: 'Task Detail handoff',
+    };
   }
 }
 
@@ -108,8 +122,9 @@ export class BadAdapter extends AdapterBase {
   readonly name = 'Bad';
   readonly domains = ['example.com'];
   readonly parseMode = 'static' as const;
-  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new BadCommonCapability(this);
+  readonly verification = new BadVerificationCapability(this);
   readonly chapterImages = new BadChapterImagesCapability(this);
   extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
     return [];
@@ -118,6 +133,10 @@ export class BadAdapter extends AdapterBase {
 
 class BadCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean { return url.includes('example.com'); }
+}
+class BadVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
+  describeVerificationHandoff(): Record<string, unknown> { return { supported: true }; }
 }
 class BadChapterImagesCapability extends ChapterImagesCapability {
   extractChapterImageUrls(document: unknown, sourceUrl: string): string[] { return []; }
@@ -130,15 +149,16 @@ class BadChapterImagesCapability extends ChapterImagesCapability {
 
   it('rejects direct capability base-class instantiation', () => {
     const result = validateAdapterImplementationDraft(`
-import { AdapterBase, CommonCapability, ChapterImagesCapability } from '../adapter/base';
+import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../adapter/base';
 
 export class BadAdapter extends AdapterBase {
   readonly id = 'bad';
   readonly name = 'Bad';
   readonly domains = ['example.com'];
   readonly parseMode = 'static' as const;
-  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new CommonCapability(this);
+  readonly verification = new VerificationCapability(this);
   readonly chapterImages = new ChapterImagesCapability(this);
 }
 `, { target: 'chapter-only' });
@@ -146,6 +166,100 @@ export class BadAdapter extends AdapterBase {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('Capability base classes must not be instantiated directly; create site-specific subclasses.');
     expect(result.errors).toContain('Missing site-specific CommonCapability subclass.');
+    expect(result.errors).toContain('Missing site-specific VerificationCapability subclass.');
     expect(result.errors).toContain('Missing site-specific ChapterImagesCapability subclass.');
+  });
+
+  it('accepts a common and verification capability stage draft', () => {
+    const result = validateCapabilityDraft(`
+import { AdapterBase, CommonCapability, VerificationCapability } from '../adapter/base';
+
+export class DemoAdapter extends AdapterBase {
+  readonly id = 'demo';
+  readonly name = 'Demo';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'interactive' as const;
+  readonly capabilities = { verification: true, metadata: false, chapterImages: false };
+  readonly common = new DemoCommonCapability(this);
+  readonly verification = new DemoVerificationCapability(this);
+}
+
+class DemoCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean {
+    return new URL(url).hostname === 'example.com';
+  }
+}
+
+class DemoVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean {
+    return /human verification|blocked|challenge|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+  }
+
+  describeVerificationHandoff(): Record<string, unknown> {
+    return { supported: true, flow: 'Task Detail handoff' };
+  }
+}
+`, { stage: 'common-verification', target: 'chapter-only' });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects common and verification drafts without verification capability', () => {
+    const result = validateCapabilityDraft(`
+import { AdapterBase, CommonCapability } from '../adapter/base';
+
+export class DemoAdapter extends AdapterBase {
+  readonly id = 'demo';
+  readonly name = 'Demo';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: false, metadata: false, chapterImages: false };
+  readonly common = new DemoCommonCapability(this);
+}
+
+class DemoCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean { return url.includes('example.com'); }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Common/verification draft must declare readonly verification handler.');
+    expect(result.errors).toContain('Missing site-specific VerificationCapability subclass.');
+    expect(result.errors).toContain('Every adapter draft must declare verification: true because VerificationCapability gates DOM trust.');
+  });
+
+  it('keeps metadata and chapter image capability stages mutually scoped', () => {
+    const metadata = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability, ChapterImagesCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return undefined; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] { return []; }
+}
+class BadChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] { return []; }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(metadata.valid).toBe(false);
+    expect(metadata.errors).toContain('Metadata draft must not implement ChapterImagesCapability.');
+
+    const images = validateCapabilityDraft(`
+import { ChapterImagesCapability } from '../adapter/base';
+
+class DemoChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] { return []; }
+}
+`, { stage: 'chapter-images', target: 'chapter-only' });
+
+    expect(images.valid).toBe(true);
+    expect(images.errors).toEqual([]);
   });
 });

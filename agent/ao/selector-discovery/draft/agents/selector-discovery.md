@@ -28,15 +28,22 @@ Chapter-only discovery means a TypeScript adapter that supports chapter image ex
 Before writing TypeScript, read `contracts/adapter-base-api.md`. It is the
 binding API reference for imports, capability classes, method signatures,
 return shapes, helper methods, and parseMode semantics.
+Also read `contracts/capability-pipeline.md`. Adapter behavior is generated in
+capability stages: CommonCapability, VerificationCapability, then the requested
+MetadataCapability and/or ChapterImagesCapability, then compose. Every adapter
+implements VerificationCapability first, even when normal pages do not require
+human verification.
 
 # Workflow
 
 1. Load `site-analysis` when reasoning about page type, metadata, chapter lists, or representative chapter URLs.
 2. Use the Task tool to ask `dom-structure-analyst` for DOM observations and extraction strategy notes.
-3. Load `selector-extraction` before choosing selectors inside the TypeScript implementation.
-4. Use the Task tool to ask `selector-verifier` to review completeness and risks.
-5. Load `candidate-validation` before finalizing review notes and implementation output.
-6. Write the requested output files exactly.
+3. Load `selector-extraction` before choosing selectors inside capability source.
+4. Write or review CommonCapability and VerificationCapability before metadata
+   or chapter image extraction.
+5. Use the Task tool to ask `selector-verifier` to review completeness and risks.
+6. Load `candidate-validation` before finalizing review notes and implementation output.
+7. Write the requested output files exactly.
 
 If the Task tool or skill tool is unavailable, rejects arguments, or returns an
 error, continue the analysis yourself using the task Markdown and contract
@@ -57,7 +64,9 @@ that only describes a plan.
 # TypeScript implementation rules
 
 - Export exactly one class that extends `AdapterBase`.
-- Use `CommonCapability`, `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability` handlers where the capability is supported.
+- Use `CommonCapability` and `VerificationCapability` for every adapter.
+- Use `MetadataCapability` and `ChapterImagesCapability` handlers where the
+  requested capability is supported.
 - Do not implement `fetchMetadata()` or `fetchChapterImages()`.
 - Do not use `fs`, `child_process`, `process`, `eval`, `new Function`, or arbitrary network side effects.
 - Helper functions are allowed, but they must stay in the same TypeScript file
