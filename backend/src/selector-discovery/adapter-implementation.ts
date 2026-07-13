@@ -48,7 +48,7 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\bexample\.com\b|\bmy-site-adapter\b|\bGeneric Comic Site\b|\bExample Site\b/m, message: 'Template placeholder values must be replaced with site-specific identity and domains.' },
   { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
   { pattern: /\bverifyDom\s*\(/m, message: 'VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().' },
-  { pattern: /Replace with site-specific|throw\s+new\s+Error\s*\(/m, message: 'Template placeholder implementations must be replaced with working extraction logic.' },
+  { pattern: /Replace with site-specific|throw\s+new\s+Error\s*\(/m, message: 'Capability extraction methods must not keep template placeholders or throw for missing optional selectors; return undefined or an empty array when data is unavailable.' },
   { pattern: /\bextends\s+\w+Capability\s+implements\s+\w+Capability\b/m, message: 'Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.' },
   { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
   { pattern: /new\s+(?:CommonCapability|VerificationCapability|MetadataCapability|ChapterImagesCapability)\s*\(/m, message: 'Capability base classes must not be instantiated directly; create site-specific subclasses.' },
@@ -281,7 +281,7 @@ function validateMetadataCapabilityDraft(source: string): string[] {
   if (/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
     errors.push('Metadata draft must not implement ChapterImagesCapability.');
   }
-  if (/\bComicStatus\.(?:Ongoing|Completed|Unknown)\b/.test(source)) {
+  if (/\bComicStatus\.\w+\b/.test(source)) {
     errors.push('ComicStatus is a string union; return "ongoing", "completed", or "unknown" instead of ComicStatus enum members.');
   }
   if (/status\s*:\s*ComicStatus\./.test(source) || /status\s*:\s*['"](?:ongoing|completed|unknown)['"]/.test(source)) {

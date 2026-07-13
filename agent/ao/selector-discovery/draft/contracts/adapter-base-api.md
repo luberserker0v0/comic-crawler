@@ -167,6 +167,76 @@ class ExampleMetadataCapability extends MetadataCapability {
 }
 ```
 
+## Runtime DTO field semantics
+
+When a capability method returns runtime DTOs, only fill fields that are part of
+the extraction responsibility. Do not guess fields whose meaning belongs to task
+execution or downloader progress.
+
+### ComicStatus
+
+`ComicStatus` is a string union, not an enum:
+
+```ts
+type ComicStatus = 'ongoing' | 'completed' | 'unknown';
+```
+
+Return one of these string literals, or `undefined` when no reliable status is
+present:
+
+- `'ongoing'`: visible page text clearly means ongoing/serializing.
+- `'completed'`: visible page text clearly means completed/finished.
+- `'unknown'`: a status element exists but cannot be mapped confidently.
+- `undefined`: no status evidence exists.
+
+Do not write enum-style values:
+
+```ts
+// wrong
+return ComicStatus.Ongoing;
+
+// correct
+return 'ongoing';
+```
+
+### ChapterInfo
+
+`extractChapterList()` returns `ChapterInfo[]`. The adapter is responsible only
+for catalog identity and navigation fields.
+
+Fill these fields:
+
+- `id`: stable chapter id for ComicCrawler. Prefer deriving it from the final
+  absolute chapter URL path segment, for example `chapter-51.2`. Do not use the
+  whole URL as the id unless there is no stable path segment.
+- `title`: user-visible chapter title from the chapter item text. Remove dates,
+  counters, and unrelated labels when possible.
+- `url`: absolute reader URL for the chapter. Use
+  `this.adapter.resolveUrl(sourceUrl, rawHref)` for relative hrefs.
+- `number` optional: list order or parsed chapter number when reliable. Use
+  `index + 1` only as ordering metadata when no real chapter number is parsed.
+- `date` optional: set only if the page contains an exact parseable date. If the
+  page says relative text such as `1 月前`, omit `date` and keep that text out of
+  `ChapterInfo`.
+
+Do not fill these fields in adapter extraction:
+
+- `status`: this is task/download runtime state, not manga publication status.
+- `totalImages`: runtime progress, filled by ComicCrawler.
+- `completedImages`: runtime progress, filled by ComicCrawler.
+- `sourceUrl`: not a `ChapterInfo` field. Use `url`.
+
+Minimal valid chapter object:
+
+```ts
+{
+  id: 'chapter-51.2',
+  title: '第51.2話',
+  url: 'https://example.com/manga/title/chapter-51.2',
+  number: 1,
+}
+```
+
 Metadata extraction rules:
 
 - Every metadata method receives `(document: unknown, sourceUrl: string)`.
@@ -180,6 +250,9 @@ Metadata extraction rules:
 - Use `url`, not `sourceUrl`, inside `ChapterInfo`.
 - Do not use `new Date()` as a placeholder for chapter dates. Omit `date` when
   the exact date cannot be parsed.
+- Do not throw when optional selectors are missing. Return `undefined` for
+  optional scalar fields and `[]` for missing lists. Only `extractTitle` may
+  return `'unknown'` when no title evidence exists.
 - Do not use `this.dom`, `.select(...)`, or browser-like document APIs.
 - Prefer detail-page title signals such as `main h1`, detail title classes, or
   Open Graph title. Do not use recommendation card titles, footer titles,

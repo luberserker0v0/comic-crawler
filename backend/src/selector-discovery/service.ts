@@ -552,6 +552,9 @@ Metadata stage has a strict single-capability boundary:
   ChapterImagesCapability in this file.
 - Do not implement extractChapterImageUrls, fetchMetadata, or
   fetchChapterImages.
+- Before writing extractStatus or extractChapterList, read the Runtime DTO field
+  semantics in contracts/adapter-base-api.md. ChapterInfo requires id, title,
+  and absolute url; do not fill status/sourceUrl/placeholder dates.
 - extractChapterList must return the full catalog available in the trusted DOM,
   not a preview, sample, recommendation list, or first few chapters.
 
@@ -1073,7 +1076,7 @@ function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): bo
     error.includes('require() is not allowed') ||
     error.includes('Adapter identity must be readonly class fields') ||
     error.includes('must not declare adapter identity') ||
-    error.includes('Template placeholder implementations') ||
+    error.includes('Capability extraction methods must not keep template placeholders') ||
     error.includes('Template placeholder values') ||
     error.includes('ComicStatus is a string union') ||
     error.includes('ChapterInfo entries must not use ComicStatus') ||
