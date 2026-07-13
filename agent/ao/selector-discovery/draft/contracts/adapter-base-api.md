@@ -209,6 +209,8 @@ Fill these fields:
 - `id`: stable chapter id for ComicCrawler. Prefer deriving it from the final
   absolute chapter URL path segment, for example `chapter-51.2`. Do not use the
   whole URL as the id unless there is no stable path segment.
+  Do not use the list index as the id. The index can change when the site adds,
+  removes, hides, or reorders chapters.
 - `title`: user-visible chapter title from the chapter item text. Remove dates,
   counters, and unrelated labels when possible.
 - `url`: absolute reader URL for the chapter. Use
@@ -248,6 +250,9 @@ Metadata extraction rules:
   Do not set chapter `status` from `extractStatus`.
 - Each `ChapterInfo` must include at least `id`, `title`, and absolute `url`.
 - Use `url`, not `sourceUrl`, inside `ChapterInfo`.
+- Derive `id` from the chapter URL path segment, not from `index + 1`.
+- Resolve relative hrefs with `this.adapter.resolveUrl(sourceUrl, rawHref)`
+  before writing `ChapterInfo.url`.
 - Do not use `new Date()` as a placeholder for chapter dates. Omit `date` when
   the exact date cannot be parsed.
 - Do not throw when optional selectors are missing. Return `undefined` for

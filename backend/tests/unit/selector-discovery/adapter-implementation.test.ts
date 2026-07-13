@@ -260,6 +260,30 @@ class DemoMetadataCapability extends MetadataCapability {
     expect(result.errors).toContain('extractChapterList must not use new Date() as a placeholder for chapter dates.');
   });
 
+  it('rejects chapter lists that use relative urls or index-derived ids', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return 'ongoing'; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    const href = '/chapter-1';
+    return [{ id: String(index + 1), title: 'Chapter 1', url: href } as ChapterInfo];
+  }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('ChapterInfo.url must be absolute; resolve relative hrefs with this.adapter.resolveUrl(sourceUrl, rawHref).');
+    expect(result.errors).toContain('ChapterInfo.id must be derived from the chapter URL path segment, not list index.');
+  });
+
   it('rejects combined capability handlers that use implements', () => {
     const result = validateCapabilityDraft(`
 import { CommonCapability, VerificationCapability } from '../adapter/base';

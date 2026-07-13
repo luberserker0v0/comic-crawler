@@ -431,30 +431,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     const capabilityDrafts: SelectorDiscoveryCapabilityDraft[] = [];
     for (const draft of stages) {
       await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
-      let capabilityDraft = await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job, job.target);
-      if (!capabilityDraft.sourceTs?.trim()) {
-        capabilityDraft = await this.runAoCapabilityPhase(
-          client,
-          bundle,
-          model,
-          taskMarkdown,
-          draft,
-          job,
-          job.target,
-          'Previous attempt did not write the requested TypeScript source file. Write the source file exactly to the requested path.'
-        );
-      } else if (capabilityDraft.validation && !capabilityDraft.validation.valid && shouldRetryCapabilityDraft(capabilityDraft)) {
-        capabilityDraft = await this.runAoCapabilityPhase(
-          client,
-          bundle,
-          model,
-          taskMarkdown,
-          draft,
-          job,
-          job.target,
-          `Previous attempt failed validation:\n${capabilityDraft.validation.errors.map((error) => `- ${error}`).join('\n')}\nRewrite the same stage and fix these validation errors.`
-        );
-      }
+      const capabilityDraft = await this.runAoCapabilityPhaseWithRetries(client, bundle, model, taskMarkdown, draft, job, job.target);
       capabilityDrafts.push(capabilityDraft);
       const latest = capabilityDrafts.at(-1);
       if (!latest) {
@@ -481,6 +458,27 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       ...composed,
       capabilityDrafts,
     };
+  }
+
+  private async runAoCapabilityPhaseWithRetries(
+    client: AoClient,
+    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
+    model: string,
+    taskMarkdown: string,
+    draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+    job: SelectorDiscoveryJob,
+    target?: 'full' | 'chapter-only'
+  ): Promise<SelectorDiscoveryCapabilityDraft> {
+    let retryFeedback: string | undefined;
+    let latest: SelectorDiscoveryCapabilityDraft | undefined;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      latest = await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job, target, retryFeedback);
+      if (latest.sourceTs?.trim() && (!latest.validation || latest.validation.valid || !shouldRetryCapabilityDraft(latest))) {
+        return latest;
+      }
+      retryFeedback = createCapabilityRetryFeedback(latest, attempt);
+    }
+    return latest!;
   }
 
   private async runAoCapabilityPhase(
@@ -622,7 +620,11 @@ Chat response rule:
         client.readFile(conversationId, draft.sourcePath).catch(() => ''),
         client.readFile(conversationId, draft.reviewPath).catch(() => ''),
       ]);
-      const trimmedSource = sourceTs.trim();
+      const reviewText = reviewMarkdown.trim();
+      const chatText = response.text?.trim() || '';
+      const trimmedSource = sourceTs.trim()
+        || extractFirstTypeScriptFence(reviewText)
+        || extractFirstTypeScriptFence(chatText);
       const validation = validateCapabilityDraft(trimmedSource, { stage: draft.stage, target });
       if (draft.stage === 'common-verification' && trimmedSource && !trimmedSource.includes(job.hostname)) {
         validation.errors.push(`Common/verification draft must include target hostname "${job.hostname}".`);
@@ -638,7 +640,7 @@ Chat response rule:
       return {
         ...draft,
         sourceTs: trimmedSource,
-        reviewMarkdown: reviewMarkdown.trim() || response.text?.trim() || '',
+        reviewMarkdown: reviewText || chatText,
         validation,
       };
     } finally {
@@ -1084,11 +1086,51 @@ function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): bo
     error.includes('must populate ChapterInfo.url') ||
     error.includes('ChapterInfo uses url') ||
     error.includes('must not use new Date()') ||
+    error.includes('must be absolute') ||
+    error.includes('must be derived from the chapter URL path segment') ||
     error.includes('must not implement metadata or chapter image extraction methods') ||
     error.includes('Do not redeclare ComicCrawler framework classes') ||
     error.includes('must not export an AdapterBase shell') ||
     error.includes('must not implement common or verification capabilities')
   ));
+}
+
+function createCapabilityRetryFeedback(draft: SelectorDiscoveryCapabilityDraft, attempt: number): string {
+  const errors = draft.validation?.errors ?? [];
+  const sourceMissing = !draft.sourceTs?.trim();
+  const lines = [
+    `Attempt ${attempt} failed.`,
+    sourceMissing
+      ? `The requested TypeScript file was empty or missing: ${draft.sourcePath}.`
+      : 'The requested TypeScript file failed validation.',
+    '',
+    'Required correction:',
+    `- Write TypeScript source directly to ${draft.sourcePath}.`,
+    `- Write review notes directly to ${draft.reviewPath}.`,
+    '- Do not put TypeScript only in chat.',
+    '- Do not write JSON.',
+    '- Do not write outputs/adapter-implementation.ts.',
+  ];
+  if (errors.length > 0) {
+    lines.push('', 'Validation errors to fix:', ...errors.map((error) => `- ${error}`));
+  }
+  if (draft.stage === 'metadata') {
+    lines.push(
+      '',
+      'Metadata stage reminders:',
+      '- Output exactly one MetadataCapability subclass.',
+      '- Do not throw for missing optional selectors; return undefined or [].',
+      '- ComicStatus is a string union: return "ongoing", "completed", or "unknown".',
+      '- ChapterInfo entries require id, title, and absolute url.',
+      '- Do not set ChapterInfo.status, sourceUrl, totalImages, or completedImages.'
+    );
+  }
+  return lines.join('\n');
+}
+
+function extractFirstTypeScriptFence(text: string): string {
+  const match = /```(?:typescript|ts)\s*([\s\S]*?)```/i.exec(text);
+  return match?.[1]?.trim() ?? '';
 }
 
 function composeAdapterShellFromCapabilities(

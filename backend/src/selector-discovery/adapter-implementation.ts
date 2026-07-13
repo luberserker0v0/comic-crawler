@@ -300,6 +300,12 @@ function validateMetadataCapabilityDraft(source: string): string[] {
   if (chapterListBody && /new\s+Date\s*\(\s*\)/.test(chapterListBody)) {
     errors.push('extractChapterList must not use new Date() as a placeholder for chapter dates.');
   }
+  if (chapterListBody && /\burl\s*:\s*(?:relativeUrl|rawHref|href)\b/.test(chapterListBody)) {
+    errors.push('ChapterInfo.url must be absolute; resolve relative hrefs with this.adapter.resolveUrl(sourceUrl, rawHref).');
+  }
+  if (chapterListBody && /\bid\s*:\s*String\s*\(\s*index\s*\+\s*1\s*\)/.test(chapterListBody)) {
+    errors.push('ChapterInfo.id must be derived from the chapter URL path segment, not list index.');
+  }
   const unchangedTemplateSelectors = [
     'main h1',
     '.author a',
