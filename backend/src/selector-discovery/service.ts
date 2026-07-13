@@ -433,7 +433,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     const capabilityDrafts: SelectorDiscoveryCapabilityDraft[] = [];
     for (const draft of stages) {
       await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
-      capabilityDrafts.push(await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job.target));
+      capabilityDrafts.push(await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job, job.target));
       const latest = capabilityDrafts.at(-1);
       if (!latest) {
         continue;
@@ -467,6 +467,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     model: string,
     taskMarkdown: string,
     draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+    job: SelectorDiscoveryJob,
     target?: 'full' | 'chapter-only'
   ): Promise<SelectorDiscoveryCapabilityDraft> {
     const conversationId = await client.createConversation();
@@ -474,11 +475,39 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       await this.bundleManager.upload(client, conversationId, bundle);
       await client.uploadFile(conversationId, 'task.md', taskMarkdown);
       await client.start(conversationId);
+      const concreteCommonVerificationSkeleton = draft.stage === 'common-verification'
+        ? createCommonVerificationSkeleton(job.normalizedUrl, job.hostname)
+        : '';
+      const templateInstruction = draft.stage === 'common-verification'
+        ? `
+
+Common/verification stage has a stricter rule than later stages:
+
+- Use task.md only for site context and evidence.
+- Use contracts/common-verification-template.ts only for TypeScript structure.
+- Do not use contracts/adapter-base-api.md for this stage.
+- Write ${draft.sourcePath} by copying the skeleton below and replacing only
+  narrow site-specific details if needed.
+- The output must keep the same imports, class shape, readonly fields, and
+  method names as this skeleton.
+- The source must include this hostname exactly: ${job.hostname}
+- Do not leave example.com, my-site-adapter, Generic Comic Site, or Example Site
+  anywhere in the source.
+- Do not declare AdapterBase, CommonCapability, VerificationCapability, DOM,
+  Document, enum ParseMode, interfaces, or any framework types.
+- Do not add verifyDom, extractTitle, extractAuthor, extractChapterList,
+  extractChapterImageUrls, placeholder extraction methods, or sample data.
+- Do not write constructor() or super().
+
+\`\`\`ts
+${concreteCommonVerificationSkeleton}
+\`\`\``
+        : '';
       const response = await client.message(
         conversationId,
         `# Capability Stage Task
 
-Read task.md and the contract files already uploaded to this workspace.
+Read task.md and only the contract files needed for this capability stage.
 
 ## Required AO Output
 
@@ -494,8 +523,10 @@ Important file-writing rules:
 - The review notes must be Markdown prose only. Do not put the full TypeScript
   source in the review notes.
 - Do not import from contracts/adapter-base-api.md or any contracts path.
-- Use the import style shown inside contracts/adapter-base-api.md, but do not
-  import that Markdown file.
+- For common-verification, use the concrete skeleton in this message as the
+  exact source shape.
+- For later stages, use the exact signatures documented in
+  contracts/adapter-base-api.md.
 
 Do not write ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
 Do not compose the final adapter in this stage.
@@ -509,8 +540,9 @@ Stage rules:
   or call super({ ... }).
 - metadata: write only one MetadataCapability subclass.
 - chapter-images: write only one ChapterImagesCapability subclass.
-- Every method must use the exact signature documented in
-  contracts/adapter-base-api.md.
+- Every method must use the exact signature documented for this capability
+  stage.
+${templateInstruction}
 
 Chat response rule:
 
@@ -525,11 +557,16 @@ Chat response rule:
         client.readFile(conversationId, draft.reviewPath).catch(() => ''),
       ]);
       const trimmedSource = sourceTs.trim();
+      const validation = validateCapabilityDraft(trimmedSource, { stage: draft.stage, target });
+      if (draft.stage === 'common-verification' && trimmedSource && !trimmedSource.includes(job.hostname)) {
+        validation.errors.push(`Common/verification draft must include target hostname "${job.hostname}".`);
+        validation.valid = false;
+      }
       return {
         ...draft,
         sourceTs: trimmedSource,
         reviewMarkdown: reviewMarkdown.trim() || response.text?.trim() || '',
-        validation: validateCapabilityDraft(trimmedSource, { stage: draft.stage, target }),
+        validation,
       };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
@@ -1014,6 +1051,82 @@ function adapterSupportsDiscoveryTarget(
 
 function normalizeComparableText(value?: string): string {
   return (value ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+}
+
+function createCommonVerificationSkeleton(sourceUrl: string, hostname: string): string {
+  const classPrefix = toPascalIdentifier(hostname.replace(/^m\./i, ''));
+  const adapterId = hostname.replace(/^www\./i, '').replace(/^m\./i, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'site';
+  const urlPath = safeUrlPathPrefix(sourceUrl);
+  const baseHostname = hostname.replace(/^m\./i, '');
+  const pathCheck = urlPath
+    ? `parsed.pathname === '${urlPath}' || parsed.pathname.startsWith('${urlPath}/')`
+    : `parsed.pathname.startsWith('/')`;
+  return `import {
+  AdapterBase,
+  CommonCapability,
+  VerificationCapability,
+} from '../../base';
+
+export class ${classPrefix}Adapter extends AdapterBase {
+  readonly id = '${adapterId}';
+  readonly name = '${toDisplayName(hostname)}';
+  readonly domains = ['${hostname}'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = {
+    verification: true,
+    metadata: false,
+    chapterImages: false,
+  };
+
+  readonly common = new ${classPrefix}CommonCapability(this);
+  readonly verification = new ${classPrefix}VerificationCapability(this);
+}
+
+class ${classPrefix}CommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      return (parsed.hostname === '${hostname}' || parsed.hostname === '${baseHostname}') &&
+        (${pathCheck});
+    } catch {
+      return false;
+    }
+  }
+}
+
+class ${classPrefix}VerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean {
+    return /human verification|captcha|blocked|challenge|cloudflare|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+  }
+
+  describeVerificationHandoff(): Record<string, unknown> {
+    return {
+      supported: true,
+      flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
+    };
+  }
+}
+`;
+}
+
+function toPascalIdentifier(value: string): string {
+  const parts = value.split(/[^a-z0-9]+/i).filter(Boolean);
+  const name = parts.map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join('');
+  return /^[A-Z][A-Za-z0-9]*$/.test(name) ? name : 'Site';
+}
+
+function toDisplayName(hostname: string): string {
+  return hostname.replace(/^m\./i, '').split('.').filter(Boolean).map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`).join(' ');
+}
+
+function safeUrlPathPrefix(sourceUrl: string): string {
+  try {
+    const path = new URL(sourceUrl).pathname;
+    const firstSegment = path.split('/').filter(Boolean)[0];
+    return firstSegment ? `/${firstSegment}` : '';
+  } catch {
+    return '';
+  }
 }
 
 function createChapterOnlyPhase1Markdown(finalUrl: string): string {

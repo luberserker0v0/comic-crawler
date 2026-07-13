@@ -273,7 +273,7 @@ export class SelectorDiscoveryBundleManager {
 
   private async readContracts(dir: string): Promise<Array<{ path: string; content: string }>> {
     const entries = await fs.readdir(dir);
-    const files = entries.filter((entry) => entry.endsWith('.md')).sort();
+    const files = entries.filter((entry) => entry.endsWith('.md') || entry.endsWith('.ts')).sort();
     return Promise.all(files.map(async (file) => ({
       path: `contracts/${file}`,
       content: await fs.readFile(join(dir, file), 'utf-8'),

@@ -89,6 +89,21 @@ describe('SelectorDiscoveryBundleManager', () => {
     expect(tampered.verified).toBe(false);
     expect(tampered.error).toMatch(/SHA-256 mismatch/);
   });
+
+  it('loads TypeScript contract templates into the AO bundle', async () => {
+    const { root, draft } = await createBundleFixture();
+    await writeFile(join(draft, 'contracts', 'common-verification-template.ts'), 'export const template = true;\n', 'utf-8');
+    const manager = new SelectorDiscoveryBundleManager(root);
+
+    const bundle = await manager.loadActive(providerDocument(), 'local/demo');
+
+    expect(bundle.contracts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'contracts/common-verification-template.ts',
+        content: 'export const template = true;\n',
+      }),
+    ]));
+  });
 });
 
 async function createBundleFixture(): Promise<{ root: string; draft: string }> {

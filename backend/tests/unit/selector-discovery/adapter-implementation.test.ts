@@ -7,7 +7,7 @@ import { AdapterBase, ChapterImagesCapability, CommonCapability, VerificationCap
 export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
-  readonly domains = ['example.com'];
+  readonly domains = ['demo.test'];
   readonly parseMode = 'static' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommonCapability(this);
@@ -17,7 +17,7 @@ export class DemoAdapter extends AdapterBase {
 
 class DemoCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
-    return new URL(url).hostname === 'example.com';
+    return new URL(url).hostname === 'demo.test';
   }
 }
 
@@ -120,7 +120,7 @@ import { AdapterBase, CommonCapability, ChapterImagesCapability } from '../adapt
 export class BadAdapter extends AdapterBase {
   readonly id = 'bad';
   readonly name = 'Bad';
-  readonly domains = ['example.com'];
+  readonly domains = ['demo.test'];
   readonly parseMode = 'static' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new BadCommonCapability(this);
@@ -132,7 +132,7 @@ export class BadAdapter extends AdapterBase {
 }
 
 class BadCommonCapability extends CommonCapability {
-  matchUrl(url: string): boolean { return url.includes('example.com'); }
+  matchUrl(url: string): boolean { return url.includes('demo.test'); }
 }
 class BadVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
@@ -154,7 +154,7 @@ import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCap
 export class BadAdapter extends AdapterBase {
   readonly id = 'bad';
   readonly name = 'Bad';
-  readonly domains = ['example.com'];
+  readonly domains = ['demo.test'];
   readonly parseMode = 'static' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new CommonCapability(this);
@@ -197,7 +197,7 @@ class DemoMetadataCapability extends MetadataCapability {
 import { CommonCapability, VerificationCapability } from '../adapter/base';
 
 class BadCommonVerificationCapability extends CommonCapability implements VerificationCapability {
-  matchUrl(url: string): boolean { return url.includes('example.com'); }
+  matchUrl(url: string): boolean { return url.includes('demo.test'); }
   detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
   describeVerificationHandoff(): Record<string, unknown> { return { supported: true }; }
 }
@@ -207,6 +207,69 @@ class BadCommonVerificationCapability extends CommonCapability implements Verifi
     expect(result.errors).toContain('Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.');
   });
 
+  it('rejects self-declared framework classes and invented verification APIs', () => {
+    const result = validateCapabilityDraft(`
+declare class AdapterBase {}
+declare class CommonCapability {}
+declare class VerificationCapability {}
+
+class DemoAdapter extends AdapterBase {
+  readonly id = 'demo';
+  readonly name = 'Demo';
+  readonly domains: Set<string> = new Set(['https://demo.test']);
+  readonly parseMode: 'metadata' | 'chapterImage' | 'both' = 'both';
+  readonly capabilities = { verification: true, metadata: true, chapterImages: true };
+  readonly common = new DemoCommonCapability();
+  readonly verification = new DemoVerificationCapability();
+
+  extractTitle(document: unknown, sourceUrl: string): string | null {
+    return 'placeholder';
+  }
+}
+
+class DemoCommonCapability extends CommonCapability {
+  matchUrl(sourceUrl: string): boolean { return sourceUrl.includes('demo.test'); }
+}
+
+class DemoVerificationCapability extends VerificationCapability {
+  verifyDom(document: unknown, sourceUrl: string): Promise<boolean> { return Promise.resolve(false); }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Do not redeclare ComicCrawler framework classes. Import AdapterBase and capability classes from the adapter base.');
+    expect(result.errors).toContain('VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().');
+    expect(result.errors).toContain('Common/verification draft must not implement metadata or chapter image extraction methods.');
+    expect(result.errors).toContain('Adapter domains must be a string array, not a Set.');
+    expect(result.errors).toContain('parseMode must use ComicCrawler values: "static", "dynamic", or "interactive".');
+  });
+
+  it('rejects common-verification drafts that keep template placeholders', () => {
+    const result = validateCapabilityDraft(`
+import { AdapterBase, CommonCapability, VerificationCapability } from '../adapter/base';
+
+export class SiteAdapter extends AdapterBase {
+  readonly id = 'my-site-adapter';
+  readonly name = 'Generic Comic Site';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: true, metadata: false, chapterImages: false };
+  readonly common = new SiteCommonCapability(this);
+  readonly verification = new SiteVerificationCapability(this);
+}
+class SiteCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean { return /^https?:\\/\\/example\\.com\\//i.test(url); }
+}
+class SiteVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
+  describeVerificationHandoff(): Record<string, unknown> { return { supported: true }; }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Template placeholder values must be replaced with site-specific identity and domains.');
+  });
+
   it('accepts a common and verification capability stage draft', () => {
     const result = validateCapabilityDraft(`
 import { AdapterBase, CommonCapability, VerificationCapability } from '../adapter/base';
@@ -214,7 +277,7 @@ import { AdapterBase, CommonCapability, VerificationCapability } from '../adapte
 export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
-  readonly domains = ['example.com'];
+  readonly domains = ['demo.test'];
   readonly parseMode = 'interactive' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: false };
   readonly common = new DemoCommonCapability(this);
@@ -223,7 +286,7 @@ export class DemoAdapter extends AdapterBase {
 
 class DemoCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
-    return new URL(url).hostname === 'example.com';
+    return new URL(url).hostname === 'demo.test';
   }
 }
 
@@ -249,14 +312,14 @@ import { AdapterBase, CommonCapability } from '../adapter/base';
 export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
-  readonly domains = ['example.com'];
+  readonly domains = ['demo.test'];
   readonly parseMode = 'static' as const;
   readonly capabilities = { verification: false, metadata: false, chapterImages: false };
   readonly common = new DemoCommonCapability(this);
 }
 
 class DemoCommonCapability extends CommonCapability {
-  matchUrl(url: string): boolean { return url.includes('example.com'); }
+  matchUrl(url: string): boolean { return url.includes('demo.test'); }
 }
 `, { stage: 'common-verification' });
 

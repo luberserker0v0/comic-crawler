@@ -40,11 +40,14 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\bprocess\./m, message: 'Direct process access is not allowed.' },
   { pattern: /\bthis\.dom\b/m, message: 'this.dom is not part of the AdapterBase contract. Use this.adapter.asCheerio(document).' },
   { pattern: /\bdocument\.querySelector|\bdocument\.querySelectorAll|\bdocument\.getElementById/m, message: 'Browser document APIs are not allowed. Use Cheerio via this.adapter.asCheerio(document).' },
+  { pattern: /\bdeclare\s+class\s+(?:AdapterBase|CommonCapability|VerificationCapability|MetadataCapability|ChapterImagesCapability)\b/m, message: 'Do not redeclare ComicCrawler framework classes. Import AdapterBase and capability classes from the adapter base.' },
   { pattern: /\bimport\s*{[^}]*\bCapability\b[^}]*}\s*from/m, message: 'Generic Capability imports/usages are not part of the AdapterBase contract.' },
   { pattern: /\bfrom\s+['"]comiccrawler['"]/m, message: 'Importing from "comiccrawler" is not valid in adapter implementation drafts.' },
   { pattern: /\bfrom\s+['"]\.\/capabilities['"]/m, message: 'Importing from "./capabilities" is not valid in adapter implementation drafts.' },
   { pattern: /\bfrom\s+['"][^'"]*contracts\/adapter-base-api(?:\.md)?['"]/m, message: 'adapter-base-api.md is documentation and must not be imported.' },
+  { pattern: /\bexample\.com\b|\bmy-site-adapter\b|\bGeneric Comic Site\b|\bExample Site\b/m, message: 'Template placeholder values must be replaced with site-specific identity and domains.' },
   { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
+  { pattern: /\bverifyDom\s*\(/m, message: 'VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().' },
   { pattern: /\bextends\s+\w+Capability\s+implements\s+\w+Capability\b/m, message: 'Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.' },
   { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
   { pattern: /new\s+(?:CommonCapability|VerificationCapability|MetadataCapability|ChapterImagesCapability)\s*\(/m, message: 'Capability base classes must not be instantiated directly; create site-specific subclasses.' },
@@ -251,6 +254,15 @@ function validateCommonVerificationDraft(source: string): string[] {
   }
   if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*true/s.test(source)) {
     errors.push('Every adapter draft must declare verification: true because VerificationCapability gates DOM trust.');
+  }
+  if (/\bextract(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\s*\(/.test(source)) {
+    errors.push('Common/verification draft must not implement metadata or chapter image extraction methods.');
+  }
+  if (/readonly\s+domains\s*:[^=]*Set\s*</.test(source) || /readonly\s+domains\s*=\s*new\s+Set\b/.test(source)) {
+    errors.push('Adapter domains must be a string array, not a Set.');
+  }
+  if (/readonly\s+parseMode\s*[^=]*=\s*['"](?:metadata|chapterImage|both|create)['"]/.test(source)) {
+    errors.push('parseMode must use ComicCrawler values: "static", "dynamic", or "interactive".');
   }
   return errors;
 }

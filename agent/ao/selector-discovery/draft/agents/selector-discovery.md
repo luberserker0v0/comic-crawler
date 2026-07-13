@@ -33,6 +33,9 @@ capability stages: CommonCapability, VerificationCapability, then the requested
 MetadataCapability and/or ChapterImagesCapability, then compose. Every adapter
 implements VerificationCapability first, even when normal pages do not require
 human verification.
+For the `common-verification` stage, use
+`contracts/common-verification-template.ts` as the structure. Do not redefine
+ComicCrawler base classes.
 
 # Workflow
 

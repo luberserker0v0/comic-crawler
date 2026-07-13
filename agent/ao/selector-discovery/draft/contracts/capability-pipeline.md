@@ -12,6 +12,12 @@ at a time, then ask for a composed adapter after review.
    - Implement the adapter shell identity.
    - Declare identity and capability handlers as readonly class fields.
    - Do not write a constructor or call `super(...)` with an identity object.
+   - Follow `contracts/common-verification-template.ts`. Copy its structure and
+     replace only site identity, URL matching, parseMode, and verification
+     keywords.
+   - Do not declare or redefine `AdapterBase`, `CommonCapability`, or
+     `VerificationCapability`.
+   - Do not add metadata or chapter image methods in this stage.
    - Implement `CommonCapability.matchUrl`.
    - Implement `VerificationCapability.detectVerificationRequired`.
    - Implement `VerificationCapability.describeVerificationHandoff`.
