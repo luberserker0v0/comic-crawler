@@ -1,6 +1,6 @@
 import type { SiteSelectors } from '@comiccrawler/shared';
 
-export const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'my_local_lmstudio/gemma-4-e4b-uncensored-hauhaucs-aggressive';
+export const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
 export const DEFAULT_SELECTOR_DISCOVERY_AGENT = 'selector-discovery';
 export const KURONAVI_DISCOVERY_TEST_URL = 'https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu';
 

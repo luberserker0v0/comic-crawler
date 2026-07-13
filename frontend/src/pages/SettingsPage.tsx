@@ -3,6 +3,8 @@ import { useConfigStore, type GlobalConfig } from '../store';
 import { SUPPORTED_LOCALES, type LocaleCode, useI18n } from '../text/i18n';
 import { api } from '../api/client';
 
+const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
+
 export const SettingsPage: React.FC = () => {
   const { config, loading, error, fetchConfig, updateConfig, resetConfig, clearError } = useConfigStore();
   const [formDraft, setForm] = React.useState<Partial<GlobalConfig> | null>(null);
@@ -10,7 +12,7 @@ export const SettingsPage: React.FC = () => {
   const [selectorDiscoveryBundleStatus, setSelectorDiscoveryBundleStatus] = React.useState<any | null>(null);
   const [selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations] = React.useState<any[]>([]);
   const [aoBaseUrl, setAoBaseUrl] = React.useState('');
-  const [model, setModel] = React.useState('my_local_lmstudio/gemma-4-e4b-uncensored-hauhaucs-aggressive');
+  const [model, setModel] = React.useState(DEFAULT_SELECTOR_DISCOVERY_MODEL);
   const [providerJson, setProviderJson] = React.useState('');
   const [selectorDiscoveryMessage, setSelectorDiscoveryMessage] = React.useState<string | null>(null);
   const [selectorDiscoveryPreflight, setSelectorDiscoveryPreflight] = React.useState<any | null>(null);
@@ -24,7 +26,7 @@ export const SettingsPage: React.FC = () => {
     api.getSelectorDiscoveryConfig().then((response) => {
       setSelectorDiscoveryConfig(response.data);
       setAoBaseUrl(response.data.aoBaseUrl ?? '');
-      setModel(response.data.model ?? 'my_local_lmstudio/gemma-4-e4b-uncensored-hauhaucs-aggressive');
+      setModel(response.data.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL);
     }).catch(() => undefined);
     refreshSelectorDiscoveryBundleStatus();
     refreshSelectorDiscoveryBundleEvaluations();
@@ -557,7 +559,7 @@ export const SettingsPage: React.FC = () => {
             value={providerJson}
             onChange={(e) => setProviderJson(e.target.value)}
             rows={10}
-            placeholder='{ "provider": { "my_local_lmstudio": { "name": "my local lmstudio", "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "http://host.docker.internal:25555/v1", "apiKey": "nopassword" }, "models": { "gemma-4-e4b-uncensored-hauhaucs-aggressive": { "name": "gemma-4-e4b-uncensored-hauhaucs-aggressive" } } } } }'
+            placeholder='{ "provider": { "opencode": { "name": "OpenCode", "models": { "deepseek-v4-flash-free": { "name": "deepseek-v4-flash-free" } } } } }'
             className="mt-1 block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-blue-500 focus:ring-blue-500"
           />
         </div>

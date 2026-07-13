@@ -2,6 +2,6 @@
   "name": "selector-discovery",
   "version": "draft",
   "agent": "selector-discovery",
-  "defaultModel": "my_local_lmstudio/gemma-4-e4b-uncensored-hauhaucs-aggressive",
+  "defaultModel": "opencode/deepseek-v4-flash-free",
   "contracts": "Markdown task/review notes plus TypeScript capability draft output"
 }

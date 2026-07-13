@@ -1,5 +1,19 @@
 {
   "provider": {
+    "opencode": {
+      "name": "OpenCode",
+      "models": {
+        "deepseek-v4-flash-free": {
+          "name": "deepseek-v4-flash-free"
+        },
+        "big-pickle": {
+          "name": "big-pickle"
+        },
+        "mimo-v2.5-free": {
+          "name": "mimo-v2.5-free"
+        }
+      }
+    },
     "my_local_lmstudio": {
       "name": "my local lmstudio",
       "npm": "@ai-sdk/openai-compatible",
