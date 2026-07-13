@@ -19,6 +19,10 @@ The TypeScript file must:
 - implement supported capability handlers using the `CommonCapability`,
   `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability`
   classes exported by ComicCrawler;
+- create site-specific capability subclasses; do not instantiate abstract/base
+  capability classes directly;
+- keep extraction methods inside capability subclasses, not directly on the
+  adapter shell class;
 - implement fine-grained extraction functions, not `fetchMetadata()` or
   `fetchChapterImages()`;
 - keep site-specific expansion, filtering, and extraction logic visible in the
@@ -74,6 +78,8 @@ verified browser DOM requirements, and URL mismatch risks.
 - AdapterBase API reference followed:
 - Identity declared as readonly fields:
 - No constructor/super identity object:
+- Capability subclasses used:
+- Extraction methods are not on adapter shell:
 - No this.dom or browser document API:
 - No JSON output:
 - No fetchMetadata/fetchChapterImages implementation:

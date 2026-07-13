@@ -38,11 +38,13 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\bprocess\./m, message: 'Direct process access is not allowed.' },
   { pattern: /\bthis\.dom\b/m, message: 'this.dom is not part of the AdapterBase contract. Use this.adapter.asCheerio(document).' },
   { pattern: /\bdocument\.querySelector|\bdocument\.querySelectorAll|\bdocument\.getElementById/m, message: 'Browser document APIs are not allowed. Use Cheerio via this.adapter.asCheerio(document).' },
-  { pattern: /\bCapability\b/m, message: 'Generic Capability imports/usages are not part of the AdapterBase contract.' },
+  { pattern: /\bimport\s*{[^}]*\bCapability\b[^}]*}\s*from/m, message: 'Generic Capability imports/usages are not part of the AdapterBase contract.' },
   { pattern: /\bfrom\s+['"]comiccrawler['"]/m, message: 'Importing from "comiccrawler" is not valid in adapter implementation drafts.' },
   { pattern: /\bfrom\s+['"]\.\/capabilities['"]/m, message: 'Importing from "./capabilities" is not valid in adapter implementation drafts.' },
+  { pattern: /\bfrom\s+['"][^'"]*contracts\/adapter-base-api(?:\.md)?['"]/m, message: 'adapter-base-api.md is documentation and must not be imported.' },
   { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
   { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
+  { pattern: /new\s+(?:CommonCapability|MetadataCapability|ChapterImagesCapability)\s*\(/m, message: 'Capability base classes must not be instantiated directly; create site-specific subclasses.' },
 ];
 
 export function validateAdapterImplementationDraft(
@@ -86,6 +88,8 @@ export function validateAdapterImplementationDraft(
     errors.push('capabilities must be boolean flags for verification, metadata, and chapterImages.');
   }
 
+  errors.push(...validateCapabilityStructure(source, options.target));
+
   const requiredFunctions = options.target === 'chapter-only'
     ? REQUIRED_CHAPTER_ONLY_SNIPPETS
     : REQUIRED_FULL_SNIPPETS;
@@ -99,7 +103,7 @@ export function validateAdapterImplementationDraft(
   errors.push(...signatureErrors);
 
   if (/fetchMetadata|fetchChapterImages/.test(source)) {
-    errors.push('Implementation must not mention old façade functions fetchMetadata or fetchChapterImages.');
+    errors.push('Implementation must not mention old facade functions fetchMetadata or fetchChapterImages.');
   }
 
   return {
@@ -119,6 +123,39 @@ function validateRequiredSignatures(source: string, functionNames: string[]): st
     if (!/\bdocument\b/.test(params) || !/\bsourceUrl\b/.test(params)) {
       errors.push(`Extraction function ${functionName} must accept (document: unknown, sourceUrl: string).`);
     }
+  }
+  return errors;
+}
+
+function validateCapabilityStructure(source: string, target?: 'full' | 'chapter-only'): string[] {
+  const errors: string[] = [];
+  const adapterClassMatch = /\bexport\s+class\s+\w+\s+extends\s+AdapterBase\s*{([\s\S]*?)(?:\n}\s*(?:class|$))/m.exec(`${source}\nclass __Sentinel`);
+  const adapterClass = adapterClassMatch?.[1] ?? '';
+  if (adapterClass) {
+    for (const methodName of [
+      'extractTitle',
+      'extractAuthor',
+      'extractDescription',
+      'extractCoverUrl',
+      'extractTags',
+      'extractStatus',
+      'extractChapterList',
+      'extractChapterImageUrls',
+    ]) {
+      if (new RegExp(`\\b${methodName}\\s*\\(`).test(adapterClass)) {
+        errors.push(`Extraction method ${methodName} must be implemented in a capability subclass, not directly on the AdapterBase shell class.`);
+      }
+    }
+  }
+
+  if (!/\bclass\s+\w+\s+extends\s+CommonCapability\b/.test(source)) {
+    errors.push('Missing site-specific CommonCapability subclass.');
+  }
+  if (!/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
+    errors.push('Missing site-specific ChapterImagesCapability subclass.');
+  }
+  if (target !== 'chapter-only' && !/\bclass\s+\w+\s+extends\s+MetadataCapability\b/.test(source)) {
+    errors.push('Missing site-specific MetadataCapability subclass.');
   }
   return errors;
 }

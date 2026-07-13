@@ -261,6 +261,8 @@ function adapterImplementationContract(mode: 'create' | 'augment', target: 'full
 - Declare adapter identity as readonly class fields. Do not pass id/name/domains/parseMode/capabilities to constructor or super().
 - Capabilities must be boolean flags: { verification: boolean, metadata: boolean, chapterImages: boolean }.
 - Capability handler instances must be separate readonly fields named common, verification, metadata, and chapterImages.
+- Do not instantiate CommonCapability, MetadataCapability, or ChapterImagesCapability directly. Create site-specific subclasses that extend them.
+- Do not write extraction methods directly on the adapter shell class; put them in the site-specific capability subclasses.
 - Implement CommonCapability.matchUrl for the site URL patterns.
 - If verification is supported, use VerificationCapability to detect blocked/challenge pages and describe the official human handoff. Do not bypass or automate CAPTCHA.
 ${metadataRequirement}
@@ -270,7 +272,7 @@ ${metadataRequirement}
 - Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler runtime composes those from fine-grained functions.
 - Keep all site-specific clicking, expansion, filtering, and extraction strategy visible in the adapter source.
 - Helper functions are allowed, but keep them in the same TypeScript source file.
-- Do not use this.dom, browser document APIs, Capability imports, filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
+- Do not import from contracts/adapter-base-api.md, this.dom, browser document APIs, Capability imports, filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
 - Promotion mode: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id and add missing capability code.' : 'Create a new adapter implementation draft.'}
 `;
 }

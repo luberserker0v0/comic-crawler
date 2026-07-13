@@ -23,6 +23,8 @@ contract.
 
 Do not import `Capability`, `comiccrawler`, or `./capabilities`. Those APIs do
 not exist in ComicCrawler adapter drafts.
+Do not import from `contracts/adapter-base-api.md` or
+`./contracts/adapter-base-api`. This file is documentation, not runtime code.
 
 ## Site adapter shell
 
@@ -52,6 +54,12 @@ declared as readonly class fields as shown above.
 `capabilities` is a boolean object only. Do not put `new CommonCapability()` or
 other handler instances inside `capabilities`. Handler instances must be separate
 readonly fields named `common`, `verification`, `metadata`, and `chapterImages`.
+Do not instantiate `CommonCapability`, `MetadataCapability`, or
+`ChapterImagesCapability` directly. They are base classes. Create site-specific
+subclasses such as `ExampleCommonCapability extends CommonCapability`.
+Do not write extraction methods directly on the adapter shell class. The adapter
+shell only declares identity, capability flags, and handler fields. Fine-grained
+extraction methods belong in the capability handler subclasses.
 
 `parseMode` means:
 
@@ -273,7 +281,11 @@ Why invalid:
 
 - `Capability` is not part of the adapter contract.
 - `comiccrawler` and `./capabilities` are not valid draft imports.
+- `contracts/adapter-base-api.md` is documentation, not an import target.
 - Identity must be readonly fields, not `super(...)` options.
+- The adapter shell must not implement extraction methods directly.
+- Capability handlers must be site-specific subclasses, not direct
+  instantiations of abstract base classes.
 - Extraction methods must accept `(document, sourceUrl)`.
 - Extraction method names must start with `extract`, not `match`.
 - `capabilities` must be boolean flags, not capability handler instances.

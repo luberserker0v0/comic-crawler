@@ -69,7 +69,7 @@ export function fetchMetadata() {
 `, { target: 'chapter-only' });
 
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain('Implementation must not mention old façade functions fetchMetadata or fetchChapterImages.');
+    expect(result.errors).toContain('Implementation must not mention old facade functions fetchMetadata or fetchChapterImages.');
   });
 
   it('rejects non-AdapterBase DOM APIs and constructor identity objects', () => {
@@ -97,5 +97,55 @@ export class BadAdapter extends AdapterBase {
     expect(result.errors).toContain('Adapter identity must be readonly class fields, not constructor super() options.');
     expect(result.errors).toContain('this.dom is not part of the AdapterBase contract. Use this.adapter.asCheerio(document).');
     expect(result.errors).toContain('Extraction function extractChapterImageUrls must accept (document: unknown, sourceUrl: string).');
+  });
+
+  it('rejects extraction methods implemented directly on the adapter shell', () => {
+    const result = validateAdapterImplementationDraft(`
+import { AdapterBase, CommonCapability, ChapterImagesCapability } from '../adapter/base';
+
+export class BadAdapter extends AdapterBase {
+  readonly id = 'bad';
+  readonly name = 'Bad';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  readonly common = new BadCommonCapability(this);
+  readonly chapterImages = new BadChapterImagesCapability(this);
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
+    return [];
+  }
+}
+
+class BadCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean { return url.includes('example.com'); }
+}
+class BadChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] { return []; }
+}
+`, { target: 'chapter-only' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Extraction method extractChapterImageUrls must be implemented in a capability subclass, not directly on the AdapterBase shell class.');
+  });
+
+  it('rejects direct capability base-class instantiation', () => {
+    const result = validateAdapterImplementationDraft(`
+import { AdapterBase, CommonCapability, ChapterImagesCapability } from '../adapter/base';
+
+export class BadAdapter extends AdapterBase {
+  readonly id = 'bad';
+  readonly name = 'Bad';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  readonly common = new CommonCapability(this);
+  readonly chapterImages = new ChapterImagesCapability(this);
+}
+`, { target: 'chapter-only' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Capability base classes must not be instantiated directly; create site-specific subclasses.');
+    expect(result.errors).toContain('Missing site-specific CommonCapability subclass.');
+    expect(result.errors).toContain('Missing site-specific ChapterImagesCapability subclass.');
   });
 });
