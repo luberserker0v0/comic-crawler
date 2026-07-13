@@ -48,6 +48,7 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\bexample\.com\b|\bmy-site-adapter\b|\bGeneric Comic Site\b|\bExample Site\b/m, message: 'Template placeholder values must be replaced with site-specific identity and domains.' },
   { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
   { pattern: /\bverifyDom\s*\(/m, message: 'VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().' },
+  { pattern: /Replace with site-specific|throw\s+new\s+Error\s*\(/m, message: 'Template placeholder implementations must be replaced with working extraction logic.' },
   { pattern: /\bextends\s+\w+Capability\s+implements\s+\w+Capability\b/m, message: 'Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.' },
   { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
   { pattern: /new\s+(?:CommonCapability|VerificationCapability|MetadataCapability|ChapterImagesCapability)\s*\(/m, message: 'Capability base classes must not be instantiated directly; create site-specific subclasses.' },
@@ -272,6 +273,15 @@ function validateMetadataCapabilityDraft(source: string): string[] {
   if (!/\bclass\s+\w+\s+extends\s+MetadataCapability\b/.test(source)) {
     errors.push('Metadata draft must contain a site-specific MetadataCapability subclass.');
   }
+  if (/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source)) {
+    errors.push('Metadata draft must not export an AdapterBase shell.');
+  }
+  if (/\bclass\s+\w+\s+extends\s+(?:CommonCapability|VerificationCapability)\b/.test(source)) {
+    errors.push('Metadata draft must not implement common or verification capabilities.');
+  }
+  if (/\bconstructor\s*\(/.test(source) || /\breadonly\s+(?:id|name|domains|parseMode|common|verification)\b/.test(source)) {
+    errors.push('Metadata draft must not declare adapter identity, constructor, common, or verification fields.');
+  }
   const required = [
     'extractTitle',
     'extractAuthor',
@@ -289,6 +299,21 @@ function validateMetadataCapabilityDraft(source: string): string[] {
   errors.push(...validateRequiredSignatures(source, required));
   if (/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
     errors.push('Metadata draft must not implement ChapterImagesCapability.');
+  }
+  const unchangedTemplateSelectors = [
+    'main h1',
+    '.author a',
+    '.description',
+    '.cover img',
+    '.tags a',
+    '.status',
+    '.chapter-list a[href*="/read/"]',
+  ].filter((selector) => source.includes(selector));
+  const hasSiteSpecificMetadataSignals = /meta\[(?:name|property)=["'](?:author|keywords|description|og:title|og:description|og:image)["']\]/i.test(source) ||
+    /href\*=["'][^"']*\/chapter-/i.test(source) ||
+    /href\^=["'][^"']*\/chapter-/i.test(source);
+  if (unchangedTemplateSelectors.length >= 3 && !hasSiteSpecificMetadataSignals) {
+    errors.push('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
   }
   return errors;
 }

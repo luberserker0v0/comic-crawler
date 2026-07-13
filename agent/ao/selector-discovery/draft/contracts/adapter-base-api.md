@@ -164,8 +164,8 @@ class ExampleMetadataCapability extends MetadataCapability {
   extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined {
     const $ = this.adapter.asCheerio(document);
     const text = $('.status').first().text();
-    if (/complete|completed|完結|完结/i.test(text)) return 'completed';
-    if (/ongoing|連載|连载/i.test(text)) return 'ongoing';
+    if (/complete|completed|完結|已完結|完结|已完结/i.test(text)) return 'completed';
+    if (/ongoing|連載|連載中|连载|连载中|更新中/i.test(text)) return 'ongoing';
     return 'unknown';
   }
 

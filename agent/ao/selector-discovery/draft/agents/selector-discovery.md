@@ -36,6 +36,9 @@ human verification.
 For the `common-verification` stage, use
 `contracts/common-verification-template.ts` as the structure. Do not redefine
 ComicCrawler base classes.
+For the `metadata` stage, use `contracts/metadata-template.ts` as the structure.
+Write only one site-specific `MetadataCapability` subclass; do not export an
+adapter shell and do not implement chapter image extraction in this stage.
 
 # Workflow
 

@@ -433,7 +433,31 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     const capabilityDrafts: SelectorDiscoveryCapabilityDraft[] = [];
     for (const draft of stages) {
       await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
-      capabilityDrafts.push(await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job, job.target));
+      let capabilityDraft = await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job, job.target);
+      if (!capabilityDraft.sourceTs?.trim()) {
+        capabilityDraft = await this.runAoCapabilityPhase(
+          client,
+          bundle,
+          model,
+          taskMarkdown,
+          draft,
+          job,
+          job.target,
+          'Previous attempt did not write the requested TypeScript source file. Write the source file exactly to the requested path.'
+        );
+      } else if (capabilityDraft.validation && !capabilityDraft.validation.valid && shouldRetryCapabilityDraft(capabilityDraft)) {
+        capabilityDraft = await this.runAoCapabilityPhase(
+          client,
+          bundle,
+          model,
+          taskMarkdown,
+          draft,
+          job,
+          job.target,
+          `Previous attempt failed validation:\n${capabilityDraft.validation.errors.map((error) => `- ${error}`).join('\n')}\nRewrite the same stage and fix these validation errors.`
+        );
+      }
+      capabilityDrafts.push(capabilityDraft);
       const latest = capabilityDrafts.at(-1);
       if (!latest) {
         continue;
@@ -468,7 +492,8 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     taskMarkdown: string,
     draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
     job: SelectorDiscoveryJob,
-    target?: 'full' | 'chapter-only'
+    target?: 'full' | 'chapter-only',
+    retryFeedback?: string
   ): Promise<SelectorDiscoveryCapabilityDraft> {
     const conversationId = await client.createConversation();
     try {
@@ -477,6 +502,9 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       await client.start(conversationId);
       const concreteCommonVerificationSkeleton = draft.stage === 'common-verification'
         ? createCommonVerificationSkeleton(job.normalizedUrl, job.hostname)
+        : '';
+      const concreteMetadataSkeleton = draft.stage === 'metadata'
+        ? createMetadataSkeleton(job.hostname)
         : '';
       const templateInstruction = draft.stage === 'common-verification'
         ? `
@@ -502,6 +530,34 @@ Common/verification stage has a stricter rule than later stages:
 \`\`\`ts
 ${concreteCommonVerificationSkeleton}
 \`\`\``
+        : draft.stage === 'metadata'
+          ? `
+
+Metadata stage has a strict single-capability boundary:
+
+- Use task.md for trusted metadata DOM evidence and Phase 1 analysis.
+- Use contracts/metadata-template.ts only for TypeScript structure.
+- Do not use contracts/common-verification-template.ts for this stage.
+- Write ${draft.sourcePath} by copying the skeleton below and replacing
+  selectors, cleanup logic, URL filters, and status keywords with site-specific
+  behavior from task.md.
+- The skeleton selectors are placeholders. Do not keep three or more of these
+  unchanged selectors: main h1, .author a, .description, .cover img, .tags a,
+  .status, .chapter-list a[href*="/read/"].
+- The skeleton throws placeholder errors. Replace every throw with working
+  extraction code using selectors from task.md.
+- Keep exactly one site-specific MetadataCapability subclass.
+- Do not export an AdapterBase shell.
+- Do not implement CommonCapability, VerificationCapability, or
+  ChapterImagesCapability in this file.
+- Do not implement extractChapterImageUrls, fetchMetadata, or
+  fetchChapterImages.
+- extractChapterList must return the full catalog available in the trusted DOM,
+  not a preview, sample, recommendation list, or first few chapters.
+
+\`\`\`ts
+${concreteMetadataSkeleton}
+\`\`\``
         : '';
       const response = await client.message(
         conversationId,
@@ -525,6 +581,8 @@ Important file-writing rules:
 - Do not import from contracts/adapter-base-api.md or any contracts path.
 - For common-verification, use the concrete skeleton in this message as the
   exact source shape.
+- For metadata, use the concrete skeleton in this message as the exact source
+  shape.
 - For later stages, use the exact signatures documented in
   contracts/adapter-base-api.md.
 
@@ -543,6 +601,11 @@ Stage rules:
 - Every method must use the exact signature documented for this capability
   stage.
 ${templateInstruction}
+${retryFeedback ? `
+## Retry Feedback
+
+${retryFeedback}
+` : ''}
 
 Chat response rule:
 
@@ -561,6 +624,13 @@ Chat response rule:
       if (draft.stage === 'common-verification' && trimmedSource && !trimmedSource.includes(job.hostname)) {
         validation.errors.push(`Common/verification draft must include target hostname "${job.hostname}".`);
         validation.valid = false;
+      }
+      if (draft.stage === 'metadata' && trimmedSource) {
+        const evidenceErrors = validateMetadataSelectorEvidence(trimmedSource, taskMarkdown);
+        if (evidenceErrors.length > 0) {
+          validation.errors.push(...evidenceErrors);
+          validation.valid = false;
+        }
       }
       return {
         ...draft,
@@ -1049,6 +1119,93 @@ function adapterSupportsDiscoveryTarget(
   return capabilities.metadata && capabilities.chapterImages;
 }
 
+function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): boolean {
+  const errors = draft.validation?.errors ?? [];
+  return errors.some((error) => (
+    error.includes('template selectors') ||
+    error.includes('not present in task DOM evidence') ||
+    error.includes('not present in task URL evidence') ||
+    error.includes('require() is not allowed') ||
+    error.includes('Adapter identity must be readonly class fields') ||
+    error.includes('must not declare adapter identity') ||
+    error.includes('Template placeholder implementations') ||
+    error.includes('Template placeholder values') ||
+    error.includes('Do not redeclare ComicCrawler framework classes') ||
+    error.includes('must not export an AdapterBase shell') ||
+    error.includes('must not implement common or verification capabilities')
+  ));
+}
+
+function validateMetadataSelectorEvidence(source: string, taskMarkdown: string): string[] {
+  const errors: string[] = [];
+  const selectors = extractCheerioSelectors(source);
+  const normalizedTask = taskMarkdown.toLowerCase();
+  const reported = new Set<string>();
+  for (const selector of selectors) {
+    if (selector.startsWith('meta[') || selector === 'title' || selector === 'body') continue;
+    for (const className of extractCssClassNames(selector)) {
+      const evidenceNeedles = [
+        `.${className.toLowerCase()}`,
+        `class=${className.toLowerCase()}`,
+        `class="${className.toLowerCase()}`,
+      ];
+      if (!evidenceNeedles.some((needle) => normalizedTask.includes(needle))) {
+        const key = `class:${className}`;
+        if (!reported.has(key)) {
+          errors.push(`Metadata selector ".${className}" is not present in task DOM evidence.`);
+          reported.add(key);
+        }
+      }
+    }
+    for (const pathNeedle of extractHrefPathNeedles(selector)) {
+      if (!normalizedTask.includes(pathNeedle.toLowerCase())) {
+        const key = `href:${pathNeedle}`;
+        if (!reported.has(key)) {
+          errors.push(`Metadata selector href path "${pathNeedle}" is not present in task URL evidence.`);
+          reported.add(key);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+function extractCheerioSelectors(source: string): string[] {
+  const selectors: string[] = [];
+  const pattern = /\$\(\s*(['"`])([^'"`]+)\1\s*\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    const selector = match[2]?.trim();
+    if (!selector || selector.includes('<')) continue;
+    selectors.push(selector);
+  }
+  return selectors;
+}
+
+function extractCssClassNames(selector: string): string[] {
+  const classes: string[] = [];
+  const pattern = /\.([_a-zA-Z][-_a-zA-Z0-9]*)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(selector)) !== null) {
+    const className = match[1];
+    if (className && className !== 'first' && className !== 'last') {
+      classes.push(className);
+    }
+  }
+  return classes;
+}
+
+function extractHrefPathNeedles(selector: string): string[] {
+  const needles: string[] = [];
+  const pattern = /href[*^$|~]?=\s*["']([^"']+)["']/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(selector)) !== null) {
+    const value = match[1]?.trim();
+    if (value?.startsWith('/')) needles.push(value);
+  }
+  return needles;
+}
+
 function normalizeComparableText(value?: string): string {
   return (value ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
 }
@@ -1104,6 +1261,57 @@ class ${classPrefix}VerificationCapability extends VerificationCapability {
       supported: true,
       flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
     };
+  }
+}
+`;
+}
+
+function createMetadataSkeleton(hostname: string): string {
+  const classPrefix = toPascalIdentifier(hostname.replace(/^m\./i, ''));
+  return `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../../base';
+
+class ${classPrefix}MetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific title extraction from task.md evidence.');
+  }
+
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific author extraction from task.md evidence.');
+  }
+
+  extractDescription(document: unknown, sourceUrl: string): string | undefined {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific description extraction from task.md evidence.');
+  }
+
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific cover URL extraction from task.md evidence.');
+  }
+
+  extractTags(document: unknown, sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific tag extraction from task.md evidence.');
+  }
+
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific status extraction from task.md evidence.');
+  }
+
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    const $ = this.adapter.asCheerio(document);
+    void $;
+    throw new Error('Replace with site-specific chapter list extraction from task.md evidence.');
   }
 }
 `;

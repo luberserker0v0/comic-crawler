@@ -27,8 +27,16 @@ at a time, then ask for a composed adapter after review.
 2. `metadata`
    - Required for full adapters.
    - Implement only `MetadataCapability`.
+   - Follow `contracts/metadata-template.ts`. Copy its structure and replace
+     selectors, cleanup logic, URL filters, and status keywords with
+     site-specific behavior.
+   - The selectors in `metadata-template.ts` are placeholders. Do not keep them
+     unless task evidence explicitly shows the same selectors on the target
+     site.
    - Extract title, author, description, cover URL, tags, status, and the full
      chapter list from trusted metadata DOM.
+   - Do not export an adapter shell in this stage.
+   - Do not implement chapter image extraction in this stage.
 3. `chapter-images`
    - Required for every chapter-capable adapter.
    - Implement only `ChapterImagesCapability`.

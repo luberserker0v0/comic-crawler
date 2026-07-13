@@ -394,18 +394,18 @@ function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: 'metadat
   const $ = cheerio.load(html);
   const title = compactText($('title').first().text());
   const bodyClasses = $('body').attr('class') ?? '';
-  const headings = collect($, 'h1,h2,h3', (el) => compactText($(el).text()), 40);
+  const headings = collect($, 'h1,h2,h3', (el) => `${describeElementSelector($, el)} | text=${compactText($(el).text())}`, 40);
   const meta = collect($, 'meta[name],meta[property],meta[itemprop]', (el) => {
     const node = $(el);
     const key = node.attr('name') ?? node.attr('property') ?? node.attr('itemprop') ?? '';
     const value = node.attr('content') ?? '';
-    return `${key}: ${value}`;
+    return `${describeElementSelector($, el)} | ${key}: ${value}`;
   }, 40);
   const anchors = collect($, 'a[href]', (el) => {
     const node = $(el);
     const href = node.attr('href') ?? '';
     const text = compactText(node.text());
-    return `${text || '(no text)'} -> ${safeResolve(baseUrl, href)}`;
+    return `${describeElementSelector($, el)} | text=${text || '(no text)'} | href=${safeResolve(baseUrl, href)}`;
   }, pageType === 'metadata' ? 120 : 50, (value) => /chapter|manga|comic|read|reader|viewer|episode|ep/i.test(value));
   const images = collect($, 'img,source', (el) => {
     const node = $(el);
@@ -414,7 +414,7 @@ function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: 'metadat
       .filter(Boolean)
       .join(' ');
     const className = node.attr('class') ? ` class=${node.attr('class')}` : '';
-    return `${node[0]?.tagName ?? 'img'}${className} ${attrs}`.trim();
+    return `${describeElementSelector($, el)} | ${node[0]?.tagName ?? 'img'}${className} ${attrs}`.trim();
   }, pageType === 'chapter' ? 160 : 60);
   const structuralCandidates = collect($, 'main,article,section,div[class],ul[class],ol[class]', (el) => {
     const node = $(el);
@@ -423,7 +423,7 @@ function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: 'metadat
     const className = node.attr('class') ? `.${node.attr('class')!.trim().split(/\s+/).slice(0, 4).join('.')}` : '';
     const text = compactText(node.clone().children().remove().end().text());
     const childSummary = summarizeChildren(node);
-    return `${tag}${id}${className} | children=${childSummary} | text=${text.slice(0, 120)}`;
+    return `${describeElementSelector($, el)} | node=${tag}${id}${className} | children=${childSummary} | text=${text.slice(0, 120)}`;
   }, 140, (value) => /chapter|manga|comic|read|page|detail|content|list|episode|image|img|book|doc|main|article|section|box/i.test(value));
 
   return `### DOM Overview
@@ -484,6 +484,47 @@ function safeResolve(baseUrl: string, href: string): string {
   } catch {
     return href;
   }
+}
+
+function describeElementSelector($: cheerio.CheerioAPI, element: any): string {
+  const path: string[] = [];
+  let current = $(element);
+  for (let depth = 0; depth < 4 && current.length > 0; depth += 1) {
+    const node = current.first();
+    const raw = node.get(0);
+    if (!raw || raw.type === 'root') break;
+    const tag = raw.tagName ?? 'node';
+    const id = node.attr('id');
+    const className = node.attr('class');
+    const attrSelector = selectorAttributeHint(node);
+    const classSelector = className
+      ? `.${className.trim().split(/\s+/).filter(Boolean).slice(0, 3).map(cssEscapeLite).join('.')}`
+      : '';
+    path.unshift(`${tag}${id ? `#${cssEscapeLite(id)}` : ''}${classSelector}${attrSelector}`);
+    current = node.parent();
+  }
+  return path.join(' > ') || 'unknown';
+}
+
+function selectorAttributeHint(node: cheerio.Cheerio<any>): string {
+  for (const attr of ['href', 'src', 'data-src', 'data-original', 'property', 'name', 'itemprop']) {
+    const value = node.attr(attr);
+    if (!value) continue;
+    if (attr === 'href') {
+      const stable = value.split('?')[0] ?? value;
+      const segment = stable.split('/').filter(Boolean).at(0);
+      return segment ? `[href*="/${cssEscapeLite(segment)}/"]` : '[href]';
+    }
+    if (['property', 'name', 'itemprop'].includes(attr)) {
+      return `[${attr}="${cssEscapeLite(value)}"]`;
+    }
+    return `[${attr}]`;
+  }
+  return '';
+}
+
+function cssEscapeLite(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\s+/g, '.');
 }
 
 function summarizeChildren(node: cheerio.Cheerio<any>): string {

@@ -192,6 +192,26 @@ class DemoMetadataCapability extends MetadataCapability {
     expect(result.errors).toEqual([]);
   });
 
+  it('rejects metadata drafts that keep the template selectors unchanged', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { const $ = this.adapter.asCheerio(document); return $('main h1').text(); }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { const $ = this.adapter.asCheerio(document); return $('.author a').text() || undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { const $ = this.adapter.asCheerio(document); return $('.description').text() || undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { const $ = this.adapter.asCheerio(document); const raw = $('.cover img').attr('src'); return raw ? this.adapter.resolveUrl(sourceUrl, raw) : undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { const $ = this.adapter.asCheerio(document); return $('.tags a').map((_, el) => $(el).text()).get(); }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { const $ = this.adapter.asCheerio(document); return $('.status').text() ? 'ongoing' : undefined; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] { const $ = this.adapter.asCheerio(document); return $('.chapter-list a[href*="/read/"]').map((_, el) => ({ id: $(el).text(), title: $(el).text(), url: this.adapter.resolveUrl(sourceUrl, $(el).attr('href') ?? ''), number: 1 })).get(); }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
+  });
+
   it('rejects combined capability handlers that use implements', () => {
     const result = validateCapabilityDraft(`
 import { CommonCapability, VerificationCapability } from '../adapter/base';
@@ -332,9 +352,22 @@ class DemoCommonCapability extends CommonCapability {
   it('keeps metadata and chapter image capability stages mutually scoped', () => {
     const metadata = validateCapabilityDraft(`
 import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
-import { MetadataCapability, ChapterImagesCapability } from '../adapter/base';
+import { AdapterBase, MetadataCapability, ChapterImagesCapability, CommonCapability, VerificationCapability } from '../adapter/base';
+
+export class BadAdapter extends AdapterBase {}
+
+class BadCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean { return url.includes('demo.test'); }
+}
+
+class BadVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
+  describeVerificationHandoff(): Record<string, unknown> { return { supported: true }; }
+}
 
 class DemoMetadataCapability extends MetadataCapability {
+  readonly id = 'bad';
+  constructor() { super({}); }
   extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
   extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
   extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
@@ -350,6 +383,9 @@ class BadChapterImagesCapability extends ChapterImagesCapability {
 
     expect(metadata.valid).toBe(false);
     expect(metadata.errors).toContain('Metadata draft must not implement ChapterImagesCapability.');
+    expect(metadata.errors).toContain('Metadata draft must not export an AdapterBase shell.');
+    expect(metadata.errors).toContain('Metadata draft must not implement common or verification capabilities.');
+    expect(metadata.errors).toContain('Metadata draft must not declare adapter identity, constructor, common, or verification fields.');
 
     const images = validateCapabilityDraft(`
 import { ChapterImagesCapability } from '../adapter/base';
