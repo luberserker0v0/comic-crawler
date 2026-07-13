@@ -48,7 +48,7 @@ export interface SelectorDiscoveryJob {
   model?: string;
   aoBaseUrl?: string;
   stopAfterStage?: SelectorDiscoveryCapabilityStage;
-  phase?: 'known_adapter' | 'phase1' | 'phase2' | SelectorDiscoveryCapabilityStage | 'complete';
+  phase?: 'known_adapter' | 'phase1' | 'phase2' | SelectorDiscoveryCapabilityStage | 'compose' | 'complete';
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -133,8 +133,7 @@ export interface AdapterImplementationValidation {
 export type SelectorDiscoveryCapabilityStage =
   | 'common-verification'
   | 'metadata'
-  | 'chapter-images'
-  | 'compose';
+  | 'chapter-images';
 
 export interface SelectorDiscoveryCapabilityDraft {
   stage: SelectorDiscoveryCapabilityStage;

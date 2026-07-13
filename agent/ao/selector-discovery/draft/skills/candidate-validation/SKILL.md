@@ -1,6 +1,6 @@
 ---
 name: candidate-validation
-description: Validate TypeScript AdapterBase implementation drafts and Markdown review notes for completeness, evidence, and reviewer readiness.
+description: Validate TypeScript capability drafts and Markdown review notes for completeness, evidence, and reviewer readiness.
 compatibility: opencode
 metadata:
   project: ComicCrawler
@@ -9,8 +9,8 @@ metadata:
 ## Checklist
 
 - Required review-note sections are present.
-- Adapter identity, domains, parseMode, and capabilities are understandable.
-- TypeScript exports one adapter class that extends `AdapterBase`.
+- Capability scope and intentionally omitted capabilities are understandable.
+- TypeScript does not export an adapter class that extends `AdapterBase`.
 - The implementation uses fine-grained capability functions, not `fetchMetadata()` or `fetchChapterImages()`.
 - For full discovery, metadata functions cover title, author, cover, status, tags, optional description, and chapter list.
 - For chapter-only discovery, metadata and chapter-list behavior are explicitly not implemented.

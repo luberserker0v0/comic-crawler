@@ -1,6 +1,6 @@
 ---
 name: selector-extraction
-description: Choose stable Cheerio-compatible selectors and extraction logic for ComicCrawler AdapterBase implementations.
+description: Choose stable Cheerio-compatible selectors and extraction logic for ComicCrawler capability implementations.
 compatibility: opencode
 metadata:
   project: ComicCrawler

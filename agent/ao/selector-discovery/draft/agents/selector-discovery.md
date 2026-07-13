@@ -30,12 +30,13 @@ binding API reference for imports, capability classes, method signatures,
 return shapes, helper methods, and parseMode semantics.
 Also read `contracts/capability-pipeline.md`. Adapter behavior is generated in
 capability stages: CommonCapability, VerificationCapability, then the requested
-MetadataCapability and/or ChapterImagesCapability, then compose. Every adapter
+MetadataCapability and/or ChapterImagesCapability. ComicCrawler assembles the
+AdapterBase shell after review. Every adapter
 implements VerificationCapability first, even when normal pages do not require
 human verification.
 For the `common-verification` stage, use
 `contracts/common-verification-template.ts` as the structure. Do not redefine
-ComicCrawler base classes.
+ComicCrawler base classes and do not write an AdapterBase shell.
 For the `metadata` stage, use `contracts/metadata-template.ts` as the structure.
 Write only one site-specific `MetadataCapability` subclass; do not export an
 adapter shell and do not implement chapter image extraction in this stage.
@@ -73,7 +74,7 @@ response should be a short confirmation after the files are written.
 
 # TypeScript implementation rules
 
-- Export exactly one class that extends `AdapterBase`.
+- Do not write the final `AdapterBase` shell; ComicCrawler generates it.
 - Use `CommonCapability` and `VerificationCapability` for every adapter.
 - Use `MetadataCapability` and `ChapterImagesCapability` handlers where the
   requested capability is supported.

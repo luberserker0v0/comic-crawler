@@ -4,16 +4,16 @@ ComicCrawler provides this task as Markdown. Do not expect JSON.
 
 ## Goal
 
-Use Phase 1 results and representative chapter DOM evidence to write a
-TypeScript `AdapterBase` implementation draft plus Markdown review notes.
+Use Phase 1 results and representative chapter DOM evidence to write TypeScript
+capability drafts plus Markdown review notes.
 
 ## Source URL
 
 Original metadata/catalog URL or chapter URL.
 
-## AdapterBase Implementation Contract
+## Capability Implementation Contract
 
-The task includes the required `AdapterBase` contract summary. Follow it exactly.
+The task includes the required capability contract summary. Follow it exactly.
 Read `adapter-base-api.md` for imports, capability class usage, method
 signatures, return shapes, helper methods, and parseMode meaning before writing
 TypeScript.
@@ -34,7 +34,7 @@ return previews such as first chapters or first image URLs.
 
 Write:
 
-- `outputs/adapter-implementation.ts`
-- `outputs/review-notes.md`
+- the requested `outputs/*-capability.ts` file
+- the requested `outputs/*-review.md` file
 
-Use `adapter-implementation-output.md` for review-note structure.
+ComicCrawler assembles the final AdapterBase shell after review.

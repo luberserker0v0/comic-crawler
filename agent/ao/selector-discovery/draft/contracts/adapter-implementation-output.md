@@ -1,39 +1,24 @@
-# Adapter Implementation Draft Output Contract
+# Capability Draft Output Contract
 
-The final AO result has two files:
+This legacy-named file describes capability draft review notes. Agents do not
+write the final `AdapterBase` shell; ComicCrawler assembles it from reviewed
+capability classes.
 
-- `outputs/adapter-implementation.ts`
-- `outputs/review-notes.md`
+## TypeScript Capability Requirements
 
-For staged discovery, produce capability drafts first by following
-`contracts/capability-pipeline.md`. The final adapter implementation is the
-compose step after Common, Verification, Metadata, and ChapterImages drafts have
-been reviewed.
+The requested TypeScript file must:
 
-## TypeScript Implementation Requirements
-
-The TypeScript file must:
-
-- export exactly one site adapter class that extends `AdapterBase`;
-- follow `contracts/adapter-base-api.md` for imports, capability class usage,
-  method signatures, return shapes, helper usage, and parseMode meaning;
-- declare `id`, `name`, `domains`, `parseMode`, and `capabilities`;
-- declare adapter identity as readonly class fields, not constructor or
-  `super(...)` options;
-- implement site URL matching through `CommonCapability`;
-- always implement `VerificationCapability`; it is the DOM trust gate even when
-  a normal page does not require human verification;
-- implement supported capability handlers using the `CommonCapability`,
-  `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability`
-  classes exported by ComicCrawler;
-- create site-specific capability subclasses; do not instantiate abstract/base
-  capability classes directly;
-- keep extraction methods inside capability subclasses, not directly on the
-  adapter shell class;
-- implement fine-grained extraction functions, not `fetchMetadata()` or
+- contain only the capability class or classes requested for the current stage;
+- create site-specific subclasses of `CommonCapability`,
+  `VerificationCapability`, `MetadataCapability`, or
+  `ChapterImagesCapability`;
+- not export a class that extends `AdapterBase`;
+- not declare adapter identity, domains, parseMode, capability flags, handler
+  fields, constructors, or `super(...)`;
+- implement fine-grained capability functions, not `fetchMetadata()` or
   `fetchChapterImages()`;
 - keep site-specific expansion, filtering, and extraction logic visible in the
-  adapter source;
+  capability source;
 - return full extraction results from capability methods:
   - `extractChapterList` returns all catalog chapters visible in the trusted DOM;
   - `extractChapterImageUrls` returns all comic page image URLs visible in the
@@ -44,15 +29,13 @@ The TypeScript file must:
 
 ## Review Notes Requirements
 
-Use these exact headings in `outputs/review-notes.md`.
+Use these sections where relevant to the requested capability stage.
 
-## Adapter Identity
+## Capability Scope
 
-- Adapter ID:
-- Name:
-- Domains:
-- Parse Mode:
-- Capabilities:
+- Stage:
+- Implemented capability class:
+- Intentionally omitted capabilities:
 
 ## Implemented Functions
 
@@ -60,19 +43,20 @@ List every implemented fine-grained function and the evidence used.
 
 ## Metadata Evidence
 
-Explain title, author, description, cover, tags, status, and chapter-list
-evidence. If chapter-only, state that metadata is intentionally not implemented.
+For metadata stages, explain title, author, description, cover, tags, status,
+and chapter-list evidence. If chapter-only, state that metadata is intentionally
+not implemented.
 
 ## Chapter Image Evidence
 
-Explain reader containers, image nodes, lazy-loading attributes, and why selected
-images are comic pages rather than covers, logos, UI icons, tracking pixels, or
-ads.
+For chapter image stages, explain reader containers, image nodes, lazy-loading
+attributes, and why selected images are comic pages rather than covers, logos,
+UI icons, tracking pixels, or ads.
 
 ## Verification Evidence
 
-Explain whether the adapter declares verification support and how it detects
-blocked/challenge pages. Do not propose bypassing CAPTCHA or Cloudflare.
+For verification stages, explain how blocked/challenge pages are detected. Do
+not propose bypassing CAPTCHA or Cloudflare.
 
 ## Known Risks
 
@@ -81,12 +65,9 @@ verified browser DOM requirements, and URL mismatch risks.
 
 ## Reviewer Checklist
 
-- Adapter extends AdapterBase:
-- AdapterBase API reference followed:
-- Identity declared as readonly fields:
+- Capability subclass used:
+- No AdapterBase shell:
 - No constructor/super identity object:
-- Capability subclasses used:
-- Extraction methods are not on adapter shell:
 - No this.dom or browser document API:
 - No JSON output:
 - No fetchMetadata/fetchChapterImages implementation:

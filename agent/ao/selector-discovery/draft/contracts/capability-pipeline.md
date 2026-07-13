@@ -2,21 +2,23 @@
 
 Use this contract whenever ComicCrawler asks you to produce adapter TypeScript.
 
-Do not write a whole adapter as one unstructured block first. Produce and reason
+Do not write a whole adapter as one unstructured block. Produce and reason
 about adapter behavior in capability stages. ComicCrawler may ask for one stage
-at a time, then ask for a composed adapter after review.
+at a time. ComicCrawler, not the agent, assembles the final AdapterBase shell
+from reviewed capability classes.
 
 ## Stage Order
 
 1. `common-verification`
-   - Implement the adapter shell identity.
-   - Declare identity and capability handlers as readonly class fields.
-   - Do not write a constructor or call `super(...)` with an identity object.
+   - Implement only one `CommonCapability` subclass and one
+     `VerificationCapability` subclass.
    - Follow `contracts/common-verification-template.ts`. Copy its structure and
-     replace only site identity, URL matching, parseMode, and verification
-     keywords.
+     replace URL matching and verification keywords.
    - Do not declare or redefine `AdapterBase`, `CommonCapability`, or
      `VerificationCapability`.
+   - Do not export or implement an `AdapterBase` shell in this stage.
+   - Do not declare identity fields, capability flags, constructors, or handler
+     wiring in this stage.
    - Do not add metadata or chapter image methods in this stage.
    - Implement `CommonCapability.matchUrl`.
    - Implement `VerificationCapability.detectVerificationRequired`.
@@ -41,8 +43,9 @@ at a time, then ask for a composed adapter after review.
    - Required for every chapter-capable adapter.
    - Implement only `ChapterImagesCapability`.
    - Extract all comic page image URLs from trusted reader DOM.
-4. `compose`
-   - Assemble reviewed capability handlers into one `AdapterBase` site adapter.
+4. System compose
+   - ComicCrawler assembles reviewed capability handlers into one `AdapterBase`
+     site adapter. Agents do not write this shell.
 
 ## Boundaries
 
@@ -75,7 +78,6 @@ When asked for staged output, use these paths:
 - `outputs/metadata-review.md`
 - `outputs/chapter-images-capability.ts`
 - `outputs/chapter-images-review.md`
-- `outputs/adapter-implementation.ts`
 - `outputs/review-notes.md`
 
 If the task message names a narrower set of output files, write only those files.

@@ -1,23 +1,7 @@
 import {
-  AdapterBase,
   CommonCapability,
   VerificationCapability,
 } from '../../base';
-
-export class ExampleSiteAdapter extends AdapterBase {
-  readonly id = 'example-site';
-  readonly name = 'Example Site';
-  readonly domains = ['example.com'];
-  readonly parseMode = 'static' as const;
-  readonly capabilities = {
-    verification: true,
-    metadata: false,
-    chapterImages: false,
-  };
-
-  readonly common = new ExampleCommonCapability(this);
-  readonly verification = new ExampleVerificationCapability(this);
-}
 
 class ExampleCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {

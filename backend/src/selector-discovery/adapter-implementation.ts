@@ -91,8 +91,6 @@ export function validateCapabilityDraft(
     case 'chapter-images':
       errors.push(...validateChapterImagesCapabilityDraft(source));
       break;
-    case 'compose':
-      return validateAdapterImplementationDraft(source, { target: options.target });
   }
 
   return {
@@ -224,19 +222,11 @@ function validateCapabilityStructure(source: string, target?: 'full' | 'chapter-
 
 function validateCommonVerificationDraft(source: string): string[] {
   const errors: string[] = [];
-  if (!/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source)) {
-    errors.push('Common/verification draft must export the AdapterBase shell class.');
+  if (/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source) || /\bextends\s+AdapterBase\b/.test(source)) {
+    errors.push('Common/verification draft must not export or implement an AdapterBase shell.');
   }
-  for (const snippet of REQUIRED_SNIPPETS) {
-    if (!source.includes(snippet)) {
-      errors.push(`Missing required adapter declaration: ${snippet}.`);
-    }
-  }
-  if (!/\breadonly\s+common\s*=/.test(source)) {
-    errors.push('Common/verification draft must declare readonly common handler.');
-  }
-  if (!/\breadonly\s+verification\s*=/.test(source)) {
-    errors.push('Common/verification draft must declare readonly verification handler.');
+  if (/\bconstructor\s*\(/.test(source) || /\breadonly\s+(?:id|name|domains|parseMode|capabilities|common|verification|metadata|chapterImages)\b/.test(source)) {
+    errors.push('Common/verification draft must not declare adapter identity, constructor, capability flags, or handler fields.');
   }
   if (!/\bclass\s+\w+\s+extends\s+CommonCapability\b/.test(source)) {
     errors.push('Missing site-specific CommonCapability subclass.');
@@ -253,17 +243,8 @@ function validateCommonVerificationDraft(source: string): string[] {
   if (!/\bdescribeVerificationHandoff\s*\(\s*\)\s*:/.test(source)) {
     errors.push('VerificationCapability must implement describeVerificationHandoff().');
   }
-  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*true/s.test(source)) {
-    errors.push('Every adapter draft must declare verification: true because VerificationCapability gates DOM trust.');
-  }
   if (/\bextract(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\s*\(/.test(source)) {
     errors.push('Common/verification draft must not implement metadata or chapter image extraction methods.');
-  }
-  if (/readonly\s+domains\s*:[^=]*Set\s*</.test(source) || /readonly\s+domains\s*=\s*new\s+Set\b/.test(source)) {
-    errors.push('Adapter domains must be a string array, not a Set.');
-  }
-  if (/readonly\s+parseMode\s*[^=]*=\s*['"](?:metadata|chapterImage|both|create)['"]/.test(source)) {
-    errors.push('parseMode must use ComicCrawler values: "static", "dynamic", or "interactive".');
   }
   return errors;
 }

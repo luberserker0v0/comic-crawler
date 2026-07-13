@@ -24,8 +24,8 @@ describe('selector discovery task Markdown', () => {
     expect(markdown).toContain('chapter-only adapter');
     expect(markdown).toContain('Metadata extraction functions are not required.');
     expect(markdown).toContain('Chapter Image URL Extraction is required.');
-    expect(markdown).toContain('extends AdapterBase');
-    expect(markdown).toContain('outputs/adapter-implementation.ts');
+    expect(markdown).toContain('Do not write an AdapterBase shell');
+    expect(markdown).toContain('Capability Implementation Contract');
     expect(markdown).not.toContain('Choose one representative chapter URL');
   });
 
@@ -59,12 +59,12 @@ describe('selector discovery task Markdown', () => {
 
     expect(phase1).toContain('If the chapter list appears partial');
     expect(phase1).toContain('start reading');
-    expect(phase1).toContain('AdapterBase Implementation Contract');
+    expect(phase1).toContain('Capability Implementation Contract');
     expect(phase2).toContain('reusable chapter-only unit');
     expect(phase2).toContain('not a metadata/catalog page');
     expect(phase2).toContain('Exclude covers, logos, browser/app promotion icons');
-    expect(phase2).toContain('TypeScript AdapterBase implementation draft');
-    expect(phase2).toContain('outputs/adapter-implementation.ts');
+    expect(phase2).toContain('TypeScript capability drafts');
+    expect(phase2).toContain('Do not write an AdapterBase shell');
     expect(chapterOnly).toContain('reusable image extraction unit');
     expect(chapterOnly).toContain('Do not use broad selectors');
     expect(chapterOnly).toContain('comic CDN/lazy-loading attributes');

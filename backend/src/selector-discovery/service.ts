@@ -28,8 +28,6 @@ const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
 const ACTIVE_DYNAMIC_ADAPTERS_KEY = 'selector-discovery-active-adapters';
 const SHADOW_PROMOTION_PREFIX = 'selector-discovery-shadow-promotion-';
-const ADAPTER_IMPLEMENTATION_OUTPUT_PATH = 'outputs/adapter-implementation.ts';
-const REVIEW_NOTES_OUTPUT_PATH = 'outputs/review-notes.md';
 const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>> = [
   { stage: 'common-verification', sourcePath: 'outputs/common-verification.ts', reviewPath: 'outputs/common-verification-review.md' },
   { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
@@ -478,7 +476,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       }
     }
     await this.updateJob(job.id, { phase: 'compose', capabilityDrafts });
-    const composed = await this.runAoComposePhase(client, bundle, model, taskMarkdown, capabilityDrafts, job.target);
+    const composed = composeAdapterShellFromCapabilities(job, capabilityDrafts);
     return {
       ...composed,
       capabilityDrafts,
@@ -509,23 +507,25 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       const templateInstruction = draft.stage === 'common-verification'
         ? `
 
-Common/verification stage has a stricter rule than later stages:
+Common/verification stage has a strict capability-only boundary:
 
 - Use task.md only for site context and evidence.
 - Use contracts/common-verification-template.ts only for TypeScript structure.
 - Do not use contracts/adapter-base-api.md for this stage.
 - Write ${draft.sourcePath} by copying the skeleton below and replacing only
-  narrow site-specific details if needed.
-- The output must keep the same imports, class shape, readonly fields, and
-  method names as this skeleton.
+  URL matching and verification keywords if needed.
+- The output must keep the same imports, class shape, and method names as this
+  skeleton.
 - The source must include this hostname exactly: ${job.hostname}
 - Do not leave example.com, my-site-adapter, Generic Comic Site, or Example Site
   anywhere in the source.
 - Do not declare AdapterBase, CommonCapability, VerificationCapability, DOM,
   Document, enum ParseMode, interfaces, or any framework types.
+- Do not export or implement an AdapterBase shell.
+- Do not declare id, name, domains, parseMode, capabilities, common,
+  verification, metadata, chapterImages, constructor, or super().
 - Do not add verifyDom, extractTitle, extractAuthor, extractChapterList,
   extractChapterImageUrls, placeholder extraction methods, or sample data.
-- Do not write constructor() or super().
 
 \`\`\`ts
 ${concreteCommonVerificationSkeleton}
@@ -586,16 +586,16 @@ Important file-writing rules:
 - For later stages, use the exact signatures documented in
   contracts/adapter-base-api.md.
 
-Do not write ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
-Do not compose the final adapter in this stage.
+Do not write outputs/adapter-implementation.ts.
+Do not compose the final adapter in this stage. ComicCrawler composes the
+AdapterBase shell after capability review.
 Do not output JSON.
 
 Stage rules:
 
-- common-verification: write the AdapterBase shell, one CommonCapability subclass,
-  and one separate VerificationCapability subclass. Do not combine them with
-  implements. Declare identity as readonly fields. Do not write constructor()
-  or call super({ ... }).
+- common-verification: write one CommonCapability subclass and one separate
+  VerificationCapability subclass. Do not write an AdapterBase shell. Do not
+  combine them with implements. Do not write constructor() or call super().
 - metadata: write only one MetadataCapability subclass.
 - chapter-images: write only one ChapterImagesCapability subclass.
 - Every method must use the exact signature documented for this capability
@@ -637,61 +637,6 @@ Chat response rule:
         sourceTs: trimmedSource,
         reviewMarkdown: reviewMarkdown.trim() || response.text?.trim() || '',
         validation,
-      };
-    } finally {
-      await client.deleteConversation(conversationId).catch(() => undefined);
-    }
-  }
-
-  private async runAoComposePhase(
-    client: AoClient,
-    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
-    model: string,
-    taskMarkdown: string,
-    capabilityDrafts: SelectorDiscoveryCapabilityDraft[],
-    target?: 'full' | 'chapter-only'
-  ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string }> {
-    const conversationId = await client.createConversation();
-    try {
-      await this.bundleManager.upload(client, conversationId, bundle);
-      await client.uploadFile(conversationId, 'task.md', taskMarkdown);
-      await client.uploadFile(conversationId, 'outputs/capability-drafts.md', formatCapabilityDraftsForCompose(capabilityDrafts));
-      await client.start(conversationId);
-      const response = await client.message(
-        conversationId,
-        `# Compose Adapter Implementation
-
-Use task.md for page evidence and outputs/capability-drafts.md for reviewed
-capability-stage source. Compose one final AdapterBase implementation.
-
-## Required Output
-
-Write the TypeScript adapter implementation to ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
-Write human review notes to ${REVIEW_NOTES_OUTPUT_PATH}.
-
-Also return the review notes in your chat response. Do not output JSON.
-
-The TypeScript source must export one class that extends AdapterBase and wires
-the capability handlers with fine-grained extraction functions.
-
-Hard rules:
-
-- Every adapter includes separate CommonCapability and VerificationCapability
-  subclasses.
-- Do not combine capability handlers with implements.
-- Do not implement fetchMetadata() or fetchChapterImages().
-- If a capability draft validation section says invalid, correct the issue in
-  the composed final source.`,
-        model,
-        DEFAULT_SELECTOR_DISCOVERY_AGENT
-      );
-      const [adapterImplementationTs, reviewNotesMarkdown] = await Promise.all([
-        client.readFile(conversationId, ADAPTER_IMPLEMENTATION_OUTPUT_PATH).catch(() => ''),
-        client.readFile(conversationId, REVIEW_NOTES_OUTPUT_PATH).catch(() => ''),
-      ]);
-      return {
-        adapterImplementationTs: adapterImplementationTs.trim(),
-        reviewNotesMarkdown: reviewNotesMarkdown.trim() || response.text?.trim() || '',
       };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
@@ -1136,6 +1081,95 @@ function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): bo
   ));
 }
 
+function composeAdapterShellFromCapabilities(
+  job: SelectorDiscoveryJob,
+  drafts: SelectorDiscoveryCapabilityDraft[]
+): { reviewNotesMarkdown: string; adapterImplementationTs: string } {
+  const sources = drafts.map((draft) => draft.sourceTs?.trim() ?? '').filter(Boolean);
+  const commonSource = drafts.find((draft) => draft.stage === 'common-verification')?.sourceTs ?? '';
+  const commonClass = extractCapabilityClassName(commonSource, 'CommonCapability');
+  const verificationClass = extractCapabilityClassName(commonSource, 'VerificationCapability');
+  const metadataClass = extractCapabilityClassName(drafts.find((draft) => draft.stage === 'metadata')?.sourceTs ?? '', 'MetadataCapability');
+  const chapterImagesClass = extractCapabilityClassName(drafts.find((draft) => draft.stage === 'chapter-images')?.sourceTs ?? '', 'ChapterImagesCapability');
+  const classPrefix = toPascalIdentifier(job.hostname.replace(/^m\./i, ''));
+  const adapterId = createAdapterId(job.hostname);
+  const capabilities = {
+    verification: true,
+    metadata: job.target !== 'chapter-only',
+    chapterImages: true,
+  };
+  const shell = `export class ${classPrefix}Adapter extends AdapterBase {
+  readonly id = '${adapterId}';
+  readonly name = '${toDisplayName(job.hostname)}';
+  readonly domains = ['${job.hostname}'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = {
+    verification: ${capabilities.verification},
+    metadata: ${capabilities.metadata},
+    chapterImages: ${capabilities.chapterImages},
+  };
+
+  readonly common = new ${commonClass}(this);
+  readonly verification = new ${verificationClass}(this);
+${capabilities.metadata ? `  readonly metadata = new ${metadataClass}(this);\n` : ''}  readonly chapterImages = new ${chapterImagesClass}(this);
+}`;
+  const body = sources.map(stripTypeScriptImports).join('\n\n');
+  return {
+    adapterImplementationTs: `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import {
+  AdapterBase,
+  CommonCapability,
+  VerificationCapability,
+  MetadataCapability,
+  ChapterImagesCapability,
+} from '../../base';
+
+${shell}
+
+${body}
+`,
+    reviewNotesMarkdown: `# System-Composed Adapter Draft
+
+ComicCrawler assembled the AdapterBase shell from reviewed capability drafts.
+AO/Agent produced only capability subclasses.
+
+## Adapter Identity
+
+- id: ${adapterId}
+- name: ${toDisplayName(job.hostname)}
+- domains: ${job.hostname}
+- parseMode: static
+
+## Capability Classes
+
+- CommonCapability: ${commonClass}
+- VerificationCapability: ${verificationClass}
+- MetadataCapability: ${capabilities.metadata ? metadataClass : 'not implemented for chapter-only target'}
+- ChapterImagesCapability: ${chapterImagesClass}
+`,
+  };
+}
+
+function extractCapabilityClassName(source: string, baseClass: string): string {
+  const match = new RegExp(`\\bclass\\s+(\\w+)\\s+extends\\s+${baseClass}\\b`).exec(source);
+  if (!match?.[1]) {
+    return `Missing${baseClass}`;
+  }
+  return match[1];
+}
+
+function stripTypeScriptImports(source: string): string {
+  return source
+    .replace(/^import\s+type\s+[^;]+;\s*/gm, '')
+    .replace(/^import\s+\{[\s\S]*?\}\s+from\s+['"][^'"]+['"];\s*/gm, '')
+    .replace(/^import\s+[^;]+;\s*/gm, '')
+    .trim();
+}
+
+function createAdapterId(hostname: string): string {
+  return hostname.replace(/^www\./i, '').replace(/^m\./i, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'site';
+}
+
 function validateMetadataSelectorEvidence(source: string, taskMarkdown: string): string[] {
   const errors: string[] = [];
   const selectors = extractCheerioSelectors(source);
@@ -1212,32 +1246,15 @@ function normalizeComparableText(value?: string): string {
 
 function createCommonVerificationSkeleton(sourceUrl: string, hostname: string): string {
   const classPrefix = toPascalIdentifier(hostname.replace(/^m\./i, ''));
-  const adapterId = hostname.replace(/^www\./i, '').replace(/^m\./i, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'site';
   const urlPath = safeUrlPathPrefix(sourceUrl);
   const baseHostname = hostname.replace(/^m\./i, '');
   const pathCheck = urlPath
     ? `parsed.pathname === '${urlPath}' || parsed.pathname.startsWith('${urlPath}/')`
     : `parsed.pathname.startsWith('/')`;
   return `import {
-  AdapterBase,
   CommonCapability,
   VerificationCapability,
 } from '../../base';
-
-export class ${classPrefix}Adapter extends AdapterBase {
-  readonly id = '${adapterId}';
-  readonly name = '${toDisplayName(hostname)}';
-  readonly domains = ['${hostname}'];
-  readonly parseMode = 'static' as const;
-  readonly capabilities = {
-    verification: true,
-    metadata: false,
-    chapterImages: false,
-  };
-
-  readonly common = new ${classPrefix}CommonCapability(this);
-  readonly verification = new ${classPrefix}VerificationCapability(this);
-}
 
 class ${classPrefix}CommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {

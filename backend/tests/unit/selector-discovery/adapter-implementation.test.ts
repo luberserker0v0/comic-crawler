@@ -260,8 +260,8 @@ class DemoVerificationCapability extends VerificationCapability {
     expect(result.errors).toContain('Do not redeclare ComicCrawler framework classes. Import AdapterBase and capability classes from the adapter base.');
     expect(result.errors).toContain('VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().');
     expect(result.errors).toContain('Common/verification draft must not implement metadata or chapter image extraction methods.');
-    expect(result.errors).toContain('Adapter domains must be a string array, not a Set.');
-    expect(result.errors).toContain('parseMode must use ComicCrawler values: "static", "dynamic", or "interactive".');
+    expect(result.errors).toContain('Common/verification draft must not export or implement an AdapterBase shell.');
+    expect(result.errors).toContain('Common/verification draft must not declare adapter identity, constructor, capability flags, or handler fields.');
   });
 
   it('rejects common-verification drafts that keep template placeholders', () => {
@@ -292,17 +292,7 @@ class SiteVerificationCapability extends VerificationCapability {
 
   it('accepts a common and verification capability stage draft', () => {
     const result = validateCapabilityDraft(`
-import { AdapterBase, CommonCapability, VerificationCapability } from '../adapter/base';
-
-export class DemoAdapter extends AdapterBase {
-  readonly id = 'demo';
-  readonly name = 'Demo';
-  readonly domains = ['demo.test'];
-  readonly parseMode = 'interactive' as const;
-  readonly capabilities = { verification: true, metadata: false, chapterImages: false };
-  readonly common = new DemoCommonCapability(this);
-  readonly verification = new DemoVerificationCapability(this);
-}
+import { CommonCapability, VerificationCapability } from '../adapter/base';
 
 class DemoCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
@@ -327,16 +317,7 @@ class DemoVerificationCapability extends VerificationCapability {
 
   it('rejects common and verification drafts without verification capability', () => {
     const result = validateCapabilityDraft(`
-import { AdapterBase, CommonCapability } from '../adapter/base';
-
-export class DemoAdapter extends AdapterBase {
-  readonly id = 'demo';
-  readonly name = 'Demo';
-  readonly domains = ['demo.test'];
-  readonly parseMode = 'static' as const;
-  readonly capabilities = { verification: false, metadata: false, chapterImages: false };
-  readonly common = new DemoCommonCapability(this);
-}
+import { CommonCapability } from '../adapter/base';
 
 class DemoCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean { return url.includes('demo.test'); }
@@ -344,9 +325,7 @@ class DemoCommonCapability extends CommonCapability {
 `, { stage: 'common-verification' });
 
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain('Common/verification draft must declare readonly verification handler.');
     expect(result.errors).toContain('Missing site-specific VerificationCapability subclass.');
-    expect(result.errors).toContain('Every adapter draft must declare verification: true because VerificationCapability gates DOM trust.');
   });
 
   it('keeps metadata and chapter image capability stages mutually scoped', () => {
