@@ -20,22 +20,24 @@ export function createPhase1TaskMarkdown(input: {
 
 ## Goal
 
-Analyze the comic metadata page and discover stable, fine-grained extraction selectors.
+Analyze the comic metadata page and discover the site behavior needed to write a TypeScript AdapterBase implementation.
 
 Important rules:
 
 - Write Markdown only.
 - Do not output JSON.
-- Do not generate adapter code.
+- Do not generate adapter code in Phase 1.
 - Use divide-and-conquer. Do not try to reason over the whole HTML at once.
 - If the chapter list appears partial, look for signals that the UI may collapse
-  older chapters behind "more", "show all", "expand", "全部章节", or similar controls.
+  older chapters behind "more", "show all", "expand", "????", or similar controls.
 - Selectors must describe the real catalog content, not navigation shortcuts such
   as "start reading" or "continue reading".
 
 ## Source URL
 
 ${input.url}
+
+${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
 
 ${formatExistingAdapterCapability(input.existingAdapter)}
 
@@ -72,13 +74,16 @@ export function createPhase2TaskMarkdown(input: {
 
 ## Goal
 
-Use the Phase 1 result and the representative chapter page to produce a final human-reviewable Markdown selector draft with fine-grained extraction sections.
+Use the Phase 1 result and the representative chapter page to produce a human-reviewable TypeScript AdapterBase implementation draft plus Markdown review notes.
 
 Important rules:
 
 - Write Markdown only.
 - Do not output JSON.
-- Do not generate adapter code.
+- Generate TypeScript adapter code only in the requested implementation file.
+- The implementation must export one adapter class that extends AdapterBase.
+- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler composes those internally.
+- Implement fine-grained extraction functions through AdapterBase/capability handlers.
 - Use divide-and-conquer. Analyze image containers and lazy-loading attributes separately.
 - Treat image extraction as the same reusable chapter-only unit used by direct
   chapter crawling.
@@ -94,6 +99,8 @@ Important rules:
 ## Source URL
 
 ${input.url}
+
+${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
 
 ${formatExistingAdapterCapability(input.existingAdapter)}
 
@@ -118,8 +125,9 @@ Analyze in this order:
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
 3. Separate comic page images from cover/logo/icon/UI/ad images.
 4. Choose image item selector and source attribute.
-5. Combine the Phase 1 fine-grained selectors with chapter image URL extraction.
-6. Write the final output using the Markdown outline in contracts/candidate-output.md.
+5. Combine the Phase 1 findings with chapter image URL extraction in a TypeScript adapter implementation.
+6. Write review notes using contracts/adapter-implementation-output.md.
+7. Write TypeScript source to outputs/adapter-implementation.ts.
 `;
 }
 
@@ -151,16 +159,18 @@ export function createChapterOnlyTaskMarkdown(input: {
 
 ## Goal
 
-Analyze a comic reader chapter page and produce a chapter-only Markdown selector draft.
+Analyze a comic reader chapter page and produce a chapter-only TypeScript AdapterBase implementation draft.
 
 This target implements only chapter image URL extraction:
 
-- Metadata selectors are not required.
-- Chapter list selectors are not required.
+- Metadata extraction functions are not required.
+- Chapter list extraction is not required.
 - Chapter Image URL Extraction is required.
 - Write Markdown only.
 - Do not output JSON.
-- Do not generate adapter code.
+- Generate TypeScript adapter code only in the requested implementation file.
+- The implementation must export one adapter class that extends AdapterBase.
+- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler composes those internally.
 - Use divide-and-conquer. Analyze image containers, repeated image nodes, and lazy-loading attributes separately.
 - This is the reusable image extraction unit used by full discovery after
   metadata/chapter-list discovery chooses a representative chapter URL.
@@ -176,6 +186,8 @@ This target implements only chapter image URL extraction:
 ## Source URL
 
 ${input.url}
+
+${adapterImplementationContract('create', 'chapter-only')}
 
 ## Discovery Target
 
@@ -199,8 +211,30 @@ Analyze in this order:
 2. Compare image-bearing nodes: img, source, picture, and lazy-loading data attributes.
 3. Separate comic page images from cover/logo/icon/UI/ad images.
 4. Choose image item selector and source attribute.
-5. Mark metadata and chapter-list extraction sections as not required for chapter-only discovery.
-6. Write the final output using the Markdown outline in contracts/candidate-output.md.
+5. Mark metadata and chapter-list extraction as not required in review notes.
+6. Write review notes using contracts/adapter-implementation-output.md.
+7. Write TypeScript source to outputs/adapter-implementation.ts.
+`;
+}
+
+function adapterImplementationContract(mode: 'create' | 'augment', target: 'full' | 'chapter-only' = 'full'): string {
+  const metadataRequirement = target === 'chapter-only'
+    ? '- Do not declare metadata capability unless metadata functions are actually implemented.'
+    : '- Implement metadata extraction: extractTitle, extractAuthor, extractDescription, extractCoverUrl, extractTags, extractStatus, and extractChapterList.';
+  return `## AdapterBase Implementation Contract
+
+- Output one TypeScript source file at outputs/adapter-implementation.ts.
+- Export exactly one site adapter class that extends AdapterBase.
+- Import AdapterBase and capability classes from ComicCrawler adapter base.
+- Declare id, name, domains, parseMode, and capabilities.
+- Implement CommonCapability.matchUrl for the site URL patterns.
+- If verification is supported, use VerificationCapability to detect blocked/challenge pages and describe the official human handoff. Do not bypass or automate CAPTCHA.
+${metadataRequirement}
+- Implement chapterImages.extractChapterImageUrls for chapter reader pages when chapterImages capability is true.
+- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler runtime composes those from fine-grained functions.
+- Keep all site-specific clicking, expansion, filtering, and extraction strategy visible in the adapter source.
+- Do not use filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
+- Promotion mode: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id and add missing capability code.' : 'Create a new adapter implementation draft.'}
 `;
 }
 

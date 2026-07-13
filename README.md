@@ -155,14 +155,17 @@ not the primary user flow.
 
 ## Documentation
 
-- [User Guide](docs/USER_GUIDE.md) - WebUI task creation, verification handoff,
-  resume, previews, and download folder behavior.
-- [API Reference](docs/API.md) - concise reference for the currently implemented
-  backend routes.
+- [User Guide](docs/USER_GUIDE.md) - WebUI crawl tasks, adapter discovery,
+  adapter version maintenance, Adapter Lab editing/testing, verification
+  handoff, resume, previews, and download folder behavior.
+- [API Reference](docs/API.md) - REST automation contract and Swagger UI,
+  available from a running backend at `GET /api-docs`.
 - [Architecture](docs/ARCHITECTURE.md) - current subsystem overview and data
   flow.
 - [Adapters](docs/ADAPTERS.md) - adapter capabilities, Adapter Lab, drafts, and
   verified DOM policy.
+- [AO Selector Discovery](docs/AO_SELECTOR_DISCOVERY.md) - AO-assisted
+  `AdapterBase` implementation draft flow and API lifecycle.
 - [Contributing](CONTRIBUTING.md) - development workflow and verification rules.
 
 ## Why `npm run dev` builds shared first

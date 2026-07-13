@@ -1,6 +1,6 @@
 ---
 name: selector-extraction
-description: Extract stable Cheerio-compatible CSS selectors for ComicCrawler metadata, chapter list, and image extraction.
+description: Choose stable Cheerio-compatible selectors and extraction logic for ComicCrawler AdapterBase implementations.
 compatibility: opencode
 metadata:
   project: ComicCrawler
@@ -32,11 +32,8 @@ metadata:
 - For chapter lists, reject navigation shortcuts such as "start reading" or
   "continue reading" when they point to one chapter but are not catalog entries.
 
-## Markdown format
+## Implementation guidance
 
-Use labeled Markdown lines such as:
-
-- Title: h1
-- List: .chapter-list
-- Item: a
-- Source Attribute: data-original
+Use selectors inside visible TypeScript adapter functions. If helper functions
+are useful, keep them in the same adapter source file so reviewers can see the
+site-specific strategy.

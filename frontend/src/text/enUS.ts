@@ -39,7 +39,7 @@ export const enUSText = {
     addChapterUrl: 'Add chapter URL',
     removeChapterUrl: 'Remove chapter URL',
     chaptersLabel: 'Chapter filter (optional, comma-separated)',
-    chaptersPlaceholder: 'Example: chapter-1, Chapter 0, preview, #3',
+    chaptersPlaceholder: 'Example: Chapter 0, preview, #3, 51.2',
     chaptersHelp: 'Leave empty to download every extracted chapter. You can enter chapter IDs, title keywords, URL fragments, or #3 for the third extracted item.',
     priorityLabel: 'Priority',
     priorityHelp: 'Only affects queue order. Higher numbers run earlier; it does not change what gets downloaded.',

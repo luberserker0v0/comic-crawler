@@ -8,10 +8,13 @@ This directory contains user- and contributor-facing documentation for the
 - `USER_GUIDE.md` - WebUI flow for all-chapter tasks, chapter-only tasks,
   waiting verification, resume, previews, and download folder operations.
 - `API.md` - concise reference for the currently implemented backend routes.
-- `openapi.yaml` - machine-readable contract for the public REST crawl flow.
+- `openapi.yaml` - machine-readable contract for the public REST crawl flow;
+  the running backend serves Swagger UI at `GET /api-docs`.
 - `ARCHITECTURE.md` - current subsystem overview and runtime data flow.
 - `ADAPTERS.md` - adapter contract, capabilities, Adapter Lab, drafts, and
   verified fixture policy.
+- `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
+  `AdapterBase` output contract, and AO API lifecycle.
 
 ## Documentation boundary
 
@@ -22,7 +25,5 @@ This directory contains user- and contributor-facing documentation for the
 
 ## Missing docs to add
 
-- `AO_SELECTOR_DISCOVERY.md` - AO URL, provider JSON, model selection, bundle
-  eval, and Markdown draft review workflow.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
   and forced task order.

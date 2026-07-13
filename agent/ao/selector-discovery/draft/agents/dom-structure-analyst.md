@@ -1,5 +1,5 @@
 ---
-description: Subagent that inspects HTML structure and proposes stable ComicCrawler selectors.
+description: Subagent that inspects HTML structure and proposes stable extraction strategy for ComicCrawler adapters.
 mode: subagent
 hidden: true
 model: "{{MODEL}}"
@@ -14,7 +14,7 @@ tools:
 
 # Role
 
-Inspect provided HTML and explain the DOM structure that matters for ComicCrawler extraction.
+Inspect provided HTML and explain the DOM structure that matters for a TypeScript `AdapterBase` implementation.
 
 # Rules
 
@@ -22,4 +22,4 @@ Inspect provided HTML and explain the DOM structure that matters for ComicCrawle
 - Do not produce JSON.
 - Do not invent unavailable HTML.
 - Prefer selectors that are stable across pages over deeply positional selectors.
-
+- Keep site-specific expansion/filtering requirements visible so the adapter implementation can own that strategy.

@@ -7,8 +7,8 @@ import { useI18n } from '../text/i18n';
 
 type TaskMode = 'all' | 'chapters';
 
-const MANGA_URL_PLACEHOLDER = 'https://example.com/manga/title/';
-const CHAPTER_URL_PLACEHOLDER = 'https://example.com/manga/title/chapter-1';
+const MANGA_URL_PLACEHOLDER = 'https://example.com/manga/{manga_name}/';
+const CHAPTER_URL_PLACEHOLDER = 'https://example.com/manga/{manga_name}/{manga_chapter}';
 
 interface AdapterBuildTaskResult {
   discoveryId: string;

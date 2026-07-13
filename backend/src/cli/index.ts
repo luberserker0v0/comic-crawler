@@ -702,13 +702,24 @@ export class ComicCrawlerCli {
     }
     if (evalCase?.type === 'negative') {
       if (job.status === 'awaiting_review') {
-        return { passed: false, job, reasons: ['Negative eval case unexpectedly produced a reviewable candidate.'] };
+        return { passed: false, job, reasons: ['Negative eval case unexpectedly produced a reviewable implementation draft.'] };
       }
       return { passed: true, job, reasons: [] };
     }
 
     if (job.status !== 'awaiting_review') {
       return { passed: false, job, reasons: [`Discovery job ended with status "${job.status}".`] };
+    }
+
+    if (job.adapterImplementationTs) {
+      const reasons: string[] = [];
+      if (!job.implementationValidation?.valid) {
+        reasons.push(`Adapter implementation validation failed: ${(job.implementationValidation?.errors ?? []).join('; ') || 'unknown error'}`);
+      }
+      if (!job.reviewNotesMarkdown?.trim()) {
+        reasons.push('Adapter implementation review notes are missing.');
+      }
+      return { passed: reasons.length === 0, job, reasons };
     }
 
     job = await this.options.selectorDiscoveryService.validateCandidate(id);
@@ -945,15 +956,21 @@ export class ComicCrawlerCli {
       await fs.mkdir(runDir, { recursive: true });
       await fs.writeFile(join(runDir, 'summary.json'), `${JSON.stringify(this.createEvalCaseSummary(result), null, 2)}\n`, 'utf-8');
       await fs.writeFile(join(runDir, 'phase1-output.md'), result.job?.phase1Markdown ?? '', 'utf-8');
-      await fs.writeFile(join(runDir, 'candidate-output.md'), result.job?.candidateMarkdown ?? '', 'utf-8');
+      await fs.writeFile(join(runDir, 'adapter-implementation.ts'), result.job?.adapterImplementationTs ?? '', 'utf-8');
+      await fs.writeFile(join(runDir, 'review-notes.md'), result.job?.reviewNotesMarkdown ?? '', 'utf-8');
+      await fs.writeFile(join(runDir, 'legacy-candidate-output.md'), result.job?.candidateMarkdown ?? '', 'utf-8');
       await fs.writeFile(join(runDir, 'parsed-candidate.json'), `${JSON.stringify(result.job?.parsedCandidate ?? null, null, 2)}\n`, 'utf-8');
+      await fs.writeFile(join(runDir, 'implementation-validation.json'), `${JSON.stringify(result.job?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
       await fs.writeFile(join(runDir, 'oracle-comparison.json'), `${JSON.stringify(result.job?.oracleComparison ?? null, null, 2)}\n`, 'utf-8');
     }
 
     const last = findLastJob(results);
     await fs.writeFile(join(artifactDir, 'phase1-output.md'), last?.phase1Markdown ?? '', 'utf-8');
-    await fs.writeFile(join(artifactDir, 'candidate-output.md'), last?.candidateMarkdown ?? '', 'utf-8');
+    await fs.writeFile(join(artifactDir, 'adapter-implementation.ts'), last?.adapterImplementationTs ?? '', 'utf-8');
+    await fs.writeFile(join(artifactDir, 'review-notes.md'), last?.reviewNotesMarkdown ?? '', 'utf-8');
+    await fs.writeFile(join(artifactDir, 'legacy-candidate-output.md'), last?.candidateMarkdown ?? '', 'utf-8');
     await fs.writeFile(join(artifactDir, 'parsed-candidate.json'), `${JSON.stringify(last?.parsedCandidate ?? null, null, 2)}\n`, 'utf-8');
+    await fs.writeFile(join(artifactDir, 'implementation-validation.json'), `${JSON.stringify(last?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
     await fs.writeFile(join(artifactDir, 'oracle-comparison.json'), `${JSON.stringify(last?.oracleComparison ?? null, null, 2)}\n`, 'utf-8');
 
     return artifactDir;
@@ -989,6 +1006,7 @@ export class ComicCrawlerCli {
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       validation: job.validation,
+      implementationValidation: job.implementationValidation,
       extractionValidation: job.extractionValidation,
       shadowPromotion: job.shadowPromotion,
       oracleComparison: job.oracleComparison,

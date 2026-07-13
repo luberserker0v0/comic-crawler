@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
@@ -50,6 +52,7 @@ export class ComicCrawlerServer {
     this.options = options;
     this.app = this.createApp();
     this.setupRoutes();
+    this.setupApiDocs();
     this.setupHealthCheck();
   }
 
@@ -151,6 +154,43 @@ export class ComicCrawlerServer {
       }
       return (reply as FastifyReply & { sendFile: (path: string) => unknown }).sendFile('index.html');
     });
+  }
+
+  private setupApiDocs(): void {
+    const openApiPath = this.resolveOpenApiPath();
+    if (!openApiPath) {
+      this.app.get('/api-docs', async (_request: FastifyRequest, reply: FastifyReply) => {
+        reply.code(500).send({ error: 'OpenAPI document not found' });
+      });
+      return;
+    }
+
+    this.app.register(require('@fastify/swagger'), {
+      mode: 'static',
+      specification: {
+        path: openApiPath,
+      },
+    });
+    this.app.register(require('@fastify/swagger-ui'), {
+      routePrefix: '/api-docs',
+      uiConfig: {
+        docExpansion: 'list',
+        deepLinking: true,
+      },
+      staticCSP: true,
+      transformStaticCSP: (header: string) => header,
+    });
+  }
+
+  private resolveOpenApiPath(): string | undefined {
+    const candidates = [
+      resolve(process.cwd(), 'docs/openapi.yaml'),
+      resolve(process.cwd(), '../docs/openapi.yaml'),
+      resolve(__dirname, '../../../docs/openapi.yaml'),
+      resolve(__dirname, '../../../../docs/openapi.yaml'),
+    ];
+
+    return candidates.find((candidate) => existsSync(candidate));
   }
 
   private setupHealthCheck(): void {

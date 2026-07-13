@@ -12,6 +12,7 @@ import { validateChapterImageSelectorExtraction, validateSelectorExtraction } fr
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
+import { validateAdapterImplementationDraft } from './adapter-implementation';
 import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl } from './task-markdown';
 import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
@@ -26,6 +27,8 @@ const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
 const ACTIVE_DYNAMIC_ADAPTERS_KEY = 'selector-discovery-active-adapters';
 const SHADOW_PROMOTION_PREFIX = 'selector-discovery-shadow-promotion-';
+const ADAPTER_IMPLEMENTATION_OUTPUT_PATH = 'outputs/adapter-implementation.ts';
+const REVIEW_NOTES_OUTPUT_PATH = 'outputs/review-notes.md';
 
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
@@ -352,14 +355,14 @@ export class SelectorDiscoveryService {
         throw new Error('Phase 1 output did not include a Representative Chapter URL and no fallback chapter link was found.');
       }
       const chapterFetch = await fetchSafeHtml(chapterUrl, safeFetchOptions);
-      const candidateMarkdown = await this.runAoPhase(client, bundle, model, createPhase2TaskMarkdown({
+      const implementation = await this.runAoImplementationPhase(client, bundle, model, createPhase2TaskMarkdown({
         url: job.normalizedUrl,
         phase1Markdown: phase1,
         chapterFetch,
         existingAdapter: existingAdapterContext,
-      }), 'outputs/candidate-output.md');
+      }));
 
-      await this.finalizeCandidate(job, candidateMarkdown);
+      await this.finalizeImplementationDraft(job, implementation);
     } finally {
       this.inFlightHosts.delete(job.hostname);
     }
@@ -393,6 +396,45 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       );
       const output = await client.readFile(conversationId, outputPath).catch(() => '');
       return output.trim() || response.text?.trim() || '';
+    } finally {
+      await client.deleteConversation(conversationId).catch(() => undefined);
+    }
+  }
+
+  private async runAoImplementationPhase(
+    client: AoClient,
+    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
+    model: string,
+    taskMarkdown: string
+  ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string }> {
+    const conversationId = await client.createConversation();
+    try {
+      await this.bundleManager.upload(client, conversationId, bundle);
+      await client.uploadFile(conversationId, 'task.md', taskMarkdown);
+      await client.start(conversationId);
+      const response = await client.message(
+        conversationId,
+        `${taskMarkdown}
+
+## Required AO Output
+
+Write the TypeScript adapter implementation to ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
+Write human review notes to ${REVIEW_NOTES_OUTPUT_PATH}.
+
+Also return the review notes in your chat response. Do not output JSON.
+
+The TypeScript source must export one class that extends AdapterBase and implements the declared capabilities with fine-grained extraction functions. Do not implement fetchMetadata() or fetchChapterImages().`,
+        model,
+        DEFAULT_SELECTOR_DISCOVERY_AGENT
+      );
+      const [adapterImplementationTs, reviewNotesMarkdown] = await Promise.all([
+        client.readFile(conversationId, ADAPTER_IMPLEMENTATION_OUTPUT_PATH).catch(() => ''),
+        client.readFile(conversationId, REVIEW_NOTES_OUTPUT_PATH).catch(() => ''),
+      ]);
+      return {
+        adapterImplementationTs: adapterImplementationTs.trim(),
+        reviewNotesMarkdown: reviewNotesMarkdown.trim() || response.text?.trim() || '',
+      };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
     }
@@ -486,17 +528,38 @@ ${finalUrl}
       model: input.model,
       aoBaseUrl: input.aoBaseUrl,
     });
-    const candidateMarkdown = await this.runAoPhase(
+    const implementation = await this.runAoImplementationPhase(
       input.client,
       input.bundle,
       input.model,
       createChapterOnlyTaskMarkdown({
         url: job.normalizedUrl,
         chapterFetch: input.chapterFetch,
-      }),
-      'outputs/candidate-output.md'
+      })
     );
-    await this.finalizeCandidate(job, candidateMarkdown);
+    await this.finalizeImplementationDraft(job, implementation);
+  }
+
+  private async finalizeImplementationDraft(
+    job: SelectorDiscoveryJob,
+    output: { reviewNotesMarkdown: string; adapterImplementationTs: string }
+  ): Promise<void> {
+    const implementationValidation = validateAdapterImplementationDraft(output.adapterImplementationTs, {
+      target: job.target,
+    });
+    await this.updateJob(job.id, {
+      status: implementationValidation.valid ? 'awaiting_review' : 'invalid',
+      phase: 'complete',
+      reviewNotesMarkdown: output.reviewNotesMarkdown,
+      adapterImplementationTs: output.adapterImplementationTs,
+      implementationValidation,
+      error: implementationValidation.valid ? undefined : implementationValidation.errors.join('; '),
+    });
+    await this.storage.write(`selector-discovery-implementation-${job.id}`, {
+      reviewNotesMarkdown: output.reviewNotesMarkdown,
+      adapterImplementationTs: output.adapterImplementationTs,
+      implementationValidation,
+    });
   }
 
   private async finalizeCandidate(job: SelectorDiscoveryJob, candidateMarkdown: string): Promise<void> {

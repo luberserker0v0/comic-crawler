@@ -1,21 +1,34 @@
 # Phase 2 Input Contract
 
-## 任務目標
+ComicCrawler provides this task as Markdown. Do not expect JSON.
 
-Use Phase 1 results and representative chapter HTML to produce a final Markdown draft.
+## Goal
 
-## 來源 URL
+Use Phase 1 results and representative chapter DOM evidence to write a
+TypeScript `AdapterBase` implementation draft plus Markdown review notes.
 
-Original metadata URL.
+## Source URL
 
-## Phase 1 結果
+Original metadata/catalog URL or chapter URL.
 
-Prior Markdown output.
+## AdapterBase Implementation Contract
 
-## Representative Chapter HTML 摘要
+The task includes the required `AdapterBase` contract summary. Follow it exactly.
 
-Sanitized chapter HTML excerpt.
+## Phase 1 Result
 
-## 要求輸出章節
+Prior Markdown analysis from Phase 1.
 
-Write Markdown matching `candidate-output.md`.
+## Representative Chapter DOM Summary
+
+Sanitized, reduced chapter-page DOM evidence. It must represent the reader page,
+not a metadata page, challenge page, recommendation card, or unrelated page.
+
+## Required Output
+
+Write:
+
+- `outputs/adapter-implementation.ts`
+- `outputs/review-notes.md`
+
+Use `adapter-implementation-output.md` for review-note structure.

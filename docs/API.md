@@ -11,7 +11,31 @@ JSON success responses use `{ "data": ... }`. Error responses use
 `{ "error": "message" }`. WebSocket events are useful for live updates, but the
 flows below must also work by polling REST endpoints.
 
-The machine-readable contract is tracked in `docs/openapi.yaml`.
+The machine-readable contract is tracked in `docs/openapi.yaml`. The running
+backend serves Swagger UI at:
+
+```http
+GET /api-docs
+```
+
+Swagger UI loads the same OpenAPI contract internally from its generated spec
+routes.
+
+## Interface strategy
+
+ComicCrawler has three user-facing entry points:
+
+- **WebUI** - the complete human workspace for crawl tasks, adapter discovery,
+  adapter version review, and Adapter Lab editing/testing.
+- **REST API** - the automation contract. API-only clients must be able to drive
+  the complete crawl flow without a browser frontend by polling REST endpoints.
+- **CLI** - a small local operator surface for simple task/config/development
+  commands. Review-heavy adapter work should remain in the WebUI.
+
+The REST API is intentionally broader than the CLI. If a workflow requires
+reviewing source code, comparing drafts, inspecting verified DOM, or performing
+human verification, prefer the WebUI unless you are building a dedicated API
+client.
 
 ## Public crawl flow
 
@@ -25,10 +49,13 @@ Request:
 
 ```json
 {
-  "url": "https://example.test/manga/demo/chapter-1",
+  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
   "mode": "chapters"
 }
 ```
+
+Replace `{comic_site}`, `{manga_name}`, and `{manga_chapter}` with the real
+comic site domain, manga slug/name, and chapter slug/name used by that site.
 
 `mode: "all"` requires both `metadata` and `chapterImages`. `mode: "chapters"`
 requires only `chapterImages`.
@@ -50,7 +77,7 @@ All-chapter task:
 
 ```json
 {
-  "url": "https://example.test/manga/demo",
+  "url": "https://{comic_site}/manga/{manga_name}",
   "mode": "all"
 }
 ```
@@ -59,9 +86,9 @@ Specific-chapter task:
 
 ```json
 {
-  "url": "https://example.test/manga/demo/chapter-1",
+  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
   "mode": "chapters",
-  "chapterUrls": ["https://example.test/manga/demo/chapter-1"]
+  "chapterUrls": ["https://{comic_site}/manga/{manga_name}/{manga_chapter}"]
 }
 ```
 
@@ -138,7 +165,7 @@ If the handoff is not ready, resume returns `409` with the current handoff job.
 If the handoff expired or was removed, resume recreates a handoff job and
 returns `409` with the new job so the caller can open the browser again.
 
-### 5. Selector discovery and adapter promotion
+### 5. AO adapter discovery and review
 
 When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
 
@@ -153,13 +180,19 @@ POST /api/selector-discovery/:id/validate
 POST /api/selector-discovery/:id/revalidate
 ```
 
-After human review, approve the draft:
+Stage 1 AO discovery produces a TypeScript `AdapterBase` implementation draft
+and Markdown review notes. Review those artifacts before any runtime promotion.
+Legacy selector-manifest promotion endpoints may still exist, but AO
+TypeScript promotion is intentionally not automatic in Stage 1.
+
+After human review of a legacy selector draft, approve the draft:
 
 ```http
 POST /api/selector-discovery/:id/promote
 ```
 
-Then create the crawl task again.
+Then create the crawl task again. For AO TypeScript implementation drafts, use
+the WebUI review flow until the Stage 2 promotion policy is finalized.
 
 ### 6. Result and previews
 
@@ -239,3 +272,16 @@ but they are intentionally excluded from the public crawl flow above.
 
 `/ws` emits task and image events for live UI updates. REST polling remains the
 contractual fallback for API-only clients.
+
+## CLI boundary
+
+The CLI should stay focused on simple, scriptable operations:
+
+- inspect task status;
+- run a direct download through an already registered adapter;
+- read or update local config;
+- run selector-discovery bundle evaluation and development commands.
+
+The CLI should not try to duplicate Adapter Lab or adapter review UX. In
+particular, source editing, draft diff/review, promotion, rollback, and
+interactive human verification remain WebUI-first workflows.

@@ -1,22 +1,30 @@
 # Phase 1 Input Contract
 
-## 任務目標
+ComicCrawler provides this task as Markdown. Do not expect JSON.
 
-Analyze a metadata page and identify selectors for metadata and chapter list discovery.
+## Goal
 
-## 來源 URL
+Analyze a manga metadata/catalog page and produce a Markdown Phase 1 result that
+is useful for writing a TypeScript `AdapterBase` implementation.
 
-The original comic metadata URL.
+## Source URL
 
-## 安全抓取摘要
+The original manga metadata/catalog URL.
 
-ComicCrawler-provided fetch summary.
+## Existing Adapter Capability
 
-## Metadata Page HTML 摘要
+Optional. Present only when this run augments an existing same-domain adapter.
+If present, keep the same adapter identity.
 
-Sanitized HTML excerpt.
+## Safe Fetch Summary
 
-## 要求輸出章節
+ComicCrawler-provided fetch summary, redirects, content type, and final URL.
+
+## DOM Summary
+
+Sanitized, reduced metadata-page DOM evidence. Treat it as the only trusted page
+evidence for Phase 1.
+
+## Required Output
 
 Write Markdown matching `phase1-output.md`.
-

@@ -3,7 +3,7 @@
 ComicCrawler is a local-first monorepo application for adapter-based comic
 crawling. The current runtime is built around a React WebUI, a Fastify backend,
 shared TypeScript types/constants, Playwright-assisted rendering, and AO-assisted
-selector discovery.
+adapter implementation discovery.
 
 ## Runtime layout
 
@@ -40,7 +40,7 @@ Legacy flat files directly under `data/` remain supported during migration.
 flowchart TD
   UI["WebUI create task"] --> Resolve["Resolve URL against adapters"]
   Resolve -->|adapter covers requested mode| Queue["Create crawl task"]
-  Resolve -->|missing or capability mismatch| Discovery["Queue selector discovery"]
+  Resolve -->|missing or capability mismatch| Discovery["Queue adapter implementation discovery"]
   Queue --> Crawl["Crawler engine"]
   Crawl -->|static parse succeeds| Download["Download images"]
   Crawl -->|parse needs rendering| Headless["Playwright render HTML"]
@@ -80,26 +80,28 @@ not perform hidden generic site operations such as scanning and clicking
 
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. Built-in adapters have priority over
-dynamic adapters. Dynamic adapters are promoted from reviewed selector discovery
-drafts.
+dynamic adapters. AO discovery now produces TypeScript `AdapterBase`
+implementation drafts for review. Dynamic selector manifests remain legacy
+runtime support and are not the primary AO output.
 
 Adapter Lab is the human review workbench for this boundary. It displays the
 full adapter source or dynamic manifest, supports user-owned drafts, locks
 metadata tests to manga URLs and image tests to chapter URLs, and returns full
 `imageUrls` for image extraction tests.
 
-Selector discovery is intentionally modular:
+Adapter discovery is intentionally modular:
 
 - Chapter-only discovery is the base unit. It analyzes a chapter reader page and
-  produces selectors for the `chapterImages.extractChapterImageUrls` capability.
+  produces an adapter implementation for the `chapterImages.extractChapterImageUrls`
+  capability.
 - Full discovery adds metadata/catalog analysis before the same chapter image
-  selector step. In other words, a full adapter is metadata/chapter-list
-  discovery plus one or more chapter-only image extraction checks.
+  implementation step. In other words, a full adapter is metadata/chapter-list
+  implementation plus one or more chapter-only image extraction checks.
 
 HappyMH is a representative full-adapter case that requires human verification
 handoff before the crawler can see real manga DOM. Static probes of its catalog
 pages can return a Chinese human-verification page; that HTML must be classified
-as anti-bot content and must not be sent into selector discovery or promoted as
+as anti-bot content and must not be sent into adapter discovery or promoted as
 an adapter draft.
 
 ## Crawler rendering
@@ -146,20 +148,21 @@ If the challenge handoff expires or is removed, the task detail page prompts the
 user to click **Continue** to recreate the handoff before opening the browser
 again.
 
-## Selector discovery and verification handoff
+## AO adapter discovery and verification handoff
 
 AO bundle sources live under `agent/ao/`.
 
-- `selector-discovery` produces Markdown selector drafts for unknown or
-  capability-missing sites.
+- `selector-discovery` produces TypeScript `AdapterBase` implementation drafts
+  and Markdown review notes for unknown or capability-missing sites.
 - Human verification is handled in the current public flow through handoff jobs
   exposed under the historical `/api/challenge-discovery/*` namespace.
 - Restricted challenge strategy drafts are experimental/internal work and
   are not the normal crawl path.
 
-Agent-facing task and draft artifacts use Markdown section contracts rather
-than JSON contracts. JSON remains limited to system settings such as
-`opencode.json`, provider documents, API payloads, and internal manifests.
+Agent-facing task and review artifacts use Markdown section contracts rather
+than JSON contracts. Final adapter implementation output is TypeScript. JSON
+remains limited to system settings such as `opencode.json`, provider documents,
+API payloads, and internal manifests.
 
 ComicCrawler treats its own workspace and `data/agent-workspaces` as the source
 of truth. AO workspaces are short-lived execution surfaces, not persistent

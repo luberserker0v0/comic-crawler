@@ -243,12 +243,12 @@ paths:
           $ref: "#/components/responses/Error"
   /api/selector-discovery/{id}/promote:
     post:
-      summary: Promote a reviewed selector draft
+      summary: Promote a reviewed legacy selector draft
       parameters:
         - $ref: "#/components/parameters/DiscoveryId"
       responses:
         "200":
-          description: Promoted selector discovery job
+          description: Promoted legacy selector discovery job
           content:
             application/json:
               schema:
@@ -647,6 +647,33 @@ components:
           type: string
         target:
           enum: [full, chapter-only]
+        promotionMode:
+          enum: [create, augment]
+        baseAdapterId:
+          type: string
+        adapterId:
+          type: string
+        adapterName:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        adapterImplementationTs:
+          type: string
+          description: Stage 1 AO TypeScript AdapterBase implementation draft.
+        reviewNotesMarkdown:
+          type: string
+          description: Human review notes generated with the implementation draft.
+        implementationValidation:
+          type: object
+          description: Static validation result for the TypeScript implementation draft.
+        candidateMarkdown:
+          type: string
+          description: Legacy selector-manifest candidate output, retained for old jobs only.
+        validation:
+          type: object
+          description: Legacy Markdown selector candidate validation result.
         error:
           type: string
     HandoffJob:

@@ -386,6 +386,9 @@ export interface SelectorDiscoveryJobSummary {
   createdAt: string;
   updatedAt: string;
   candidateMarkdown?: string;
+  adapterImplementationTs?: string;
+  reviewNotesMarkdown?: string;
+  implementationValidation?: unknown;
   validation?: unknown;
   error?: string;
   adapterId?: string;

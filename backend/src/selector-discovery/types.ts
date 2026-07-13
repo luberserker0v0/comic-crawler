@@ -54,6 +54,9 @@ export interface SelectorDiscoveryJob {
   phase1Markdown?: string;
   inputSource?: 'live-fetch' | 'html-snapshot';
   candidateMarkdown?: string;
+  adapterImplementationTs?: string;
+  reviewNotesMarkdown?: string;
+  implementationValidation?: AdapterImplementationValidation;
   parsedCandidate?: ParsedMarkdownCandidate;
   validation?: MarkdownCandidateValidation;
   extractionValidation?: SelectorExtractionValidation;
@@ -116,6 +119,13 @@ export interface MarkdownCandidateValidation {
   valid: boolean;
   missingHeadings: string[];
   warnings: string[];
+}
+
+export interface AdapterImplementationValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  syntaxValid: boolean;
 }
 
 export interface ParsedMarkdownCandidate {

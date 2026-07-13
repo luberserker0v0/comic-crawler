@@ -1,6 +1,18 @@
-# Selector Discovery AO Bundle
+# Adapter Implementation Discovery AO Bundle
 
-This bundle is owned by ComicCrawler and uploaded to AgentOrchestrator before each selector-discovery run.
+This bundle is owned by ComicCrawler and uploaded to AgentOrchestrator before each adapter implementation discovery run.
+
+AO receives Markdown task files and sanitized DOM summaries. Final output is a
+TypeScript adapter implementation draft plus Markdown review notes:
+
+```text
+outputs/adapter-implementation.ts
+outputs/review-notes.md
+```
+
+The implementation must export one class that extends ComicCrawler
+`AdapterBase`. AO must not output JSON contracts and must not implement
+`fetchMetadata()` or `fetchChapterImages()`.
 
 ## Provider JSON
 
@@ -25,7 +37,10 @@ Recommended Docker-style token reference:
 
 ## Eval and release flow
 
-Run bundle evaluation from the CLI. This creates a discovery job, validates extraction, performs a shadow promote, compares the result against the built-in Kuronavi oracle, and writes an artifact under `data/agent-workspaces/bundle-evaluations/<bundleHash>/`.
+Run bundle evaluation from the CLI. During the Stage 1 calibration period this
+creates a discovery job, saves AO TypeScript/review artifacts, and validates the
+implementation draft statically. Runtime promotion of AO TypeScript adapters is
+handled in a later stage after sandboxing and review policy are finalized.
 
 List eval case inventory without AO/provider/model configuration:
 
@@ -90,7 +105,7 @@ comiccrawler agent bundle-eval \
   --live-negative
 ```
 
-Each eval case is described by `eval/cases/<caseId>/case.json`. This JSON is system configuration for ComicCrawler; it is not provided to AO agents. Agent-facing input/output remains Markdown-only.
+Each eval case is described by `eval/cases/<caseId>/case.json`. This JSON is system configuration for ComicCrawler; it is not provided to AO agents. Agent-facing task/review artifacts remain Markdown, while implementation output is TypeScript.
 
 After a passing eval, freeze the draft bundle into `releases/vN` and update `active.json`:
 

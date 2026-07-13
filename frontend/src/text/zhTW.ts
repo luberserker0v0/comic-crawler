@@ -37,7 +37,7 @@ export const uiText = {
     addChapterUrl: '新增章節 URL',
     removeChapterUrl: '移除章節 URL',
     chaptersLabel: '章節篩選（選填，以逗號分隔）',
-    chaptersPlaceholder: '例：chapter-1, 第0章, 預告, #3',
+    chaptersPlaceholder: '例：第0章, 預告, #3, 51.2',
     chaptersHelp: '留空會下載全部章節。可填章節 ID、標題關鍵字、URL 片段；#3 代表抽出清單中的第 3 個項目。',
     priorityLabel: '優先權',
     priorityHelp: '只影響等待佇列排序，數字越大越早執行；不影響下載內容。',
