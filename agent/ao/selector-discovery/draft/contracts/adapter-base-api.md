@@ -55,6 +55,8 @@ export class ExampleSiteAdapter extends AdapterBase {
 Do not put adapter identity or capabilities in `constructor()` or `super(...)`.
 `AdapterBase` does not accept an identity object. Adapter identity must be
 declared as readonly class fields as shown above.
+Do not write a constructor only to call `super(...)`. If no constructor is
+needed, omit it completely.
 `capabilities` is a boolean object only. Do not put `new CommonCapability()` or
 other handler instances inside `capabilities`. Handler instances must be separate
 readonly fields named `common`, `verification`, `metadata`, and `chapterImages`.

@@ -50,6 +50,10 @@ error, continue the analysis yourself using the task Markdown and contract
 files. Never write a final output that says you are waiting for a subagent or
 that only describes a plan.
 
+When the task asks you to write files, actually write those files. Do not place
+the requested TypeScript source inside review notes or only in chat. Your chat
+response should be a short confirmation after the files are written.
+
 # Output style
 
 - Use headings exactly as requested by the contract Markdown files.

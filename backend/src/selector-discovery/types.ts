@@ -47,6 +47,7 @@ export interface SelectorDiscoveryJob {
   adapterName?: string;
   model?: string;
   aoBaseUrl?: string;
+  stopAfterStage?: SelectorDiscoveryCapabilityStage;
   phase?: 'known_adapter' | 'phase1' | 'phase2' | SelectorDiscoveryCapabilityStage | 'complete';
   createdAt: string;
   updatedAt: string;
@@ -161,6 +162,7 @@ export interface DiscoveryInput {
   providerDocument?: ProviderDocument;
   model?: string;
   forceDiscovery?: boolean;
+  stopAfterStage?: SelectorDiscoveryCapabilityStage;
   htmlSnapshot?: {
     html: string;
     finalUrl?: string;

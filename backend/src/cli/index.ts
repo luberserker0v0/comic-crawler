@@ -272,6 +272,7 @@ export class ComicCrawlerCli {
       .option('--html-snapshot <path>', 'Rendered chapter HTML snapshot file for chapter-only discovery')
       .option('--cdp-url <url>', 'Local user browser CDP endpoint, for example http://127.0.0.1:9222')
       .option('--force-discovery', 'Run AO discovery even when a registered adapter already matches the URL')
+      .option('--stop-after-stage <stage>', 'Internal smoke test: stop after capability stage common-verification, metadata, or chapter-images')
       .action(async (url: string, options: {
         aoUrl: string;
         providerJson: string;
@@ -281,6 +282,7 @@ export class ComicCrawlerCli {
         htmlSnapshot?: string;
         cdpUrl?: string;
         forceDiscovery?: boolean;
+        stopAfterStage?: string;
       }) => {
         try {
           if (!this.options.selectorDiscoveryService) {
@@ -292,6 +294,9 @@ export class ComicCrawlerCli {
           }
           if (options.handoff && !['snapshot', 'cdp', 'managed'].includes(options.handoff)) {
             throw new Error('Handoff mode must be "snapshot", "cdp", or "managed".');
+          }
+          if (options.stopAfterStage && !['common-verification', 'metadata', 'chapter-images'].includes(options.stopAfterStage)) {
+            throw new Error('--stop-after-stage must be common-verification, metadata, or chapter-images.');
           }
           const providerDocument = validateProviderDocument(JSON.parse(await fs.readFile(options.providerJson, 'utf-8')));
           assertModelExists(providerDocument, options.model);
@@ -315,6 +320,7 @@ export class ComicCrawlerCli {
             providerDocument,
             model: options.model,
             forceDiscovery: options.forceDiscovery,
+            stopAfterStage: options.stopAfterStage as any,
             htmlSnapshot,
           });
           this.ui.renderSuccess(`Discovery job ${job.id} created with status ${job.status}`);

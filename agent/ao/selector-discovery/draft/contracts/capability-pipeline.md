@@ -10,6 +10,8 @@ at a time, then ask for a composed adapter after review.
 
 1. `common-verification`
    - Implement the adapter shell identity.
+   - Declare identity and capability handlers as readonly class fields.
+   - Do not write a constructor or call `super(...)` with an identity object.
    - Implement `CommonCapability.matchUrl`.
    - Implement `VerificationCapability.detectVerificationRequired`.
    - Implement `VerificationCapability.describeVerificationHandoff`.
@@ -63,3 +65,16 @@ When asked for staged output, use these paths:
 - `outputs/review-notes.md`
 
 If the task message names a narrower set of output files, write only those files.
+
+## File Write Protocol
+
+When ComicCrawler asks you to write a source file and a review file:
+
+- Write the TypeScript source only to the named `.ts` output file.
+- Write Markdown review notes only to the named `.md` output file.
+- Do not put the full TypeScript source inside review notes.
+- Do not put the full TypeScript source in the chat response.
+- The chat response should be short, for example:
+  `Wrote outputs/common-verification.ts and outputs/common-verification-review.md.`
+- If you cannot write a file, say which file failed and why. Do not substitute by
+  embedding the source in another file.

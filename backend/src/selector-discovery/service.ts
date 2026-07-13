@@ -134,6 +134,7 @@ export class SelectorDiscoveryService {
       baseAdapterId: canAugmentMatchedAdapter ? domainMatchedAdapter?.id : undefined,
       model: input.model,
       aoBaseUrl: input.aoBaseUrl,
+      stopAfterStage: input.stopAfterStage,
       inputSource: input.htmlSnapshot ? 'html-snapshot' : 'live-fetch',
       createdAt: now,
       updatedAt: now,
@@ -379,7 +380,7 @@ export class SelectorDiscoveryService {
         chapterFetch,
         existingAdapter: existingAdapterContext,
       });
-      const implementation = await this.runAoImplementationPhase(job, client, bundle, model, phase2TaskMarkdown);
+      const implementation = await this.runAoImplementationPhase(job, client, bundle, model, phase2TaskMarkdown, input.stopAfterStage);
 
       await this.finalizeImplementationDraft(job, implementation);
     } finally {
@@ -425,7 +426,8 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     client: AoClient,
     bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
     model: string,
-    taskMarkdown: string
+    taskMarkdown: string,
+    stopAfterStage?: SelectorDiscoveryCapabilityDraft['stage']
   ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string; capabilityDrafts: SelectorDiscoveryCapabilityDraft[] }> {
     const stages = CAPABILITY_DRAFT_OUTPUTS.filter((draft) => job.target !== 'chapter-only' || draft.stage !== 'metadata');
     const capabilityDrafts: SelectorDiscoveryCapabilityDraft[] = [];
@@ -433,10 +435,20 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
       capabilityDrafts.push(await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job.target));
       const latest = capabilityDrafts.at(-1);
+      if (!latest) {
+        continue;
+      }
       if (latest?.validation && !latest.validation.valid) {
         return {
           adapterImplementationTs: '',
           reviewNotesMarkdown: formatCapabilityDraftFailureReview(capabilityDrafts),
+          capabilityDrafts,
+        };
+      }
+      if (stopAfterStage === latest.stage) {
+        return {
+          adapterImplementationTs: '',
+          reviewNotesMarkdown: formatCapabilityStageSmokeReview(capabilityDrafts),
           capabilityDrafts,
         };
       }
@@ -464,7 +476,9 @@ Use the exact Markdown headings required by the referenced contract file. Do not
       await client.start(conversationId);
       const response = await client.message(
         conversationId,
-        `${taskMarkdown}
+        `# Capability Stage Task
+
+Read task.md and the contract files already uploaded to this workspace.
 
 ## Required AO Output
 
@@ -491,11 +505,18 @@ Stage rules:
 
 - common-verification: write the AdapterBase shell, one CommonCapability subclass,
   and one separate VerificationCapability subclass. Do not combine them with
-  implements.
+  implements. Declare identity as readonly fields. Do not write constructor()
+  or call super({ ... }).
 - metadata: write only one MetadataCapability subclass.
 - chapter-images: write only one ChapterImagesCapability subclass.
 - Every method must use the exact signature documented in
-  contracts/adapter-base-api.md.`,
+  contracts/adapter-base-api.md.
+
+Chat response rule:
+
+- After writing both files, reply with one short sentence confirming the two
+  file paths.
+- Do not include the TypeScript source in chat.`,
         model,
         DEFAULT_SELECTOR_DISCOVERY_AGENT
       );
@@ -679,9 +700,12 @@ ${finalUrl}
       .flatMap((draft) => draft.validation?.valid === false
         ? draft.validation.errors.map((error) => `${draft.stage}: ${error}`)
         : []);
-    const implementationValidation = validateAdapterImplementationDraft(output.adapterImplementationTs, {
-      target: job.target,
-    });
+    const stageSmokeComplete = Boolean(job.stopAfterStage && output.capabilityDrafts?.some((draft) => draft.stage === job.stopAfterStage));
+    const implementationValidation = stageSmokeComplete
+      ? { valid: capabilityErrors.length === 0, errors: [], warnings: [], syntaxValid: true }
+      : validateAdapterImplementationDraft(output.adapterImplementationTs, {
+          target: job.target,
+        });
     const valid = capabilityErrors.length === 0 && implementationValidation.valid;
     await this.updateJob(job.id, {
       status: valid ? 'awaiting_review' : 'invalid',
@@ -961,6 +985,21 @@ ${failed.map((draft) => `## ${draft.stage}
 - review path: ${draft.reviewPath}
 - errors:
 ${(draft.validation?.errors ?? []).map((error) => `  - ${error}`).join('\n') || '  - unknown'}
+`).join('\n')}`;
+}
+
+function formatCapabilityStageSmokeReview(drafts: SelectorDiscoveryCapabilityDraft[]): string {
+  const latest = drafts.at(-1);
+  return `# Capability Stage Smoke Complete
+
+ComicCrawler stopped after ${latest?.stage ?? 'unknown'} as requested.
+
+${drafts.map((draft) => `## ${draft.stage}
+
+- source path: ${draft.sourcePath}
+- review path: ${draft.reviewPath}
+- validation: ${draft.validation?.valid ? 'valid' : 'invalid'}
+- errors: ${draft.validation?.errors.join('; ') || 'none'}
 `).join('\n')}`;
 }
 
