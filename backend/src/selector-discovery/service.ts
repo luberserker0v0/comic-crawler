@@ -12,7 +12,7 @@ import { validateChapterImageSelectorExtraction, validateSelectorExtraction } fr
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
-import { validateAdapterImplementationDraft } from './adapter-implementation';
+import { validateAdapterImplementationDraft, validateCapabilityDraft } from './adapter-implementation';
 import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl, validatePhase1Markdown } from './task-markdown';
 import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
@@ -20,6 +20,7 @@ import {
   type DiscoveryInput,
   type SelectorDiscoveryOracleComparison,
   type SelectorDiscoveryJob,
+  type SelectorDiscoveryCapabilityDraft,
   type SelectorDiscoveryShadowPromotion,
 } from './types';
 
@@ -29,6 +30,11 @@ const ACTIVE_DYNAMIC_ADAPTERS_KEY = 'selector-discovery-active-adapters';
 const SHADOW_PROMOTION_PREFIX = 'selector-discovery-shadow-promotion-';
 const ADAPTER_IMPLEMENTATION_OUTPUT_PATH = 'outputs/adapter-implementation.ts';
 const REVIEW_NOTES_OUTPUT_PATH = 'outputs/review-notes.md';
+const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>> = [
+  { stage: 'common-verification', sourcePath: 'outputs/common-verification.ts', reviewPath: 'outputs/common-verification-review.md' },
+  { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
+  { stage: 'chapter-images', sourcePath: 'outputs/chapter-images-capability.ts', reviewPath: 'outputs/chapter-images-review.md' },
+];
 
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
@@ -418,7 +424,7 @@ Use the exact Markdown headings required by the referenced contract file. Do not
     bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
     model: string,
     taskMarkdown: string
-  ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string }> {
+  ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string; capabilityDrafts: SelectorDiscoveryCapabilityDraft[] }> {
     const conversationId = await client.createConversation();
     try {
       await this.bundleManager.upload(client, conversationId, bundle);
@@ -433,19 +439,41 @@ Use the exact Markdown headings required by the referenced contract file. Do not
 Write the TypeScript adapter implementation to ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
 Write human review notes to ${REVIEW_NOTES_OUTPUT_PATH}.
 
+Before writing the composed implementation, write capability-stage drafts when
+the stage applies:
+
+- Common + verification: outputs/common-verification.ts and outputs/common-verification-review.md
+- Metadata: outputs/metadata-capability.ts and outputs/metadata-review.md
+- Chapter images: outputs/chapter-images-capability.ts and outputs/chapter-images-review.md
+
 Also return the review notes in your chat response. Do not output JSON.
 
-The TypeScript source must export one class that extends AdapterBase and implements the declared capabilities with fine-grained extraction functions. Do not implement fetchMetadata() or fetchChapterImages().`,
+The TypeScript source must export one class that extends AdapterBase and implements the declared capabilities with fine-grained extraction functions. Every adapter must include CommonCapability and VerificationCapability. Do not implement fetchMetadata() or fetchChapterImages().`,
         model,
         DEFAULT_SELECTOR_DISCOVERY_AGENT
       );
-      const [adapterImplementationTs, reviewNotesMarkdown] = await Promise.all([
+      const [adapterImplementationTs, reviewNotesMarkdown, ...capabilityOutputs] = await Promise.all([
         client.readFile(conversationId, ADAPTER_IMPLEMENTATION_OUTPUT_PATH).catch(() => ''),
         client.readFile(conversationId, REVIEW_NOTES_OUTPUT_PATH).catch(() => ''),
+        ...CAPABILITY_DRAFT_OUTPUTS.flatMap((draft) => [
+          client.readFile(conversationId, draft.sourcePath).catch(() => ''),
+          client.readFile(conversationId, draft.reviewPath).catch(() => ''),
+        ]),
       ]);
+      const capabilityDrafts = CAPABILITY_DRAFT_OUTPUTS.map((draft, index) => {
+        const sourceTs = capabilityOutputs[index * 2]?.trim() ?? '';
+        const reviewMarkdown = capabilityOutputs[index * 2 + 1]?.trim() ?? '';
+        return {
+          ...draft,
+          sourceTs,
+          reviewMarkdown,
+          validation: sourceTs ? validateCapabilityDraft(sourceTs, { stage: draft.stage, target: undefined }) : undefined,
+        };
+      }).filter((draft) => draft.sourceTs || draft.reviewMarkdown);
       return {
         adapterImplementationTs: adapterImplementationTs.trim(),
         reviewNotesMarkdown: reviewNotesMarkdown.trim() || response.text?.trim() || '',
+        capabilityDrafts,
       };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
@@ -554,7 +582,7 @@ ${finalUrl}
 
   private async finalizeImplementationDraft(
     job: SelectorDiscoveryJob,
-    output: { reviewNotesMarkdown: string; adapterImplementationTs: string }
+    output: { reviewNotesMarkdown: string; adapterImplementationTs: string; capabilityDrafts?: SelectorDiscoveryCapabilityDraft[] }
   ): Promise<void> {
     const implementationValidation = validateAdapterImplementationDraft(output.adapterImplementationTs, {
       target: job.target,
@@ -563,12 +591,14 @@ ${finalUrl}
       status: implementationValidation.valid ? 'awaiting_review' : 'invalid',
       phase: 'complete',
       reviewNotesMarkdown: output.reviewNotesMarkdown,
+      capabilityDrafts: output.capabilityDrafts,
       adapterImplementationTs: output.adapterImplementationTs,
       implementationValidation,
       error: implementationValidation.valid ? undefined : implementationValidation.errors.join('; '),
     });
     await this.storage.write(`selector-discovery-implementation-${job.id}`, {
       reviewNotesMarkdown: output.reviewNotesMarkdown,
+      capabilityDrafts: output.capabilityDrafts,
       adapterImplementationTs: output.adapterImplementationTs,
       implementationValidation,
     });
