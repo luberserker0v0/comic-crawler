@@ -45,6 +45,7 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\bfrom\s+['"]\.\/capabilities['"]/m, message: 'Importing from "./capabilities" is not valid in adapter implementation drafts.' },
   { pattern: /\bfrom\s+['"][^'"]*contracts\/adapter-base-api(?:\.md)?['"]/m, message: 'adapter-base-api.md is documentation and must not be imported.' },
   { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
+  { pattern: /\bextends\s+\w+Capability\s+implements\s+\w+Capability\b/m, message: 'Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.' },
   { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
   { pattern: /new\s+(?:CommonCapability|VerificationCapability|MetadataCapability|ChapterImagesCapability)\s*\(/m, message: 'Capability base classes must not be instantiated directly; create site-specific subclasses.' },
 ];
@@ -171,7 +172,7 @@ export function validateAdapterImplementationDraft(
 function validateRequiredSignatures(source: string, functionNames: string[]): string[] {
   const errors: string[] = [];
   for (const functionName of functionNames) {
-    const match = new RegExp(`\\b${functionName}\\s*\\(([^)]*)\\)`, 'm').exec(source);
+    const match = new RegExp(`\\b${functionName}\\s*\\(([^)]*)\\)\\s*(?::\\s*[^\\{]+)?\\{`, 'm').exec(source);
     if (!match) continue;
     const params = match[1] ?? '';
     if (!/\bdocument\b/.test(params) || !/\bsourceUrl\b/.test(params)) {

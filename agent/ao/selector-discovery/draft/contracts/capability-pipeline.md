@@ -34,6 +34,14 @@ at a time, then ask for a composed adapter after review.
   supplied DOM has already passed verification/readiness checks.
 - Capability handlers are mutually scoped. Metadata code must not implement
   image extraction. Chapter image code must not implement metadata extraction.
+- Do not combine capability handlers. For example, do not write
+  `class SiteCommonVerificationCapability extends CommonCapability implements
+  VerificationCapability`. Instead, write one site-specific subclass per
+  capability base class:
+  - `class SiteCommonCapability extends CommonCapability`
+  - `class SiteVerificationCapability extends VerificationCapability`
+  - `class SiteMetadataCapability extends MetadataCapability`
+  - `class SiteChapterImagesCapability extends ChapterImagesCapability`
 - If a site needs special expansion, filtering, or cleanup, put that logic in
   the relevant capability source so humans can review it.
 - Do not add hidden generic browser actions outside the adapter source.

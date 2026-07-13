@@ -47,7 +47,7 @@ export interface SelectorDiscoveryJob {
   adapterName?: string;
   model?: string;
   aoBaseUrl?: string;
-  phase?: 'known_adapter' | 'phase1' | 'phase2' | 'complete';
+  phase?: 'known_adapter' | 'phase1' | 'phase2' | SelectorDiscoveryCapabilityStage | 'complete';
   createdAt: string;
   updatedAt: string;
   error?: string;

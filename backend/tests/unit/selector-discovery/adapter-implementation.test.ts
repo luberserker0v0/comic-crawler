@@ -170,6 +170,43 @@ export class BadAdapter extends AdapterBase {
     expect(result.errors).toContain('Missing site-specific ChapterImagesCapability subclass.');
   });
 
+  it('does not confuse prose mentions with method signatures', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  // extractTitle (from page heading)
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  // extractAuthor (from author label)
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return undefined; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] { return []; }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects combined capability handlers that use implements', () => {
+    const result = validateCapabilityDraft(`
+import { CommonCapability, VerificationCapability } from '../adapter/base';
+
+class BadCommonVerificationCapability extends CommonCapability implements VerificationCapability {
+  matchUrl(url: string): boolean { return url.includes('example.com'); }
+  detectVerificationRequired(input: string): boolean { return /blocked/.test(input); }
+  describeVerificationHandoff(): Record<string, unknown> { return { supported: true }; }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Capability handlers must not be combined with implements; create one site-specific subclass per capability base class.');
+  });
+
   it('accepts a common and verification capability stage draft', () => {
     const result = validateCapabilityDraft(`
 import { AdapterBase, CommonCapability, VerificationCapability } from '../adapter/base';

@@ -373,12 +373,13 @@ export class SelectorDiscoveryService {
         throw new Error('Phase 1 output did not include a Representative Chapter URL and no fallback chapter link was found.');
       }
       const chapterFetch = await fetchSafeHtml(chapterUrl, safeFetchOptions);
-      const implementation = await this.runAoImplementationPhase(client, bundle, model, createPhase2TaskMarkdown({
+      const phase2TaskMarkdown = createPhase2TaskMarkdown({
         url: job.normalizedUrl,
         phase1Markdown: phase1,
         chapterFetch,
         existingAdapter: existingAdapterContext,
-      }));
+      });
+      const implementation = await this.runAoImplementationPhase(job, client, bundle, model, phase2TaskMarkdown);
 
       await this.finalizeImplementationDraft(job, implementation);
     } finally {
@@ -420,11 +421,42 @@ Use the exact Markdown headings required by the referenced contract file. Do not
   }
 
   private async runAoImplementationPhase(
+    job: SelectorDiscoveryJob,
     client: AoClient,
     bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
     model: string,
     taskMarkdown: string
   ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string; capabilityDrafts: SelectorDiscoveryCapabilityDraft[] }> {
+    const stages = CAPABILITY_DRAFT_OUTPUTS.filter((draft) => job.target !== 'chapter-only' || draft.stage !== 'metadata');
+    const capabilityDrafts: SelectorDiscoveryCapabilityDraft[] = [];
+    for (const draft of stages) {
+      await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
+      capabilityDrafts.push(await this.runAoCapabilityPhase(client, bundle, model, taskMarkdown, draft, job.target));
+      const latest = capabilityDrafts.at(-1);
+      if (latest?.validation && !latest.validation.valid) {
+        return {
+          adapterImplementationTs: '',
+          reviewNotesMarkdown: formatCapabilityDraftFailureReview(capabilityDrafts),
+          capabilityDrafts,
+        };
+      }
+    }
+    await this.updateJob(job.id, { phase: 'compose', capabilityDrafts });
+    const composed = await this.runAoComposePhase(client, bundle, model, taskMarkdown, capabilityDrafts, job.target);
+    return {
+      ...composed,
+      capabilityDrafts,
+    };
+  }
+
+  private async runAoCapabilityPhase(
+    client: AoClient,
+    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
+    model: string,
+    taskMarkdown: string,
+    draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+    target?: 'full' | 'chapter-only'
+  ): Promise<SelectorDiscoveryCapabilityDraft> {
     const conversationId = await client.createConversation();
     try {
       await this.bundleManager.upload(client, conversationId, bundle);
@@ -436,44 +468,102 @@ Use the exact Markdown headings required by the referenced contract file. Do not
 
 ## Required AO Output
 
-Write the TypeScript adapter implementation to ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
-Write human review notes to ${REVIEW_NOTES_OUTPUT_PATH}.
+Produce only the ${draft.stage} capability draft.
 
-Before writing the composed implementation, write capability-stage drafts when
-the stage applies:
+Write TypeScript capability source to ${draft.sourcePath}.
+Write human review notes for this capability to ${draft.reviewPath}.
 
-- Common + verification: outputs/common-verification.ts and outputs/common-verification-review.md
-- Metadata: outputs/metadata-capability.ts and outputs/metadata-review.md
-- Chapter images: outputs/chapter-images-capability.ts and outputs/chapter-images-review.md
+Important file-writing rules:
 
-Also return the review notes in your chat response. Do not output JSON.
+- The TypeScript source must be written to ${draft.sourcePath}, not embedded
+  inside ${draft.reviewPath}.
+- The review notes must be Markdown prose only. Do not put the full TypeScript
+  source in the review notes.
+- Do not import from contracts/adapter-base-api.md or any contracts path.
+- Use the import style shown inside contracts/adapter-base-api.md, but do not
+  import that Markdown file.
 
-The TypeScript source must export one class that extends AdapterBase and implements the declared capabilities with fine-grained extraction functions. Every adapter must include CommonCapability and VerificationCapability. Do not implement fetchMetadata() or fetchChapterImages().`,
+Do not write ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
+Do not compose the final adapter in this stage.
+Do not output JSON.
+
+Stage rules:
+
+- common-verification: write the AdapterBase shell, one CommonCapability subclass,
+  and one separate VerificationCapability subclass. Do not combine them with
+  implements.
+- metadata: write only one MetadataCapability subclass.
+- chapter-images: write only one ChapterImagesCapability subclass.
+- Every method must use the exact signature documented in
+  contracts/adapter-base-api.md.`,
         model,
         DEFAULT_SELECTOR_DISCOVERY_AGENT
       );
-      const [adapterImplementationTs, reviewNotesMarkdown, ...capabilityOutputs] = await Promise.all([
+      const [sourceTs, reviewMarkdown] = await Promise.all([
+        client.readFile(conversationId, draft.sourcePath).catch(() => ''),
+        client.readFile(conversationId, draft.reviewPath).catch(() => ''),
+      ]);
+      const trimmedSource = sourceTs.trim();
+      return {
+        ...draft,
+        sourceTs: trimmedSource,
+        reviewMarkdown: reviewMarkdown.trim() || response.text?.trim() || '',
+        validation: validateCapabilityDraft(trimmedSource, { stage: draft.stage, target }),
+      };
+    } finally {
+      await client.deleteConversation(conversationId).catch(() => undefined);
+    }
+  }
+
+  private async runAoComposePhase(
+    client: AoClient,
+    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
+    model: string,
+    taskMarkdown: string,
+    capabilityDrafts: SelectorDiscoveryCapabilityDraft[],
+    target?: 'full' | 'chapter-only'
+  ): Promise<{ reviewNotesMarkdown: string; adapterImplementationTs: string }> {
+    const conversationId = await client.createConversation();
+    try {
+      await this.bundleManager.upload(client, conversationId, bundle);
+      await client.uploadFile(conversationId, 'task.md', taskMarkdown);
+      await client.uploadFile(conversationId, 'outputs/capability-drafts.md', formatCapabilityDraftsForCompose(capabilityDrafts));
+      await client.start(conversationId);
+      const response = await client.message(
+        conversationId,
+        `# Compose Adapter Implementation
+
+Use task.md for page evidence and outputs/capability-drafts.md for reviewed
+capability-stage source. Compose one final AdapterBase implementation.
+
+## Required Output
+
+Write the TypeScript adapter implementation to ${ADAPTER_IMPLEMENTATION_OUTPUT_PATH}.
+Write human review notes to ${REVIEW_NOTES_OUTPUT_PATH}.
+
+Also return the review notes in your chat response. Do not output JSON.
+
+The TypeScript source must export one class that extends AdapterBase and wires
+the capability handlers with fine-grained extraction functions.
+
+Hard rules:
+
+- Every adapter includes separate CommonCapability and VerificationCapability
+  subclasses.
+- Do not combine capability handlers with implements.
+- Do not implement fetchMetadata() or fetchChapterImages().
+- If a capability draft validation section says invalid, correct the issue in
+  the composed final source.`,
+        model,
+        DEFAULT_SELECTOR_DISCOVERY_AGENT
+      );
+      const [adapterImplementationTs, reviewNotesMarkdown] = await Promise.all([
         client.readFile(conversationId, ADAPTER_IMPLEMENTATION_OUTPUT_PATH).catch(() => ''),
         client.readFile(conversationId, REVIEW_NOTES_OUTPUT_PATH).catch(() => ''),
-        ...CAPABILITY_DRAFT_OUTPUTS.flatMap((draft) => [
-          client.readFile(conversationId, draft.sourcePath).catch(() => ''),
-          client.readFile(conversationId, draft.reviewPath).catch(() => ''),
-        ]),
       ]);
-      const capabilityDrafts = CAPABILITY_DRAFT_OUTPUTS.map((draft, index) => {
-        const sourceTs = capabilityOutputs[index * 2]?.trim() ?? '';
-        const reviewMarkdown = capabilityOutputs[index * 2 + 1]?.trim() ?? '';
-        return {
-          ...draft,
-          sourceTs,
-          reviewMarkdown,
-          validation: sourceTs ? validateCapabilityDraft(sourceTs, { stage: draft.stage, target: undefined }) : undefined,
-        };
-      }).filter((draft) => draft.sourceTs || draft.reviewMarkdown);
       return {
         adapterImplementationTs: adapterImplementationTs.trim(),
         reviewNotesMarkdown: reviewNotesMarkdown.trim() || response.text?.trim() || '',
-        capabilityDrafts,
       };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
@@ -569,6 +659,7 @@ ${finalUrl}
       aoBaseUrl: input.aoBaseUrl,
     });
     const implementation = await this.runAoImplementationPhase(
+      job,
       input.client,
       input.bundle,
       input.model,
@@ -584,17 +675,22 @@ ${finalUrl}
     job: SelectorDiscoveryJob,
     output: { reviewNotesMarkdown: string; adapterImplementationTs: string; capabilityDrafts?: SelectorDiscoveryCapabilityDraft[] }
   ): Promise<void> {
+    const capabilityErrors = (output.capabilityDrafts ?? [])
+      .flatMap((draft) => draft.validation?.valid === false
+        ? draft.validation.errors.map((error) => `${draft.stage}: ${error}`)
+        : []);
     const implementationValidation = validateAdapterImplementationDraft(output.adapterImplementationTs, {
       target: job.target,
     });
+    const valid = capabilityErrors.length === 0 && implementationValidation.valid;
     await this.updateJob(job.id, {
-      status: implementationValidation.valid ? 'awaiting_review' : 'invalid',
+      status: valid ? 'awaiting_review' : 'invalid',
       phase: 'complete',
       reviewNotesMarkdown: output.reviewNotesMarkdown,
       capabilityDrafts: output.capabilityDrafts,
       adapterImplementationTs: output.adapterImplementationTs,
       implementationValidation,
-      error: implementationValidation.valid ? undefined : implementationValidation.errors.join('; '),
+      error: valid ? undefined : [...capabilityErrors, ...implementationValidation.errors].join('; '),
     });
     await this.storage.write(`selector-discovery-implementation-${job.id}`, {
       reviewNotesMarkdown: output.reviewNotesMarkdown,
@@ -824,6 +920,48 @@ function tryExtractRepresentativeChapterUrl(markdown: string, baseUrl: string): 
 
 function safeAdapterId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dynamic-site';
+}
+
+function formatCapabilityDraftsForCompose(drafts: SelectorDiscoveryCapabilityDraft[]): string {
+  if (drafts.length === 0) {
+    return '# Capability Drafts\n\nNo capability drafts were produced.';
+  }
+  return `# Capability Drafts
+
+${drafts.map((draft) => `## ${draft.stage}
+
+### Validation
+
+- valid: ${draft.validation?.valid ?? false}
+- errors: ${draft.validation?.errors.join('; ') || 'none'}
+- warnings: ${draft.validation?.warnings.join('; ') || 'none'}
+
+### Source
+
+\`\`\`ts
+${draft.sourceTs ?? ''}
+\`\`\`
+
+### Review Notes
+
+${draft.reviewMarkdown || 'none'}
+`).join('\n')}`;
+}
+
+function formatCapabilityDraftFailureReview(drafts: SelectorDiscoveryCapabilityDraft[]): string {
+  const failed = drafts.filter((draft) => draft.validation && !draft.validation.valid);
+  return `# Capability Draft Validation Failed
+
+ComicCrawler stopped before compose because at least one capability draft was
+invalid. Fix the AO-facing documents or retry after updating the prompt.
+
+${failed.map((draft) => `## ${draft.stage}
+
+- source path: ${draft.sourcePath}
+- review path: ${draft.reviewPath}
+- errors:
+${(draft.validation?.errors ?? []).map((error) => `  - ${error}`).join('\n') || '  - unknown'}
+`).join('\n')}`;
 }
 
 function adapterSupportsDiscoveryTarget(

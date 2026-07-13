@@ -62,6 +62,8 @@ Do not instantiate `CommonCapability`, `VerificationCapability`,
 `MetadataCapability`, or `ChapterImagesCapability` directly. They are base
 classes. Create site-specific subclasses such as
 `ExampleCommonCapability extends CommonCapability`.
+Do not combine capability handlers with `implements`. Each capability needs its
+own site-specific subclass and its own readonly handler field.
 Do not write extraction methods directly on the adapter shell class. The adapter
 shell only declares identity, capability flags, and handler fields. Fine-grained
 extraction methods belong in the capability handler subclasses.
