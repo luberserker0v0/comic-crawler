@@ -71,4 +71,31 @@ export function fetchMetadata() {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('Implementation must not mention old façade functions fetchMetadata or fetchChapterImages.');
   });
+
+  it('rejects non-AdapterBase DOM APIs and constructor identity objects', () => {
+    const result = validateAdapterImplementationDraft(`
+import { AdapterBase, Capability } from 'comiccrawler';
+
+export class BadAdapter extends AdapterBase {
+  readonly id = 'bad';
+  readonly name = 'Bad';
+  readonly domains = ['example.com'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: false, metadata: false, chapterImages: true };
+  constructor() {
+    super({ id: 'bad' });
+  }
+  extractChapterImageUrls(): string[] {
+    return this.dom.select('img').map((image: any) => image.attr('src'));
+  }
+}
+`, { target: 'chapter-only' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Generic Capability imports/usages are not part of the AdapterBase contract.');
+    expect(result.errors).toContain('Importing from "comiccrawler" is not valid in adapter implementation drafts.');
+    expect(result.errors).toContain('Adapter identity must be readonly class fields, not constructor super() options.');
+    expect(result.errors).toContain('this.dom is not part of the AdapterBase contract. Use this.adapter.asCheerio(document).');
+    expect(result.errors).toContain('Extraction function extractChapterImageUrls must accept (document: unknown, sourceUrl: string).');
+  });
 });

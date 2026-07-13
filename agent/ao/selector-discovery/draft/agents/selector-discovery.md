@@ -38,10 +38,17 @@ return shapes, helper methods, and parseMode semantics.
 5. Load `candidate-validation` before finalizing review notes and implementation output.
 6. Write the requested output files exactly.
 
+If the Task tool or skill tool is unavailable, rejects arguments, or returns an
+error, continue the analysis yourself using the task Markdown and contract
+files. Never write a final output that says you are waiting for a subagent or
+that only describes a plan.
+
 # Output style
 
 - Use headings exactly as requested by the contract Markdown files.
 - Do not add suffixes such as "(Manga Page)" to required headings.
+- Phase 1 output must use the exact headings from `contracts/phase1-output.md`.
+  Do not replace Phase 1 with an adapter identity, a plan, or a waiting note.
 - For final review notes, the first required section must be exactly `## Adapter Identity`.
 - Put selector/evidence notes as simple labeled Markdown lines where useful.
 - Include evidence and uncertainty in prose.

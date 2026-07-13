@@ -5,6 +5,7 @@ import {
   createChapterOnlyTaskMarkdown,
   extractFallbackChapterUrlFromHtml,
   extractRepresentativeChapterUrl,
+  validatePhase1Markdown,
 } from '../../../src/selector-discovery/task-markdown';
 
 describe('selector discovery task Markdown', () => {
@@ -85,5 +86,13 @@ describe('selector discovery task Markdown', () => {
 
     expect(extractFallbackChapterUrlFromHtml(html, 'https://example.com/manga/demo'))
       .toBe('https://example.com/manga/demo/chapter-1');
+  });
+
+  it('rejects Phase 1 outputs that are only a plan or waiting note', () => {
+    const result = validatePhase1Markdown('I am waiting for the dom-structure-analyst task result. Here is the plan.');
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Missing required Phase 1 heading: ## Site Decision');
+    expect(result.errors).toContain('Phase 1 output appears to be a plan or waiting note rather than analysis.');
   });
 });

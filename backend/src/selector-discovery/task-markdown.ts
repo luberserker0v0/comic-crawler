@@ -27,6 +27,9 @@ Important rules:
 - Write Markdown only.
 - Do not output JSON.
 - Do not generate adapter code in Phase 1.
+- Write the final Phase 1 analysis directly. Do not output a plan, waiting note,
+  or statement that a subagent/tool has not returned. If a tool fails, complete
+  the analysis yourself from the DOM summary.
 - Use divide-and-conquer. Do not try to reason over the whole HTML at once.
 - If the chapter list appears partial, look for signals that the UI may collapse
   older chapters behind "more", "show all", "expand", "更多", "展开", "展開",
@@ -64,6 +67,25 @@ Analyze in this order:
 4. Choose one representative chapter URL that is likely to contain reader images.
 5. Note whether the chapter list may be collapsed or incomplete.
 6. Write the output using the Markdown outline in contracts/phase1-output.md.
+
+## Mandatory Phase 1 Output Headings
+
+Your output is invalid unless it uses these exact headings:
+
+## Site Decision
+## Title Extraction
+## Author Extraction
+## Description Extraction
+## Cover URL Extraction
+## Tags Extraction
+## Status Extraction
+## Chapter List Extraction
+## Representative Chapter URL
+## Evidence
+## Uncertainty
+
+Do not include "Adapter Identity", "Implementation Notes", TypeScript advice,
+or code in Phase 1.
 `;
 }
 
@@ -236,14 +258,19 @@ function adapterImplementationContract(mode: 'create' | 'augment', target: 'full
   usage, method signatures, return shapes, helper methods, and parseMode meaning.
 - Import AdapterBase and capability classes from ComicCrawler adapter base.
 - Declare id, name, domains, parseMode, and capabilities.
+- Declare adapter identity as readonly class fields. Do not pass id/name/domains/parseMode/capabilities to constructor or super().
+- Capabilities must be boolean flags: { verification: boolean, metadata: boolean, chapterImages: boolean }.
+- Capability handler instances must be separate readonly fields named common, verification, metadata, and chapterImages.
 - Implement CommonCapability.matchUrl for the site URL patterns.
 - If verification is supported, use VerificationCapability to detect blocked/challenge pages and describe the official human handoff. Do not bypass or automate CAPTCHA.
 ${metadataRequirement}
 - Implement chapterImages.extractChapterImageUrls for chapter reader pages when chapterImages capability is true.
+- Use exact method names: extractTitle, extractAuthor, extractDescription, extractCoverUrl, extractTags, extractStatus, extractChapterList, extractChapterImageUrls. Do not rename them to matchTitle, matchChapterList, or matchChapterImageUrls.
+- Every extraction method must accept (document: unknown, sourceUrl: string) and use this.adapter.asCheerio(document) for DOM access.
 - Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler runtime composes those from fine-grained functions.
 - Keep all site-specific clicking, expansion, filtering, and extraction strategy visible in the adapter source.
 - Helper functions are allowed, but keep them in the same TypeScript source file.
-- Do not use filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
+- Do not use this.dom, browser document APIs, Capability imports, filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
 - Promotion mode: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id and add missing capability code.' : 'Create a new adapter implementation draft.'}
 `;
 }
@@ -255,6 +282,22 @@ export function extractRepresentativeChapterUrl(markdown: string, baseUrl: strin
     throw new Error('Phase 1 output did not include a Representative Chapter URL.');
   }
   return new URL(match[1].replace(/[)>.,]+$/, ''), baseUrl).href;
+}
+
+export function validatePhase1Markdown(markdown: string): { valid: boolean; errors: string[] } {
+  const requiredHeadings = [
+    '## Site Decision',
+    '## Title Extraction',
+    '## Chapter List Extraction',
+    '## Representative Chapter URL',
+    '## Evidence',
+    '## Uncertainty',
+  ];
+  const errors = requiredHeadings.filter((heading) => !markdown.includes(heading)).map((heading) => `Missing required Phase 1 heading: ${heading}`);
+  if (/\bwaiting for\b|\bawait(?:ing)? (?:its|the|subagent|tool)|\bplan\b/i.test(markdown) && errors.length > 0) {
+    errors.push('Phase 1 output appears to be a plan or waiting note rather than analysis.');
+  }
+  return { valid: errors.length === 0, errors };
 }
 
 export function extractFallbackChapterUrlFromHtml(html: string, baseUrl: string): string | undefined {

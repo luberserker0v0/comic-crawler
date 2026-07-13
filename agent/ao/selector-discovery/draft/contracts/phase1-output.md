@@ -1,6 +1,11 @@
 # Phase 1 Output Contract
 
 Use Markdown sections only. Do not output JSON and do not describe adapter code.
+Do not output a plan, a waiting note, or a statement that a subagent has not
+returned yet. If a subagent/tool fails, complete the analysis yourself from the
+provided DOM summary.
+Do not include "Adapter Identity", "Implementation Notes", TypeScript advice, or
+code in Phase 1.
 
 ## Site Decision
 

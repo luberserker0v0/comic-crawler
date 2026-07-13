@@ -13,6 +13,8 @@ The TypeScript file must:
 - follow `contracts/adapter-base-api.md` for imports, capability class usage,
   method signatures, return shapes, helper usage, and parseMode meaning;
 - declare `id`, `name`, `domains`, `parseMode`, and `capabilities`;
+- declare adapter identity as readonly class fields, not constructor or
+  `super(...)` options;
 - implement site URL matching through `CommonCapability`;
 - implement supported capability handlers using the `CommonCapability`,
   `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability`
@@ -26,7 +28,8 @@ The TypeScript file must:
   - `extractChapterImageUrls` returns all comic page image URLs visible in the
     trusted reader DOM;
 - avoid filesystem access, child processes, `process`, `eval`, `new Function`,
-  and arbitrary side effects.
+  `this.dom`, browser document APIs, invalid `Capability` imports, and arbitrary
+  side effects.
 
 ## Review Notes Requirements
 
@@ -69,6 +72,9 @@ verified browser DOM requirements, and URL mismatch risks.
 
 - Adapter extends AdapterBase:
 - AdapterBase API reference followed:
+- Identity declared as readonly fields:
+- No constructor/super identity object:
+- No this.dom or browser document API:
 - No JSON output:
 - No fetchMetadata/fetchChapterImages implementation:
 - URL matching checked:

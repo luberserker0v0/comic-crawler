@@ -21,6 +21,9 @@ The exact relative import path may be adjusted by ComicCrawler during review or
 promotion. The class names, method names, and return shapes are the important
 contract.
 
+Do not import `Capability`, `comiccrawler`, or `./capabilities`. Those APIs do
+not exist in ComicCrawler adapter drafts.
+
 ## Site adapter shell
 
 The TypeScript file must export exactly one adapter class:
@@ -42,6 +45,13 @@ export class ExampleSiteAdapter extends AdapterBase {
   readonly chapterImages = new ExampleChapterImagesCapability(this);
 }
 ```
+
+Do not put adapter identity or capabilities in `constructor()` or `super(...)`.
+`AdapterBase` does not accept an identity object. Adapter identity must be
+declared as readonly class fields as shown above.
+`capabilities` is a boolean object only. Do not put `new CommonCapability()` or
+other handler instances inside `capabilities`. Handler instances must be separate
+readonly fields named `common`, `verification`, `metadata`, and `chapterImages`.
 
 `parseMode` means:
 
@@ -88,6 +98,17 @@ verification. Only detect that handoff is required.
 ## Metadata capability
 
 Full adapters implement metadata. Chapter-only adapters do not.
+
+Use these exact method names. Do not rename them to `matchTitle`,
+`matchChapterList`, `matchChapterImageUrls`, or similar:
+
+- `extractTitle`
+- `extractAuthor`
+- `extractDescription`
+- `extractCoverUrl`
+- `extractTags`
+- `extractStatus`
+- `extractChapterList`
 
 ```ts
 class ExampleMetadataCapability extends MetadataCapability {
@@ -155,6 +176,9 @@ class ExampleMetadataCapability extends MetadataCapability {
 
 Metadata extraction rules:
 
+- Every metadata method receives `(document: unknown, sourceUrl: string)`.
+- Convert `document` with `const $ = this.adapter.asCheerio(document);`.
+- Do not use `this.dom`, `.select(...)`, or browser-like document APIs.
 - Prefer detail-page title signals such as `main h1`, detail title classes, or
   Open Graph title. Do not use recommendation card titles, footer titles,
   rating labels, or generic page headings.
@@ -169,6 +193,9 @@ Metadata extraction rules:
 ## Chapter image capability
 
 All chapter-capable adapters implement this:
+
+Use the exact method name `extractChapterImageUrls`. Do not rename it to
+`matchChapterImageUrls`, `getImages`, or similar.
 
 ```ts
 class ExampleChapterImagesCapability extends ChapterImagesCapability {
@@ -198,6 +225,9 @@ class ExampleChapterImagesCapability extends ChapterImagesCapability {
 
 Image extraction rules:
 
+- `extractChapterImageUrls` receives `(document: unknown, sourceUrl: string)`.
+- Convert `document` with `const $ = this.adapter.asCheerio(document);`.
+- Do not use `this.dom`, `.select(...)`, or browser-like document APIs.
 - Return all comic page image URLs from the provided reader DOM.
 - Do not return a preview, first-image list, cover image, logo, icon, app promo,
   ad, tracking pixel, or recommendation image.
@@ -219,3 +249,32 @@ Inside capability classes, use:
 
 Do not call network APIs, filesystem APIs, child processes, `process`, `eval`, or
 `new Function` from adapter implementation drafts.
+
+## Common invalid patterns
+
+Reject these patterns in your own draft before writing output:
+
+```ts
+import { AdapterBase, Capability } from "comiccrawler";
+import { CommonCapability } from "./capabilities";
+
+export class BadAdapter extends AdapterBase {
+  constructor() {
+    super({ id: "bad", capabilities: [] });
+  }
+
+  extractTitle(): string {
+    return this.dom.select("h1").text();
+  }
+}
+```
+
+Why invalid:
+
+- `Capability` is not part of the adapter contract.
+- `comiccrawler` and `./capabilities` are not valid draft imports.
+- Identity must be readonly fields, not `super(...)` options.
+- Extraction methods must accept `(document, sourceUrl)`.
+- Extraction method names must start with `extract`, not `match`.
+- `capabilities` must be boolean flags, not capability handler instances.
+- Use Cheerio via `this.adapter.asCheerio(document)`, not `this.dom`.

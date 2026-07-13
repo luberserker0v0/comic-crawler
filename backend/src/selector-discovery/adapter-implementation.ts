@@ -11,12 +11,17 @@ const REQUIRED_SNIPPETS = [
 ];
 
 const REQUIRED_FULL_SNIPPETS = [
+  'readonly common',
+  'readonly metadata',
+  'readonly chapterImages',
   'extractTitle',
   'extractChapterList',
   'extractChapterImageUrls',
 ];
 
 const REQUIRED_CHAPTER_ONLY_SNIPPETS = [
+  'readonly common',
+  'readonly chapterImages',
   'extractChapterImageUrls',
 ];
 
@@ -31,6 +36,13 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /\beval\s*\(/m, message: 'eval() is not allowed.' },
   { pattern: /\bnew\s+Function\s*\(/m, message: 'new Function() is not allowed.' },
   { pattern: /\bprocess\./m, message: 'Direct process access is not allowed.' },
+  { pattern: /\bthis\.dom\b/m, message: 'this.dom is not part of the AdapterBase contract. Use this.adapter.asCheerio(document).' },
+  { pattern: /\bdocument\.querySelector|\bdocument\.querySelectorAll|\bdocument\.getElementById/m, message: 'Browser document APIs are not allowed. Use Cheerio via this.adapter.asCheerio(document).' },
+  { pattern: /\bCapability\b/m, message: 'Generic Capability imports/usages are not part of the AdapterBase contract.' },
+  { pattern: /\bfrom\s+['"]comiccrawler['"]/m, message: 'Importing from "comiccrawler" is not valid in adapter implementation drafts.' },
+  { pattern: /\bfrom\s+['"]\.\/capabilities['"]/m, message: 'Importing from "./capabilities" is not valid in adapter implementation drafts.' },
+  { pattern: /\bsuper\s*\(\s*{/m, message: 'Adapter identity must be readonly class fields, not constructor super() options.' },
+  { pattern: /\bmatch(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\b/m, message: 'Use exact extract* capability method names, not match* method names.' },
 ];
 
 export function validateAdapterImplementationDraft(
@@ -66,6 +78,14 @@ export function validateAdapterImplementationDraft(
     }
   }
 
+  if (!/readonly\s+parseMode\s*[^=]*=\s*['"](?:static|dynamic|interactive)['"]/.test(source)) {
+    errors.push('parseMode must be one of "static", "dynamic", or "interactive".');
+  }
+
+  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*(?:true|false)[^}]*metadata\s*:\s*(?:true|false)[^}]*chapterImages\s*:\s*(?:true|false)/s.test(source)) {
+    errors.push('capabilities must be boolean flags for verification, metadata, and chapterImages.');
+  }
+
   const requiredFunctions = options.target === 'chapter-only'
     ? REQUIRED_CHAPTER_ONLY_SNIPPETS
     : REQUIRED_FULL_SNIPPETS;
@@ -74,6 +94,9 @@ export function validateAdapterImplementationDraft(
       errors.push(`Missing required extraction function: ${functionName}.`);
     }
   }
+
+  const signatureErrors = validateRequiredSignatures(source, requiredFunctions);
+  errors.push(...signatureErrors);
 
   if (/fetchMetadata|fetchChapterImages/.test(source)) {
     errors.push('Implementation must not mention old façade functions fetchMetadata or fetchChapterImages.');
@@ -85,6 +108,19 @@ export function validateAdapterImplementationDraft(
     warnings,
     syntaxValid: syntax.valid,
   };
+}
+
+function validateRequiredSignatures(source: string, functionNames: string[]): string[] {
+  const errors: string[] = [];
+  for (const functionName of functionNames) {
+    const match = new RegExp(`\\b${functionName}\\s*\\(([^)]*)\\)`, 'm').exec(source);
+    if (!match) continue;
+    const params = match[1] ?? '';
+    if (!/\bdocument\b/.test(params) || !/\bsourceUrl\b/.test(params)) {
+      errors.push(`Extraction function ${functionName} must accept (document: unknown, sourceUrl: string).`);
+    }
+  }
+  return errors;
 }
 
 function checkTypeScriptSyntax(content: string): { valid: boolean; error?: string } {

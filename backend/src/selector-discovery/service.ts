@@ -13,7 +13,7 @@ import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
 import { validateAdapterImplementationDraft } from './adapter-implementation';
-import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl } from './task-markdown';
+import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl, validatePhase1Markdown } from './task-markdown';
 import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
   DEFAULT_SELECTOR_DISCOVERY_MODEL,
@@ -347,6 +347,18 @@ export class SelectorDiscoveryService {
         metadataFetch,
         existingAdapter: existingAdapterContext,
       }), 'outputs/phase1-output.md');
+      const phase1Validation = validatePhase1Markdown(phase1);
+      if (!phase1Validation.valid) {
+        await this.updateJob(job.id, {
+          status: 'invalid',
+          phase: 'complete',
+          phase1Markdown: phase1,
+          model,
+          aoBaseUrl,
+          error: phase1Validation.errors.join('; '),
+        });
+        return;
+      }
 
       await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2', model, aoBaseUrl });
       const chapterUrl = tryExtractRepresentativeChapterUrl(phase1, metadataFetch.finalUrl)
