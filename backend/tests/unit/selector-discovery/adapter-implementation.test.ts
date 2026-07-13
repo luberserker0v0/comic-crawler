@@ -184,7 +184,7 @@ class DemoMetadataCapability extends MetadataCapability {
   extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
   extractTags(document: unknown, sourceUrl: string): string[] { return []; }
   extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return undefined; }
-  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] { return []; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] { return [{ id: 'chapter-1', title: 'Chapter 1', url: sourceUrl }]; }
 }
 `, { stage: 'metadata', target: 'full' });
 
@@ -210,6 +210,54 @@ class DemoMetadataCapability extends MetadataCapability {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
+  });
+
+  it('rejects metadata drafts that confuse ComicStatus with ChapterInfo task status or omit chapter ids', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return ComicStatus.Ongoing; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    return [{ title: 'Chapter 1', url: sourceUrl, status: 'ongoing' } as ChapterInfo];
+  }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('ComicStatus is a string union; return "ongoing", "completed", or "unknown" instead of ComicStatus enum members.');
+    expect(result.errors).toContain('ChapterInfo entries must not use ComicStatus for status; status is task state metadata, not comic publication status.');
+    expect(result.errors).toContain('extractChapterList must populate ChapterInfo.id for each chapter.');
+  });
+
+  it('rejects metadata drafts that return malformed ChapterInfo objects', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return 'ongoing'; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    return [{ id: 'chapter-1', title: 'Chapter 1', sourceUrl, date: new Date() } as unknown as ChapterInfo];
+  }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('extractChapterList must populate ChapterInfo.url with an absolute chapter URL.');
+    expect(result.errors).toContain('ChapterInfo uses url, not sourceUrl.');
+    expect(result.errors).toContain('extractChapterList must not use new Date() as a placeholder for chapter dates.');
   });
 
   it('rejects combined capability handlers that use implements', () => {

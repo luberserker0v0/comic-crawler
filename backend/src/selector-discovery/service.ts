@@ -1075,6 +1075,13 @@ function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): bo
     error.includes('must not declare adapter identity') ||
     error.includes('Template placeholder implementations') ||
     error.includes('Template placeholder values') ||
+    error.includes('ComicStatus is a string union') ||
+    error.includes('ChapterInfo entries must not use ComicStatus') ||
+    error.includes('must populate ChapterInfo.id') ||
+    error.includes('must populate ChapterInfo.url') ||
+    error.includes('ChapterInfo uses url') ||
+    error.includes('must not use new Date()') ||
+    error.includes('must not implement metadata or chapter image extraction methods') ||
     error.includes('Do not redeclare ComicCrawler framework classes') ||
     error.includes('must not export an AdapterBase shell') ||
     error.includes('must not implement common or verification capabilities')

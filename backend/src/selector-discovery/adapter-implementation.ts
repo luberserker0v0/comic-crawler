@@ -281,6 +281,25 @@ function validateMetadataCapabilityDraft(source: string): string[] {
   if (/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
     errors.push('Metadata draft must not implement ChapterImagesCapability.');
   }
+  if (/\bComicStatus\.(?:Ongoing|Completed|Unknown)\b/.test(source)) {
+    errors.push('ComicStatus is a string union; return "ongoing", "completed", or "unknown" instead of ComicStatus enum members.');
+  }
+  if (/status\s*:\s*ComicStatus\./.test(source) || /status\s*:\s*['"](?:ongoing|completed|unknown)['"]/.test(source)) {
+    errors.push('ChapterInfo entries must not use ComicStatus for status; status is task state metadata, not comic publication status.');
+  }
+  const chapterListBody = extractMethodBody(source, 'extractChapterList');
+  if (chapterListBody && !/\bid\s*:/.test(chapterListBody)) {
+    errors.push('extractChapterList must populate ChapterInfo.id for each chapter.');
+  }
+  if (chapterListBody && !/\burl\s*:/.test(chapterListBody)) {
+    errors.push('extractChapterList must populate ChapterInfo.url with an absolute chapter URL.');
+  }
+  if (chapterListBody && (/\bsourceUrl\s*:/.test(chapterListBody) || /[{,]\s*sourceUrl\s*[,}]/.test(chapterListBody))) {
+    errors.push('ChapterInfo uses url, not sourceUrl.');
+  }
+  if (chapterListBody && /new\s+Date\s*\(\s*\)/.test(chapterListBody)) {
+    errors.push('extractChapterList must not use new Date() as a placeholder for chapter dates.');
+  }
   const unchangedTemplateSelectors = [
     'main h1',
     '.author a',
@@ -297,6 +316,22 @@ function validateMetadataCapabilityDraft(source: string): string[] {
     errors.push('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
   }
   return errors;
+}
+
+function extractMethodBody(source: string, methodName: string): string {
+  const startMatch = new RegExp(`\\b${methodName}\\s*\\([^)]*\\)\\s*(?::\\s*[^\\{]+)?\\{`, 'm').exec(source);
+  if (!startMatch?.index) return '';
+  let depth = 0;
+  const start = startMatch.index + startMatch[0].length - 1;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start + 1, index);
+    }
+  }
+  return '';
 }
 
 function validateChapterImagesCapabilityDraft(source: string): string[] {

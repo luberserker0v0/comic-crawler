@@ -171,6 +171,15 @@ Metadata extraction rules:
 
 - Every metadata method receives `(document: unknown, sourceUrl: string)`.
 - Convert `document` with `const $ = this.adapter.asCheerio(document);`.
+- `ComicStatus` is a string union. Return `'ongoing'`, `'completed'`,
+  `'unknown'`, or `undefined`; do not use enum-style values such as
+  `ComicStatus.Ongoing`.
+- `ChapterInfo.status` is task state metadata, not manga publication status.
+  Do not set chapter `status` from `extractStatus`.
+- Each `ChapterInfo` must include at least `id`, `title`, and absolute `url`.
+- Use `url`, not `sourceUrl`, inside `ChapterInfo`.
+- Do not use `new Date()` as a placeholder for chapter dates. Omit `date` when
+  the exact date cannot be parsed.
 - Do not use `this.dom`, `.select(...)`, or browser-like document APIs.
 - Prefer detail-page title signals such as `main h1`, detail title classes, or
   Open Graph title. Do not use recommendation card titles, footer titles,
