@@ -413,6 +413,31 @@ class DemoVerificationCapability extends VerificationCapability {
     expect(result.errors).toEqual([]);
   });
 
+  it('rejects bare Cloudflare keyword challenge detection', () => {
+    const result = validateCapabilityDraft(`
+import { CommonCapability, VerificationCapability } from '../adapter/base';
+
+class DemoCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean {
+    return new URL(url).hostname === 'demo.test';
+  }
+}
+
+class DemoVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean {
+    return /human verification|captcha|blocked|challenge|cloudflare|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+  }
+
+  describeVerificationHandoff(): Record<string, unknown> {
+    return { supported: true };
+  }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
+  });
+
   it('rejects common and verification drafts without verification capability', () => {
     const result = validateCapabilityDraft(`
 import { CommonCapability } from '../adapter/base';

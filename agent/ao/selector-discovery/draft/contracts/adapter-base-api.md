@@ -88,6 +88,18 @@ Do not bypass CAPTCHA, Cloudflare, browser fingerprinting, or any human
 verification. Only detect that handoff is required. ComicCrawler will use the
 official Task Detail handoff when a human needs to complete verification.
 
+Important Cloudflare rule:
+
+- Do not match the bare word `cloudflare` by itself. Normal, successfully loaded
+  pages often contain Cloudflare assets such as beacon scripts, rocket-loader,
+  or analytics text.
+- Only return `true` for challenge-specific signals, such as `cf-chl`,
+  `cf_clearance`, `Just a moment`, `Checking your browser`, `Attention Required`,
+  `human verification`, CAPTCHA text, known blocked-page text, or explicit
+  HTTP `403` / `429` / `503` error text.
+- A page that contains manga title, metadata, chapter list, or reader images is
+  not a verification page merely because it also contains Cloudflare scripts.
+
 ## Metadata capability
 
 Full adapters implement metadata. Chapter-only adapters do not.
@@ -217,6 +229,8 @@ Fill these fields:
   `this.adapter.resolveUrl(sourceUrl, rawHref)` for relative hrefs.
 - `number` optional: list order or parsed chapter number when reliable. Use
   `index + 1` only as ordering metadata when no real chapter number is parsed.
+  If the URL path contains a numeric chapter slug such as `chapter-51.2`, prefer
+  parsing `51.2` from the URL over list order.
 - `date` optional: set only if the page contains an exact parseable date. If the
   page says relative text such as `1 月前`, omit `date` and keep that text out of
   `ChapterInfo`.
@@ -255,6 +269,9 @@ Metadata extraction rules:
   before writing `ChapterInfo.url`.
 - Do not use `new Date()` as a placeholder for chapter dates. Omit `date` when
   the exact date cannot be parsed.
+- Keep relative date labels such as `1 月前`, `2 日前`, `3 hours ago`, or
+  `yesterday` out of `title`. They are not exact chapter dates and should not be
+  appended to `ChapterInfo.title`.
 - Do not throw when optional selectors are missing. Return `undefined` for
   optional scalar fields and `[]` for missing lists. Only `extractTitle` may
   return `'unknown'` when no title evidence exists.

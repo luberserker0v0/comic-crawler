@@ -1088,6 +1088,7 @@ function shouldRetryCapabilityDraft(draft: SelectorDiscoveryCapabilityDraft): bo
     error.includes('must not use new Date()') ||
     error.includes('must be absolute') ||
     error.includes('must be derived from the chapter URL path segment') ||
+    error.includes('must not match the bare word "cloudflare"') ||
     error.includes('must not implement metadata or chapter image extraction methods') ||
     error.includes('Do not redeclare ComicCrawler framework classes') ||
     error.includes('must not export an AdapterBase shell') ||
