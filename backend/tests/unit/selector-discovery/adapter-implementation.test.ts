@@ -284,6 +284,32 @@ class DemoMetadataCapability extends MetadataCapability {
     expect(result.errors).toContain('ChapterInfo.id must be derived from the chapter URL path segment, not list index.');
   });
 
+  it('accepts ChapterInfo object shorthand for id and url fields', () => {
+    const result = validateCapabilityDraft(`
+import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+import { MetadataCapability } from '../adapter/base';
+
+class DemoMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string { return 'Demo'; }
+  extractAuthor(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractDescription(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined { return undefined; }
+  extractTags(document: unknown, sourceUrl: string): string[] { return []; }
+  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined { return 'ongoing'; }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    const rawHref = '/manga/demo/chapter-1';
+    const url = this.adapter.resolveUrl(sourceUrl, rawHref);
+    const id = new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? 'chapter-1';
+    const title = 'Chapter 1';
+    return [{ id, title, url }];
+  }
+}
+`, { stage: 'metadata', target: 'full' });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   it('rejects combined capability handlers that use implements', () => {
     const result = validateCapabilityDraft(`
 import { CommonCapability, VerificationCapability } from '../adapter/base';

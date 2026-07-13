@@ -288,10 +288,10 @@ function validateMetadataCapabilityDraft(source: string): string[] {
     errors.push('ChapterInfo entries must not use ComicStatus for status; status is task state metadata, not comic publication status.');
   }
   const chapterListBody = extractMethodBody(source, 'extractChapterList');
-  if (chapterListBody && !/\bid\s*:/.test(chapterListBody)) {
+  if (chapterListBody && !hasObjectFieldOrShorthand(chapterListBody, 'id')) {
     errors.push('extractChapterList must populate ChapterInfo.id for each chapter.');
   }
-  if (chapterListBody && !/\burl\s*:/.test(chapterListBody)) {
+  if (chapterListBody && !hasObjectFieldOrShorthand(chapterListBody, 'url')) {
     errors.push('extractChapterList must populate ChapterInfo.url with an absolute chapter URL.');
   }
   if (chapterListBody && (/\bsourceUrl\s*:/.test(chapterListBody) || /[{,]\s*sourceUrl\s*[,}]/.test(chapterListBody))) {
@@ -322,6 +322,16 @@ function validateMetadataCapabilityDraft(source: string): string[] {
     errors.push('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
   }
   return errors;
+}
+
+function hasObjectFieldOrShorthand(source: string, field: string): boolean {
+  const escaped = escapeRegExp(field);
+  return new RegExp(`\\b${escaped}\\s*:`).test(source) ||
+    new RegExp(`[\\{,]\\s*${escaped}\\s*(?:[,\\}])`).test(source);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function extractMethodBody(source: string, methodName: string): string {
