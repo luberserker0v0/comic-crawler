@@ -14,6 +14,9 @@ Original metadata/catalog URL or chapter URL.
 ## AdapterBase Implementation Contract
 
 The task includes the required `AdapterBase` contract summary. Follow it exactly.
+Read `adapter-base-api.md` for imports, capability class usage, method
+signatures, return shapes, helper methods, and parseMode meaning before writing
+TypeScript.
 
 ## Phase 1 Result
 
@@ -23,6 +26,9 @@ Prior Markdown analysis from Phase 1.
 
 Sanitized, reduced chapter-page DOM evidence. It must represent the reader page,
 not a metadata page, challenge page, recommendation card, or unrelated page.
+
+Extraction functions must return complete arrays for the trusted DOM. Do not
+return previews such as first chapters or first image URLs.
 
 ## Required Output
 

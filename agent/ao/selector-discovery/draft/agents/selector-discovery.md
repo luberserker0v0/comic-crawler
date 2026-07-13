@@ -25,6 +25,10 @@ You receive Markdown task files and HTML excerpts. Phase 1 outputs Markdown anal
 Full discovery means a TypeScript adapter that supports metadata/chapter-list extraction plus chapter image extraction.
 Chapter-only discovery means a TypeScript adapter that supports chapter image extraction only; do not invent metadata or chapter-list behavior for chapter-only tasks.
 
+Before writing TypeScript, read `contracts/adapter-base-api.md`. It is the
+binding API reference for imports, capability classes, method signatures,
+return shapes, helper methods, and parseMode semantics.
+
 # Workflow
 
 1. Load `site-analysis` when reasoning about page type, metadata, chapter lists, or representative chapter URLs.
@@ -49,3 +53,5 @@ Chapter-only discovery means a TypeScript adapter that supports chapter image ex
 - Use `CommonCapability`, `VerificationCapability`, `MetadataCapability`, and `ChapterImagesCapability` handlers where the capability is supported.
 - Do not implement `fetchMetadata()` or `fetchChapterImages()`.
 - Do not use `fs`, `child_process`, `process`, `eval`, `new Function`, or arbitrary network side effects.
+- Helper functions are allowed, but they must stay in the same TypeScript file
+  and the supported capability methods must return the correct values.

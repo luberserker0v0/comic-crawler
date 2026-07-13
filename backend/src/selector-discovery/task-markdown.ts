@@ -29,9 +29,12 @@ Important rules:
 - Do not generate adapter code in Phase 1.
 - Use divide-and-conquer. Do not try to reason over the whole HTML at once.
 - If the chapter list appears partial, look for signals that the UI may collapse
-  older chapters behind "more", "show all", "expand", "????", or similar controls.
+  older chapters behind "more", "show all", "expand", "更多", "展开", "展開",
+  "全部章節", "全部章节", "目录", "目錄", or similar controls.
 - Selectors must describe the real catalog content, not navigation shortcuts such
   as "start reading" or "continue reading".
+- Chapter-list extraction must return all catalog chapters visible in the trusted
+  DOM, not a preview, first-chapters summary, or shortcut list.
 
 ## Source URL
 
@@ -87,6 +90,8 @@ Important rules:
 - Use divide-and-conquer. Analyze image containers and lazy-loading attributes separately.
 - Treat image extraction as the same reusable chapter-only unit used by direct
   chapter crawling.
+- Image extraction must return all comic page image URLs visible in the trusted
+  DOM, not firstImageUrls or a preview list.
 - Confirm the representative chapter DOM belongs to the representative chapter
   URL, not a metadata/catalog page from the same domain.
 - Do not use broad selectors such as body img or img[src] as the final image
@@ -174,6 +179,8 @@ This target implements only chapter image URL extraction:
 - Use divide-and-conquer. Analyze image containers, repeated image nodes, and lazy-loading attributes separately.
 - This is the reusable image extraction unit used by full discovery after
   metadata/chapter-list discovery chooses a representative chapter URL.
+- Image extraction must return all comic page image URLs visible in the trusted
+  DOM, not firstImageUrls or a preview list.
 - Confirm the DOM belongs to the requested reader/chapter URL, not a catalog page
   from the same domain.
 - Do not use broad selectors such as body img or img[src] as the final image
@@ -225,6 +232,8 @@ function adapterImplementationContract(mode: 'create' | 'augment', target: 'full
 
 - Output one TypeScript source file at outputs/adapter-implementation.ts.
 - Export exactly one site adapter class that extends AdapterBase.
+- Read and follow contracts/adapter-base-api.md for imports, capability class
+  usage, method signatures, return shapes, helper methods, and parseMode meaning.
 - Import AdapterBase and capability classes from ComicCrawler adapter base.
 - Declare id, name, domains, parseMode, and capabilities.
 - Implement CommonCapability.matchUrl for the site URL patterns.
@@ -233,6 +242,7 @@ ${metadataRequirement}
 - Implement chapterImages.extractChapterImageUrls for chapter reader pages when chapterImages capability is true.
 - Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler runtime composes those from fine-grained functions.
 - Keep all site-specific clicking, expansion, filtering, and extraction strategy visible in the adapter source.
+- Helper functions are allowed, but keep them in the same TypeScript source file.
 - Do not use filesystem, child_process, process, eval, new Function, or arbitrary network side effects.
 - Promotion mode: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id and add missing capability code.' : 'Create a new adapter implementation draft.'}
 `;

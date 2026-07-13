@@ -10,6 +10,8 @@ The final AO result has two files:
 The TypeScript file must:
 
 - export exactly one site adapter class that extends `AdapterBase`;
+- follow `contracts/adapter-base-api.md` for imports, capability class usage,
+  method signatures, return shapes, helper usage, and parseMode meaning;
 - declare `id`, `name`, `domains`, `parseMode`, and `capabilities`;
 - implement site URL matching through `CommonCapability`;
 - implement supported capability handlers using the `CommonCapability`,
@@ -19,6 +21,10 @@ The TypeScript file must:
   `fetchChapterImages()`;
 - keep site-specific expansion, filtering, and extraction logic visible in the
   adapter source;
+- return full extraction results from capability methods:
+  - `extractChapterList` returns all catalog chapters visible in the trusted DOM;
+  - `extractChapterImageUrls` returns all comic page image URLs visible in the
+    trusted reader DOM;
 - avoid filesystem access, child processes, `process`, `eval`, `new Function`,
   and arbitrary side effects.
 
@@ -62,6 +68,7 @@ verified browser DOM requirements, and URL mismatch risks.
 ## Reviewer Checklist
 
 - Adapter extends AdapterBase:
+- AdapterBase API reference followed:
 - No JSON output:
 - No fetchMetadata/fetchChapterImages implementation:
 - URL matching checked:

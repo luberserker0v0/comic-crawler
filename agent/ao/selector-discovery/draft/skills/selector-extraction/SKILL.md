@@ -31,9 +31,15 @@ metadata:
   title metadata before falling back to a generic first `h1`.
 - For chapter lists, reject navigation shortcuts such as "start reading" or
   "continue reading" when they point to one chapter but are not catalog entries.
+- `extractChapterList` must return every catalog chapter visible in the trusted
+  DOM, not a preview, sample, first page, first five entries, or UI shortcut.
+- `extractChapterImageUrls` must return every comic page image visible in the
+  trusted reader DOM, not `firstImageUrls` or a preview array.
 
 ## Implementation guidance
 
 Use selectors inside visible TypeScript adapter functions. If helper functions
 are useful, keep them in the same adapter source file so reviewers can see the
 site-specific strategy.
+Use `contracts/adapter-base-api.md` for exact capability method signatures and
+return shapes.

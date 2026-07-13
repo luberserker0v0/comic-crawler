@@ -54,6 +54,7 @@ State what kind of site/page this appears to be.
 - Item Selector:
 - Title Selector:
 - URL Selector:
+- Completeness:
 - Evidence:
 - Risk:
 

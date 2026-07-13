@@ -25,6 +25,10 @@ ComicCrawler-provided fetch summary, redirects, content type, and final URL.
 Sanitized, reduced metadata-page DOM evidence. Treat it as the only trusted page
 evidence for Phase 1.
 
+For chapter-list analysis, reason about the full catalog visible in the trusted
+DOM. Do not treat preview snippets, first chapters, or shortcut links as the
+complete chapter list.
+
 ## Required Output
 
 Write Markdown matching `phase1-output.md`.

@@ -15,6 +15,12 @@ metadata:
 - For full discovery, metadata functions cover title, author, cover, status, tags, optional description, and chapter list.
 - For chapter-only discovery, metadata and chapter-list behavior are explicitly not implemented.
 - Chapter image extraction is implemented for both full and chapter-only discovery.
+- The implementation follows `contracts/adapter-base-api.md` method signatures
+  and return shapes.
+- `extractChapterList` returns a complete `ChapterInfo[]` for the trusted DOM,
+  not a preview or first-chapters summary.
+- `extractChapterImageUrls` returns a complete `string[]` for comic page images,
+  not first image URLs or a preview list.
 - Evidence explains why the implementation logic matches the provided HTML.
 - Confidence states high, medium, or low with reasons.
 - For full discovery, the image selectors must be compatible with the reusable
