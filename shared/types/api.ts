@@ -63,7 +63,7 @@ export interface AdapterFunctionSourceResponse {
   notes: string;
 }
 
-export type AdapterImplementationSourceType = 'built-in' | 'dynamic' | 'summary';
+export type AdapterImplementationSourceType = 'built-in' | 'dynamic' | 'summary' | 'generated-draft';
 export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
 
 export interface AdapterImplementationSymbol {

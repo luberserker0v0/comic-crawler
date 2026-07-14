@@ -239,7 +239,7 @@ function getAdapterFromRequest(request: FastifyRequest, registry: AdapterRegistr
   return registry.get(id);
 }
 
-function describeAdapterFunctions(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterFunctionDescriptor[] {
+export function describeAdapterFunctions(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterFunctionDescriptor[] {
   const capabilities = getAdapterCapabilities(adapter);
   return [
     {

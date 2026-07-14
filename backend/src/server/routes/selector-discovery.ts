@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { AdapterFunctionTestRequest, AdapterImplementationResponse, AdapterImplementationSymbol } from '@comiccrawler/shared';
 import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '../../selector-discovery';
 import { runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '../../selector-discovery';
+import type { ChallengeDiscoveryService } from '../../challenge';
+import { instantiateAdapterImplementationDraft } from '../../selector-discovery/adapter-draft-runtime';
+import { describeAdapterFunctions, isKnownAdapterFunction, testAdapterFunction, type AdapterFunctionId } from './adapters';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { resolveRuntimeConfig } from '../../config/runtime';
@@ -10,7 +14,8 @@ export function setupSelectorDiscoveryRoutes(
   app: FastifyInstance,
   discoveryService: SelectorDiscoveryService,
   settingsStore: SelectorDiscoverySettingsStore,
-  bundleManager = new SelectorDiscoveryBundleManager()
+  bundleManager = new SelectorDiscoveryBundleManager(),
+  options: { challengeDiscoveryService?: ChallengeDiscoveryService } = {}
 ): void {
   app.get('/api/config/selector-discovery', async (_request: FastifyRequest, reply: FastifyReply) => {
     reply.send({ data: await settingsStore.getSummary() });
@@ -69,14 +74,15 @@ export function setupSelectorDiscoveryRoutes(
     reply.send({ data: await settingsStore.clearProvider() });
   });
 
-  setupDiscoveryJobRoutes(app, '/api/selector-discovery', discoveryService);
-  setupDiscoveryJobRoutes(app, '/api/site-discovery', discoveryService);
+  setupDiscoveryJobRoutes(app, '/api/selector-discovery', discoveryService, options);
+  setupDiscoveryJobRoutes(app, '/api/site-discovery', discoveryService, options);
 }
 
 function setupDiscoveryJobRoutes(
   app: FastifyInstance,
   prefix: '/api/selector-discovery' | '/api/site-discovery',
-  discoveryService: SelectorDiscoveryService
+  discoveryService: SelectorDiscoveryService,
+  options: { challengeDiscoveryService?: ChallengeDiscoveryService } = {}
 ): void {
   app.post(prefix, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -181,6 +187,83 @@ function setupDiscoveryJobRoutes(
     reply.send({ data: job });
   });
 
+  app.get(`${prefix}/:id/implementation`, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const job = await discoveryService.get(id);
+    if (!job) {
+      reply.code(404).send({ error: 'Discovery job not found.' });
+      return;
+    }
+    if (!job.adapterImplementationTs?.trim()) {
+      reply.code(404).send({ error: 'Discovery job has no adapter implementation draft.' });
+      return;
+    }
+
+    const data: AdapterImplementationResponse = {
+      adapterId: job.adapterId ?? `selector-discovery:${job.id}`,
+      sourceType: 'generated-draft',
+      language: 'typescript',
+      content: job.adapterImplementationTs,
+      outline: createImplementationOutline(job.adapterImplementationTs),
+      notes: 'AO-generated TypeScript adapter implementation draft. Function selection is a test target; review the full source as one artifact.',
+    };
+    reply.send({ data });
+  });
+
+  app.get(`${prefix}/:id/capabilities`, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const adapter = await instantiateDiscoveryDraftAdapter(discoveryService, id);
+      reply.send({
+        data: {
+          adapter: {
+            id: adapter.id,
+            name: adapter.name,
+            domains: adapter.domains,
+            parseMode: adapter.parseMode,
+            capabilities: adapter.capabilities,
+          },
+          functions: describeAdapterFunctions(adapter as any),
+        },
+      });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post(`${prefix}/:id/functions/:functionId/test`, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id, functionId } = request.params as { id: string; functionId: AdapterFunctionId };
+      if (!isKnownAdapterFunction(functionId)) {
+        reply.code(400).send({ error: 'Unknown adapter function.' });
+        return;
+      }
+      const body = request.body as AdapterFunctionTestRequest;
+      if (!body.url) {
+        reply.code(400).send({ error: 'URL is required.' });
+        return;
+      }
+      const adapter = await instantiateDiscoveryDraftAdapter(discoveryService, id);
+      const result = await testAdapterFunction(adapter as any, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+      });
+      reply.send({
+        data: {
+          ...result,
+          adapterId: `selector-discovery:${id}`,
+          resultSummary: {
+            ...(result.resultSummary ?? {}),
+            discoveryJobId: id,
+            draftAdapterId: adapter.id,
+          },
+        },
+      });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.post(`${prefix}/:id/retry`, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
@@ -235,6 +318,65 @@ function setupDiscoveryJobRoutes(
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+}
+
+async function instantiateDiscoveryDraftAdapter(discoveryService: SelectorDiscoveryService, id: string) {
+  const job = await discoveryService.get(id);
+  if (!job) {
+    throw new Error('Discovery job not found.');
+  }
+  if (!job.adapterImplementationTs?.trim()) {
+    throw new Error('Discovery job has no adapter implementation draft.');
+  }
+  if (job.implementationValidation && !job.implementationValidation.valid) {
+    throw new Error(`Adapter implementation draft is invalid: ${job.implementationValidation.errors.join('; ') || 'unknown error'}`);
+  }
+  return instantiateAdapterImplementationDraft(job.adapterImplementationTs);
+}
+
+function createImplementationOutline(source: string): AdapterImplementationSymbol[] {
+  const lines = source.split(/\r?\n/);
+  const symbols: AdapterImplementationSymbol[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const classMatch = /\b(?:export\s+)?class\s+(\w+)\s+extends\s+(\w+)/.exec(line);
+    if (classMatch?.[1]) {
+      symbols.push({
+        id: classMatch[1],
+        label: classMatch[1],
+        kind: 'class',
+        startLine: index + 1,
+        capability: capabilityFromBaseClass(classMatch[2]),
+      });
+      continue;
+    }
+    const methodMatch = /^\s*(?:public\s+|protected\s+|private\s+)?(?:override\s+)?(?:async\s+)?(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/.exec(line);
+    if (methodMatch?.[1]) {
+      symbols.push({
+        id: methodMatch[1],
+        label: methodMatch[1],
+        kind: 'method',
+        startLine: index + 1,
+        capability: capabilityFromFunction(methodMatch[1]),
+      });
+    }
+  }
+  return symbols;
+}
+
+function capabilityFromBaseClass(baseClass?: string): AdapterImplementationSymbol['capability'] {
+  if (baseClass === 'CommonCapability') return 'common';
+  if (baseClass === 'VerificationCapability') return 'verification';
+  if (baseClass === 'MetadataCapability') return 'metadata';
+  if (baseClass === 'ChapterImagesCapability') return 'chapterImages';
+  return undefined;
+}
+
+function capabilityFromFunction(functionId: string): AdapterImplementationSymbol['capability'] {
+  if (functionId === 'matchUrl') return 'common';
+  if (functionId === 'detectVerificationRequired' || functionId === 'describeVerificationHandoff') return 'verification';
+  if (functionId === 'extractChapterImageUrls') return 'chapterImages';
+  return 'metadata';
 }
 
 async function listBundleEvaluations(): Promise<Array<{

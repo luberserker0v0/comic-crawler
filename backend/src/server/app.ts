@@ -123,7 +123,9 @@ export class ComicCrawlerServer {
       setupSelectorDiscoveryRoutes(
         this.app,
         this.options.selectorDiscoveryService,
-        this.options.selectorDiscoverySettingsStore
+        this.options.selectorDiscoverySettingsStore,
+        undefined,
+        { challengeDiscoveryService: this.options.challengeDiscoveryService }
       );
     }
     if (this.options.challengeDiscoveryService) {
