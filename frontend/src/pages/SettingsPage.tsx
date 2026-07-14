@@ -4,6 +4,41 @@ import { SUPPORTED_LOCALES, type LocaleCode, useI18n } from '../text/i18n';
 import { api } from '../api/client';
 
 const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
+const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT = {
+  provider: {
+    opencode: {
+      name: 'OpenCode',
+      models: {
+        'deepseek-v4-flash-free': {
+          name: 'deepseek-v4-flash-free',
+        },
+        'big-pickle': {
+          name: 'big-pickle',
+        },
+        'mimo-v2.5-free': {
+          name: 'mimo-v2.5-free',
+        },
+      },
+    },
+    my_local_lmstudio: {
+      name: 'my local lmstudio',
+      npm: '@ai-sdk/openai-compatible',
+      options: {
+        baseURL: 'http://host.docker.internal:25555/v1',
+        apiKey: 'nopassword',
+      },
+      models: {
+        'gemma-4-e4b-uncensored-hauhaucs-aggressive': {
+          name: 'gemma-4-e4b-uncensored-hauhaucs-aggressive',
+        },
+        'qwen3.5-9b-uncensored-hauhaucs-aggressive': {
+          name: 'qwen3.5-9b-uncensored-hauhaucs-aggressive',
+        },
+      },
+    },
+  },
+};
+const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON = JSON.stringify(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT, null, 2);
 
 export const SettingsPage: React.FC = () => {
   const { config, loading, error, fetchConfig, updateConfig, resetConfig, clearError } = useConfigStore();
@@ -13,7 +48,7 @@ export const SettingsPage: React.FC = () => {
   const [selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations] = React.useState<any[]>([]);
   const [aoBaseUrl, setAoBaseUrl] = React.useState('');
   const [model, setModel] = React.useState(DEFAULT_SELECTOR_DISCOVERY_MODEL);
-  const [providerJson, setProviderJson] = React.useState('');
+  const [providerJson, setProviderJson] = React.useState(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
   const [selectorDiscoveryMessage, setSelectorDiscoveryMessage] = React.useState<string | null>(null);
   const [selectorDiscoveryPreflight, setSelectorDiscoveryPreflight] = React.useState<any | null>(null);
   const [cdpTestMessage, setCdpTestMessage] = React.useState<string | null>(null);
@@ -27,6 +62,11 @@ export const SettingsPage: React.FC = () => {
       setSelectorDiscoveryConfig(response.data);
       setAoBaseUrl(response.data.aoBaseUrl ?? '');
       setModel(response.data.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL);
+      if (response.data.configured) {
+        setProviderJson('');
+      } else {
+        setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
+      }
     }).catch(() => undefined);
     refreshSelectorDiscoveryBundleStatus();
     refreshSelectorDiscoveryBundleEvaluations();
@@ -110,9 +150,17 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleLoadDefaultSelectorDiscoveryProvider = () => {
+    setModel(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
+    setSelectorDiscoveryMessage('Loaded the default OpenCode provider template. Save selector-discovery to apply it.');
+  };
+
   const handleSelectorDiscoveryClear = async () => {
     const response = await api.clearSelectorDiscoveryProvider();
     setSelectorDiscoveryConfig(response.data);
+    setModel(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
     setSelectorDiscoveryMessage('Selector discovery provider cleared.');
   };
 
@@ -554,14 +602,28 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Provider JSON</label>
+          <div className="flex items-center justify-between gap-3">
+            <label className="block text-sm font-medium text-gray-700">Provider JSON</label>
+            <button
+              type="button"
+              onClick={handleLoadDefaultSelectorDiscoveryProvider}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              Load default provider template
+            </button>
+          </div>
           <textarea
             value={providerJson}
             onChange={(e) => setProviderJson(e.target.value)}
             rows={10}
-            placeholder='{ "provider": { "opencode": { "name": "OpenCode", "models": { "deepseek-v4-flash-free": { "name": "deepseek-v4-flash-free" } } } } }'
+            placeholder={DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON}
             className="mt-1 block w-full rounded-md border-gray-300 font-mono text-xs shadow-sm focus:border-blue-500 focus:ring-blue-500"
           />
+          {selectorDiscoveryConfig?.configured && !providerJson.trim() && (
+            <p className="mt-1 text-xs text-slate-500">
+              The saved provider JSON is intentionally hidden because it may contain secrets. Use the template button to replace it, then save.
+            </p>
+          )}
         </div>
         <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
           <div>Configured: {selectorDiscoveryConfig?.configured ? 'yes' : 'no'}</div>
@@ -569,6 +631,11 @@ export const SettingsPage: React.FC = () => {
           <div>Models: {(selectorDiscoveryConfig?.modelIds ?? []).join(', ') || '-'}</div>
           <div>Fingerprint: {selectorDiscoveryConfig?.providerFingerprint ?? '-'}</div>
         </div>
+        {selectorDiscoveryConfig?.configured && !(selectorDiscoveryConfig.modelIds ?? []).includes(model) && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            The selected model is not present in the saved provider summary. Load the default provider template, then save selector-discovery to update the provider.
+          </div>
+        )}
         {(selectorDiscoveryConfig?.warnings ?? []).length > 0 && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <div className="font-medium">Provider diagnostics</div>
