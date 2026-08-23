@@ -4,6 +4,8 @@ import type { AgentVersionSummary } from '../store';
 import { useWebSocket } from '../hooks';
 import { useLocalStorage } from '../hooks';
 import { formatText, useI18n } from '../text/i18n';
+import { api, getApiErrorMessage } from '../api/client';
+import type { SelectorDiscoveryJobSummary } from '@comiccrawler/shared';
 
 const badgeClassByStatus: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
@@ -15,6 +17,9 @@ const badgeClassByStatus: Record<string, string> = {
   failed: 'bg-rose-100 text-rose-700',
   in_progress: 'bg-blue-100 text-blue-700',
   running: 'bg-blue-100 text-blue-700',
+  queued: 'bg-blue-100 text-blue-700',
+  configuration_required: 'bg-amber-100 text-amber-700',
+  known_adapter: 'bg-slate-100 text-slate-700',
 };
 
 type PendingAction =
@@ -166,6 +171,25 @@ function formatCooldown(ms: number): string {
   return `${seconds}s`;
 }
 
+function isActiveBuildJob(job: SelectorDiscoveryJobSummary): boolean {
+  return job.status === 'queued' || job.status === 'running';
+}
+
+function formatBuildJobTarget(text: ReturnType<typeof useI18n>['text'], job: SelectorDiscoveryJobSummary): string {
+  return job.target === 'chapter-only' ? text.agent.buildJobChapterOnly : text.agent.buildJobFull;
+}
+
+function formatBuildJobMode(text: ReturnType<typeof useI18n>['text'], job: SelectorDiscoveryJobSummary): string {
+  return job.promotionMode === 'augment' ? text.agent.buildJobAugment : text.agent.buildJobCreate;
+}
+
+function formatDateTime(value: string | undefined): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export const AgentPage: React.FC = () => {
   const {
     adapters,
@@ -186,6 +210,9 @@ export const AgentPage: React.FC = () => {
   const [selectedVersionId, setSelectedVersionId] = useLocalStorage<string | null>('agent:selected-version', null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [persistedAdapterId, setPersistedAdapterId] = useLocalStorage<string | null>('agent:selected-adapter', null);
+  const [buildJobs, setBuildJobs] = useState<SelectorDiscoveryJobSummary[]>([]);
+  const [buildJobsLoading, setBuildJobsLoading] = useState(false);
+  const [buildJobsError, setBuildJobsError] = useState<string | null>(null);
   const wsUrl = typeof window !== 'undefined'
     ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
     : '';
@@ -203,6 +230,36 @@ export const AgentPage: React.FC = () => {
   useEffect(() => {
     fetchAdapters();
   }, [fetchAdapters]);
+
+  const fetchBuildJobs = useCallback(async () => {
+    setBuildJobsLoading(true);
+    try {
+      const response = await api.listSelectorDiscoveries();
+      const jobs = [...(response.data.jobs ?? [])].sort((a, b) => (
+        new Date(b.updatedAt ?? b.createdAt).getTime() - new Date(a.updatedAt ?? a.createdAt).getTime()
+      ));
+      setBuildJobs(jobs);
+      setBuildJobsError(null);
+    } catch (error) {
+      setBuildJobsError(getApiErrorMessage(error));
+    } finally {
+      setBuildJobsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchBuildJobs();
+  }, [fetchBuildJobs]);
+
+  useEffect(() => {
+    if (!buildJobs.some(isActiveBuildJob)) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void fetchBuildJobs();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [buildJobs, fetchBuildJobs]);
 
   useEffect(() => {
     if (!selectedAdapterId && adapters.length > 0) {
@@ -295,6 +352,7 @@ export const AgentPage: React.FC = () => {
         <button
           onClick={() => {
             void fetchAdapters();
+            void fetchBuildJobs();
             if (selectedAdapterId) {
               void selectAdapter(selectedAdapterId);
             }
@@ -342,6 +400,77 @@ export const AgentPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      <section className="overflow-hidden rounded-2xl bg-white shadow">
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-6 py-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{text.agent.buildJobs}</h2>
+            <p className="mt-1 text-sm text-slate-500">{text.agent.buildJobsDescription}</p>
+            <p className="mt-1 text-xs text-slate-400">{text.agent.buildJobTaskBoundary}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void fetchBuildJobs()}
+            disabled={buildJobsLoading}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {buildJobsLoading ? `${text.agent.refresh}...` : text.agent.refresh}
+          </button>
+        </div>
+        {buildJobsError && (
+          <div className="border-b border-rose-100 bg-rose-50 px-6 py-3 text-sm text-rose-700">{buildJobsError}</div>
+        )}
+        <div className="divide-y divide-slate-100">
+          {buildJobs.map((job) => (
+            <div key={job.id} className="px-6 py-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm font-semibold text-slate-900">{job.id}</span>
+                    <StatusBadge text={text} value={job.status} />
+                    {job.phase && <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{job.phase}</span>}
+                  </div>
+                  <div className="mt-2 break-all text-sm text-slate-700">{job.normalizedUrl ?? job.url}</div>
+                  <div className="mt-1 text-xs text-slate-500">{job.hostname}</div>
+                </div>
+                <div className="grid gap-3 text-sm text-slate-600 sm:grid-cols-2 lg:min-w-[30rem]">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobTarget}</div>
+                    <div className="mt-1 font-medium text-slate-800">{formatBuildJobTarget(text, job)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobMode}</div>
+                    <div className="mt-1 font-medium text-slate-800">{formatBuildJobMode(text, job)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobAdapter}</div>
+                    <div className="mt-1 break-all font-medium text-slate-800">{job.adapterName ?? job.adapterId ?? job.baseAdapterId ?? '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobUpdated}</div>
+                    <div className="mt-1 font-medium text-slate-800">{formatDateTime(job.updatedAt)}</div>
+                  </div>
+                </div>
+              </div>
+              {job.error && (
+                <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50 p-3 text-sm text-rose-700">
+                  <span className="font-medium">{text.agent.buildJobError}: </span>
+                  {String(job.error)}
+                </div>
+              )}
+              {Boolean(job.implementationValidation) && (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <span className="font-medium">implementationValidation: </span>
+                  <span className="font-mono">{JSON.stringify(job.implementationValidation)}</span>
+                </div>
+              )}
+            </div>
+          ))}
+          {buildJobs.length === 0 && !buildJobsLoading && (
+            <div className="px-6 py-10 text-center text-sm text-slate-500">{text.agent.noBuildJobs}</div>
+          )}
+        </div>
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1.95fr]">
         <section className="overflow-hidden rounded-2xl bg-white shadow">

@@ -383,6 +383,7 @@ export interface SelectorDiscoveryJobSummary {
   target?: SelectorDiscoveryTarget;
   promotionMode?: 'create' | 'augment';
   baseAdapterId?: string;
+  phase?: string;
   createdAt: string;
   updatedAt: string;
   candidateMarkdown?: string;
@@ -393,6 +394,10 @@ export interface SelectorDiscoveryJobSummary {
   error?: string;
   adapterId?: string;
   adapterName?: string;
+}
+
+export interface SelectorDiscoveryJobListResponse {
+  jobs: SelectorDiscoveryJobSummary[];
 }
 
 export interface ChallengeHandoffJobSummary {

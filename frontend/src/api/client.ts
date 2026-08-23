@@ -28,6 +28,7 @@ import type {
   OpenVerificationBrowserRequest,
   SaveAdapterDraftContentRequest,
   SelectorDiscoveryConfigRequest,
+  SelectorDiscoveryJobListResponse,
   SelectorDiscoveryJobSummary,
   SelectorDiscoverySettingsSummary,
   TaskDetailResponse,
@@ -335,6 +336,11 @@ export class ApiClient {
 
   async createSelectorDiscoveryFromSnapshot(input: CreateSelectorDiscoverySnapshotRequest): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/snapshot`, input);
+    return response.data;
+  }
+
+  async listSelectorDiscoveries(): Promise<ApiResponse<SelectorDiscoveryJobListResponse>> {
+    const response = await this.client.get(API_ENDPOINTS.selectorDiscovery);
     return response.data;
   }
 

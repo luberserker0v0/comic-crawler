@@ -105,6 +105,7 @@ export type {
   CreateSelectorDiscoveryRequest,
   CreateSelectorDiscoverySnapshotRequest,
   SelectorDiscoveryJobSummary,
+  SelectorDiscoveryJobListResponse,
   ChallengeHandoffJobSummary,
   OpenVerificationBrowserRequest,
   ConfigResponse,

@@ -253,6 +253,14 @@ export const NewTaskForm: React.FC = () => {
             </div>
           )}
 
+          <div className="mt-2 rounded border border-amber-300 bg-white p-2">
+            <div>{adapterBuildTask.target === 'chapter-only' ? text.taskForm.chapterOnlyDiscoveryQueued : text.taskForm.fullDiscoveryQueued}</div>
+            <div className="mt-1 text-amber-800">{text.taskForm.discoveryNotCrawlerTask}</div>
+            <Link to="/agent" className="mt-2 inline-block font-medium underline">
+              {text.taskForm.openDiscovery}
+            </Link>
+          </div>
+
           {adapterBuildTask.status === 'configuration_required' && (
             <div className="mt-2 rounded border border-amber-300 bg-white p-2">
               Selector discovery needs AO URL, provider JSON, and model before this adapter build task can run.{' '}
