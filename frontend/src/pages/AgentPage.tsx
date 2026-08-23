@@ -7,6 +7,8 @@ import { formatText, useI18n } from '../text/i18n';
 import { api, getApiErrorMessage } from '../api/client';
 import type { SelectorDiscoveryJobSummary } from '@comiccrawler/shared';
 
+const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
+
 const badgeClassByStatus: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
   candidate: 'bg-amber-100 text-amber-700',
@@ -175,6 +177,10 @@ function isActiveBuildJob(job: SelectorDiscoveryJobSummary): boolean {
   return job.status === 'queued' || job.status === 'running';
 }
 
+function canRetryBuildJob(job: SelectorDiscoveryJobSummary): boolean {
+  return job.status === 'invalid' || job.status === 'failed';
+}
+
 function formatBuildJobTarget(text: ReturnType<typeof useI18n>['text'], job: SelectorDiscoveryJobSummary): string {
   return job.target === 'chapter-only' ? text.agent.buildJobChapterOnly : text.agent.buildJobFull;
 }
@@ -213,6 +219,7 @@ export const AgentPage: React.FC = () => {
   const [buildJobs, setBuildJobs] = useState<SelectorDiscoveryJobSummary[]>([]);
   const [buildJobsLoading, setBuildJobsLoading] = useState(false);
   const [buildJobsError, setBuildJobsError] = useState<string | null>(null);
+  const [retryingBuildJobId, setRetryingBuildJobId] = useState<string | null>(null);
   const wsUrl = typeof window !== 'undefined'
     ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
     : '';
@@ -246,6 +253,18 @@ export const AgentPage: React.FC = () => {
       setBuildJobsLoading(false);
     }
   }, []);
+
+  const retryBuildJob = useCallback(async (id: string) => {
+    setRetryingBuildJobId(id);
+    try {
+      await api.retrySelectorDiscovery(id);
+      await fetchBuildJobs();
+    } catch (error) {
+      setBuildJobsError(getApiErrorMessage(error));
+    } finally {
+      setRetryingBuildJobId(null);
+    }
+  }, [fetchBuildJobs]);
 
   useEffect(() => {
     void fetchBuildJobs();
@@ -450,8 +469,21 @@ export const AgentPage: React.FC = () => {
                     <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobUpdated}</div>
                     <div className="mt-1 font-medium text-slate-800">{formatDateTime(job.updatedAt)}</div>
                   </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobModel}</div>
+                    <div className="mt-1 break-all font-medium text-slate-800">{job.model ?? '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{text.agent.buildJobAoUrl}</div>
+                    <div className="mt-1 break-all font-medium text-slate-800">{job.aoBaseUrl ?? '-'}</div>
+                  </div>
                 </div>
               </div>
+              {job.model && job.model !== DEFAULT_SELECTOR_DISCOVERY_MODEL && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  {text.agent.buildJobNonDefaultModel}: <span className="font-mono">{job.model}</span>
+                </div>
+              )}
               {job.error && (
                 <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50 p-3 text-sm text-rose-700">
                   <span className="font-medium">{text.agent.buildJobError}: </span>
@@ -463,6 +495,16 @@ export const AgentPage: React.FC = () => {
                   <span className="font-medium">implementationValidation: </span>
                   <span className="font-mono">{JSON.stringify(job.implementationValidation)}</span>
                 </div>
+              )}
+              {canRetryBuildJob(job) && (
+                <button
+                  type="button"
+                  onClick={() => void retryBuildJob(job.id)}
+                  disabled={retryingBuildJobId === job.id}
+                  className="mt-3 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {retryingBuildJobId === job.id ? `${text.agent.retryBuild}...` : text.agent.retryBuild}
+                </button>
               )}
             </div>
           ))}

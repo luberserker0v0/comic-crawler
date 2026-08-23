@@ -244,13 +244,24 @@ function validateCommonVerificationDraft(source: string): string[] {
     errors.push('VerificationCapability must implement describeVerificationHandoff().');
   }
   const verificationBody = extractMethodBody(source, 'detectVerificationRequired');
-  if (verificationBody && /cloudflare/i.test(verificationBody) && !/cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required/i.test(verificationBody)) {
+  if (verificationBody && hasBareCloudflareRegexAlternative(verificationBody)) {
+    errors.push('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
+  } else if (verificationBody && /cloudflare/i.test(verificationBody) && !hasCloudflareChallengeSpecificSignal(verificationBody)) {
     errors.push('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
   }
   if (/\bextract(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\s*\(/.test(source)) {
     errors.push('Common/verification draft must not implement metadata or chapter image extraction methods.');
   }
   return errors;
+}
+
+function hasBareCloudflareRegexAlternative(value: string): boolean {
+  return /(?:\/|\|)\s*cloudflare\s*(?:\||\/[a-z]*)/i.test(value);
+}
+
+function hasCloudflareChallengeSpecificSignal(value: string): boolean {
+  return /cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required/i.test(value)
+    || /cloudflare.{0,80}(?:challenge|verification)|(?:challenge|verification).{0,80}cloudflare/i.test(value);
 }
 
 function validateMetadataCapabilityDraft(source: string): string[] {

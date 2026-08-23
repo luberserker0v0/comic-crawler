@@ -347,11 +347,14 @@ export class SelectorDiscoveryService {
       }
       const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
       const existingAdapterContext = await this.createExistingAdapterContext(job);
+      const phase1OutputPath = 'outputs/phase1-output.md';
       const phase1 = await this.runAoPhase(client, bundle, model, createPhase1TaskMarkdown({
         url: job.normalizedUrl,
         metadataFetch,
         existingAdapter: existingAdapterContext,
-      }), 'outputs/phase1-output.md');
+      }), phase1OutputPath, {
+        validate: validatePhase1Markdown,
+      });
       const phase1Validation = validatePhase1Markdown(phase1);
       if (!phase1Validation.valid) {
         await this.updateJob(job.id, {
@@ -360,7 +363,12 @@ export class SelectorDiscoveryService {
           phase1Markdown: phase1,
           model,
           aoBaseUrl,
-          error: phase1Validation.errors.join('; '),
+          error: formatAoPhaseFailureError({
+            outputPath: phase1OutputPath,
+            model,
+            errors: phase1Validation.errors,
+            emptyOutput: !phase1.trim(),
+          }),
         });
         return;
       }
@@ -391,16 +399,22 @@ export class SelectorDiscoveryService {
     bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
     model: string,
     taskMarkdown: string,
-    outputPath: string
+    outputPath: string,
+    options: {
+      validate?: (markdown: string) => { valid: boolean; errors: string[] };
+    } = {}
   ): Promise<string> {
-    const conversationId = await client.createConversation();
-    try {
-      await this.bundleManager.upload(client, conversationId, bundle);
-      await client.uploadFile(conversationId, 'task.md', taskMarkdown);
-      await client.start(conversationId);
-      const response = await client.message(
-        conversationId,
-        `${taskMarkdown}
+    let lastOutput = '';
+    let retryFeedback = '';
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const conversationId = await client.createConversation();
+      try {
+        await this.bundleManager.upload(client, conversationId, bundle);
+        await client.uploadFile(conversationId, 'task.md', taskMarkdown);
+        await client.start(conversationId);
+        const response = await client.message(
+          conversationId,
+          `${taskMarkdown}
 
 ## Required AO Output
 
@@ -408,15 +422,25 @@ Write the full Markdown result to ${outputPath}.
 
 Also return the same Markdown result in your chat response. Do not only summarize. Do not output JSON.
 
-Use the exact Markdown headings required by the referenced contract file. Do not rename, decorate, or add parenthetical suffixes to required headings. If this is the final candidate, the first required section must be exactly "## Adapter Identity".`,
-        model,
-        DEFAULT_SELECTOR_DISCOVERY_AGENT
-      );
-      const output = await client.readFile(conversationId, outputPath).catch(() => '');
-      return output.trim() || response.text?.trim() || '';
-    } finally {
-      await client.deleteConversation(conversationId).catch(() => undefined);
+Use the exact Markdown headings required by the referenced contract file. Do not rename, decorate, or add parenthetical suffixes to required headings. If this is the final candidate, the first required section must be exactly "## Adapter Identity".
+${retryFeedback}`,
+          model,
+          DEFAULT_SELECTOR_DISCOVERY_AGENT
+        );
+        const output = await client.readFile(conversationId, outputPath).catch(() => '');
+        lastOutput = output.trim() || response.text?.trim() || '';
+        const validation = options.validate?.(lastOutput);
+        if (!options.validate || validation?.valid) {
+          return lastOutput;
+        }
+        if (attempt < 2 && validation) {
+          retryFeedback = createAoPhaseRetryFeedback(outputPath, lastOutput, validation.errors);
+        }
+      } finally {
+        await client.deleteConversation(conversationId).catch(() => undefined);
+      }
     }
+    return lastOutput;
   }
 
   private async runAoImplementationPhase(
@@ -1129,6 +1153,41 @@ function createCapabilityRetryFeedback(draft: SelectorDiscoveryCapabilityDraft, 
   return lines.join('\n');
 }
 
+function createAoPhaseRetryFeedback(outputPath: string, output: string, errors: string[]): string {
+  const lines = [
+    '',
+    '## Retry Feedback',
+    '',
+    output.trim()
+      ? `The previous response did not match the required Markdown contract for ${outputPath}.`
+      : `The previous response did not write or return any Markdown for ${outputPath}.`,
+    '',
+    'Fix these issues and write the complete Markdown result again:',
+    ...errors.map((error) => `- ${error}`),
+    '',
+    `You must write the full corrected Markdown to ${outputPath}.`,
+    'Also return the same full corrected Markdown in chat.',
+    'Do not summarize, do not wait for another agent, and do not output JSON.',
+  ];
+  return lines.join('\n');
+}
+
+function formatAoPhaseFailureError(input: {
+  outputPath: string;
+  model: string;
+  errors: string[];
+  emptyOutput: boolean;
+}): string {
+  const prefix = input.emptyOutput
+    ? `AO did not produce Phase 1 Markdown at ${input.outputPath}.`
+    : `AO Phase 1 Markdown did not match the required contract at ${input.outputPath}.`;
+  return [
+    prefix,
+    `Model: ${input.model}.`,
+    ...input.errors,
+  ].join(' ');
+}
+
 function extractFirstTypeScriptFence(text: string): string {
   const match = /```(?:typescript|ts)\s*([\s\S]*?)```/i.exec(text);
   return match?.[1]?.trim() ?? '';
@@ -1323,7 +1382,7 @@ class ${classPrefix}CommonCapability extends CommonCapability {
 
 class ${classPrefix}VerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
-    return /human verification|captcha|blocked|challenge|cloudflare|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+    return /human verification|captcha|blocked|challenge|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
 
   describeVerificationHandoff(): Record<string, unknown> {

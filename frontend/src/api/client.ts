@@ -349,6 +349,11 @@ export class ApiClient {
     return response.data;
   }
 
+  async retrySelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
+    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/retry`);
+    return response.data;
+  }
+
   async promoteSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/promote`);
     return response.data;

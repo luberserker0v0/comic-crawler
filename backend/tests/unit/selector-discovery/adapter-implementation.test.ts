@@ -1,4 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { validateAdapterImplementationDraft, validateCapabilityDraft } from '../../../src/selector-discovery/adapter-implementation';
 
 const VALID_CHAPTER_ONLY_ADAPTER = `
@@ -436,6 +438,39 @@ class DemoVerificationCapability extends VerificationCapability {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
+  });
+
+  it('accepts Cloudflare challenge-specific verification signals', () => {
+    const result = validateCapabilityDraft(`
+import { CommonCapability, VerificationCapability } from '../adapter/base';
+
+class DemoCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean {
+    return new URL(url).hostname === 'demo.test';
+  }
+}
+
+class DemoVerificationCapability extends VerificationCapability {
+  detectVerificationRequired(input: string): boolean {
+    return /cloudflare.{0,80}(?:challenge|verification)|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required/i.test(input);
+  }
+
+  describeVerificationHandoff(): Record<string, unknown> {
+    return { supported: true };
+  }
+}
+`, { stage: 'common-verification' });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('keeps the common-verification AO template free of bare Cloudflare matches', () => {
+    const template = readFileSync(join(process.cwd(), '..', 'agent/ao/selector-discovery/draft/contracts/common-verification-template.ts'), 'utf-8');
+
+    expect(template).not.toMatch(/\|cloudflare\|/i);
+    expect(template).toMatch(/cf\[-_\]\?chl/);
+    expect(template).toMatch(/cf_clearance/);
   });
 
   it('rejects common and verification drafts without verification capability', () => {

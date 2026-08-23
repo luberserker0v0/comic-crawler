@@ -384,6 +384,8 @@ export interface SelectorDiscoveryJobSummary {
   promotionMode?: 'create' | 'augment';
   baseAdapterId?: string;
   phase?: string;
+  model?: string;
+  aoBaseUrl?: string;
   createdAt: string;
   updatedAt: string;
   candidateMarkdown?: string;

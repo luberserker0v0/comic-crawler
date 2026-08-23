@@ -218,6 +218,8 @@ export const SettingsPage: React.FC = () => {
   const bundleFreezeCommand = latestPassedEvaluation
     ? `comiccrawler agent bundle-freeze --eval-bundle-hash ${latestPassedEvaluation.hash}`
     : 'Run bundle-eval first; no passing evaluation artifact is available yet.';
+  const selectorDiscoveryUsesRecommendedModel = selectorDiscoveryConfig?.model === DEFAULT_SELECTOR_DISCOVERY_MODEL;
+  const selectorDiscoveryProviderContainsRecommendedModel = (selectorDiscoveryConfig?.modelIds ?? []).includes(DEFAULT_SELECTOR_DISCOVERY_MODEL);
 
   if (loading && !config) {
     return <div className="py-8 text-center">{text.settings.loading}</div>;
@@ -634,6 +636,18 @@ export const SettingsPage: React.FC = () => {
         {selectorDiscoveryConfig?.configured && !(selectorDiscoveryConfig.modelIds ?? []).includes(model) && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             The selected model is not present in the saved provider summary. Load the default provider template, then save selector-discovery to update the provider.
+          </div>
+        )}
+        {selectorDiscoveryConfig?.configured && (!selectorDiscoveryUsesRecommendedModel || !selectorDiscoveryProviderContainsRecommendedModel) && (
+          <div className="rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900">
+            <div className="font-medium">Selector-discovery is still using a non-recommended saved model/provider.</div>
+            <div className="mt-1">
+              Recommended model: <span className="font-mono">{DEFAULT_SELECTOR_DISCOVERY_MODEL}</span>.
+              Current saved model: <span className="font-mono">{selectorDiscoveryConfig.model ?? '-'}</span>.
+            </div>
+            <div className="mt-1">
+              Load the default provider template and save selector-discovery if you want future adapter builds to use the recommended OpenCode provider.
+            </div>
           </div>
         )}
         {(selectorDiscoveryConfig?.warnings ?? []).length > 0 && (
