@@ -2,16 +2,13 @@ import React from 'react';
 import { useConfigStore, type GlobalConfig } from '../store';
 import { SUPPORTED_LOCALES, type LocaleCode, useI18n } from '../text/i18n';
 import { api } from '../api/client';
+import type { SelectorDiscoveryAoModelsResponse } from '@comiccrawler/shared';
 
-const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
 const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT = {
   provider: {
     opencode: {
       name: 'OpenCode',
       models: {
-        'deepseek-v4-flash-free': {
-          name: 'deepseek-v4-flash-free',
-        },
         'big-pickle': {
           name: 'big-pickle',
         },
@@ -46,8 +43,10 @@ export const SettingsPage: React.FC = () => {
   const [selectorDiscoveryConfig, setSelectorDiscoveryConfig] = React.useState<any | null>(null);
   const [selectorDiscoveryBundleStatus, setSelectorDiscoveryBundleStatus] = React.useState<any | null>(null);
   const [selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations] = React.useState<any[]>([]);
+  const [selectorDiscoveryAoModels, setSelectorDiscoveryAoModels] = React.useState<SelectorDiscoveryAoModelsResponse | null>(null);
+  const [selectorDiscoveryAoModelsLoading, setSelectorDiscoveryAoModelsLoading] = React.useState(false);
   const [aoBaseUrl, setAoBaseUrl] = React.useState('');
-  const [model, setModel] = React.useState(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+  const [model, setModel] = React.useState('');
   const [providerJson, setProviderJson] = React.useState(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
   const [selectorDiscoveryMessage, setSelectorDiscoveryMessage] = React.useState<string | null>(null);
   const [selectorDiscoveryPreflight, setSelectorDiscoveryPreflight] = React.useState<any | null>(null);
@@ -61,7 +60,7 @@ export const SettingsPage: React.FC = () => {
     api.getSelectorDiscoveryConfig().then((response) => {
       setSelectorDiscoveryConfig(response.data);
       setAoBaseUrl(response.data.aoBaseUrl ?? '');
-      setModel(response.data.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL);
+      setModel(response.data.model ?? '');
       if (response.data.configured) {
         setProviderJson('');
       } else {
@@ -137,10 +136,11 @@ export const SettingsPage: React.FC = () => {
     setSelectorDiscoveryMessage(null);
     setSelectorDiscoveryPreflight(null);
     try {
+      const trimmedProviderJson = providerJson.trim();
       const response = await api.updateSelectorDiscoveryConfig({
         aoBaseUrl,
         model,
-        providerDocument: JSON.parse(providerJson),
+        ...(trimmedProviderJson ? { providerDocument: JSON.parse(trimmedProviderJson) } : {}),
       });
       setSelectorDiscoveryConfig(response.data);
       setSelectorDiscoveryMessage('Selector discovery settings saved.');
@@ -151,15 +151,15 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleLoadDefaultSelectorDiscoveryProvider = () => {
-    setModel(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+    setModel('');
     setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-    setSelectorDiscoveryMessage('Loaded the default OpenCode provider template. Save selector-discovery to apply it.');
+    setSelectorDiscoveryMessage('Loaded the OpenCode provider template. Pick a model returned by AO, then save selector-discovery.');
   };
 
   const handleSelectorDiscoveryClear = async () => {
     const response = await api.clearSelectorDiscoveryProvider();
     setSelectorDiscoveryConfig(response.data);
-    setModel(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+    setModel('');
     setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
     setSelectorDiscoveryMessage('Selector discovery provider cleared.');
   };
@@ -170,10 +170,36 @@ export const SettingsPage: React.FC = () => {
     try {
       const response = await api.testSelectorDiscoveryConfig();
       setSelectorDiscoveryPreflight(response.data);
+      setSelectorDiscoveryAoModels({
+        conversationId: response.data.conversationId,
+        bundleHash: response.data.bundleHash,
+        providers: response.data.providers ?? [],
+        models: response.data.models ?? [],
+      });
       setSelectorDiscoveryMessage(`AO smoke test passed. Bundle ${response.data.bundleHash?.slice(0, 12) ?? '-'} / ${response.data.model}`);
     } catch (err: any) {
       setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
       setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
+    }
+  };
+
+  const handleRefreshSelectorDiscoveryAoModels = async () => {
+    setSelectorDiscoveryMessage(null);
+    setSelectorDiscoveryPreflight(null);
+    setSelectorDiscoveryAoModelsLoading(true);
+    try {
+      const response = await api.getSelectorDiscoveryAoModels();
+      setSelectorDiscoveryAoModels(response.data);
+      const containsSelectedModel = response.data.models.some((item) => item.id === model);
+      setSelectorDiscoveryMessage(
+        `AO returned ${response.data.providers.length} providers and ${response.data.models.length} models.`
+        + (containsSelectedModel ? '' : ` Selected model "${model}" was not found in AO provider list.`)
+      );
+    } catch (err: any) {
+      setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
+      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
+    } finally {
+      setSelectorDiscoveryAoModelsLoading(false);
     }
   };
 
@@ -218,8 +244,7 @@ export const SettingsPage: React.FC = () => {
   const bundleFreezeCommand = latestPassedEvaluation
     ? `comiccrawler agent bundle-freeze --eval-bundle-hash ${latestPassedEvaluation.hash}`
     : 'Run bundle-eval first; no passing evaluation artifact is available yet.';
-  const selectorDiscoveryUsesRecommendedModel = selectorDiscoveryConfig?.model === DEFAULT_SELECTOR_DISCOVERY_MODEL;
-  const selectorDiscoveryProviderContainsRecommendedModel = (selectorDiscoveryConfig?.modelIds ?? []).includes(DEFAULT_SELECTOR_DISCOVERY_MODEL);
+  const aoModelOptions = selectorDiscoveryAoModels?.models ?? [];
 
   if (loading && !config) {
     return <div className="py-8 text-center">{text.settings.loading}</div>;
@@ -578,6 +603,9 @@ export const SettingsPage: React.FC = () => {
           <p className="mt-1 text-sm text-slate-500">
             AO URL, provider JSON, and model are required. Provider secrets are accepted here but are not returned by the API.
           </p>
+          <p className="mt-1 text-sm text-slate-500">
+            {text.settings.selectorDiscoveryIndependentSave}
+          </p>
           <p className="mt-1 text-sm text-amber-700">
             Token file references must be readable by AO/OpenCode, not just by ComicCrawler. If AO runs in Docker, use a mounted AO-visible path.
           </p>
@@ -595,12 +623,35 @@ export const SettingsPage: React.FC = () => {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Model</label>
-            <input
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-            />
+            <div className="mt-1 flex gap-2">
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                list="selector-discovery-ao-models"
+                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              />
+              <button
+                type="button"
+                onClick={handleRefreshSelectorDiscoveryAoModels}
+                disabled={!selectorDiscoveryConfig?.configured || selectorDiscoveryAoModelsLoading}
+                className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                {selectorDiscoveryAoModelsLoading ? 'Loading...' : 'Refresh AO models'}
+              </button>
+            </div>
+            <datalist id="selector-discovery-ao-models">
+              {aoModelOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name ? `${item.name} (${item.status ?? 'unknown'})` : item.status ?? item.providerId}
+                </option>
+              ))}
+            </datalist>
+            {aoModelOptions.length > 0 && (
+              <p className="mt-1 text-xs text-slate-500">
+                AO listed {selectorDiscoveryAoModels?.providers.length ?? 0} providers and {aoModelOptions.length} models from a temporary conversation.
+              </p>
+            )}
           </div>
         </div>
         <div>
@@ -633,21 +684,49 @@ export const SettingsPage: React.FC = () => {
           <div>Models: {(selectorDiscoveryConfig?.modelIds ?? []).join(', ') || '-'}</div>
           <div>Fingerprint: {selectorDiscoveryConfig?.providerFingerprint ?? '-'}</div>
         </div>
-        {selectorDiscoveryConfig?.configured && !(selectorDiscoveryConfig.modelIds ?? []).includes(model) && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            The selected model is not present in the saved provider summary. Load the default provider template, then save selector-discovery to update the provider.
+        {selectorDiscoveryAoModels && (
+          <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <div className="font-medium">AO available providers/models</div>
+            <div className="mt-1 text-xs">
+              Source: temporary AO conversation. Provider options and secrets are not displayed.
+            </div>
+            <div className="mt-2 max-h-52 overflow-auto rounded bg-white">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="px-2 py-1 font-medium">Provider</th>
+                    <th className="px-2 py-1 font-medium">Model</th>
+                    <th className="px-2 py-1 font-medium">Name</th>
+                    <th className="px-2 py-1 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aoModelOptions.slice(0, 80).map((item) => (
+                    <tr key={item.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1 font-mono">{item.providerId}</td>
+                      <td className="px-2 py-1 font-mono">{item.id}</td>
+                      <td className="px-2 py-1">{item.name ?? '-'}</td>
+                      <td className="px-2 py-1">{item.status ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {aoModelOptions.length > 80 && (
+                <div className="border-t border-slate-100 px-2 py-1 text-xs text-slate-500">
+                  Showing first 80 of {aoModelOptions.length} models.
+                </div>
+              )}
+            </div>
+            {aoModelOptions.length > 0 && !aoModelOptions.some((item) => item.id === model) && (
+              <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                The current model is not in AO's provider list. Pick one from the datalist above before saving.
+              </div>
+            )}
           </div>
         )}
-        {selectorDiscoveryConfig?.configured && (!selectorDiscoveryUsesRecommendedModel || !selectorDiscoveryProviderContainsRecommendedModel) && (
-          <div className="rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900">
-            <div className="font-medium">Selector-discovery is still using a non-recommended saved model/provider.</div>
-            <div className="mt-1">
-              Recommended model: <span className="font-mono">{DEFAULT_SELECTOR_DISCOVERY_MODEL}</span>.
-              Current saved model: <span className="font-mono">{selectorDiscoveryConfig.model ?? '-'}</span>.
-            </div>
-            <div className="mt-1">
-              Load the default provider template and save selector-discovery if you want future adapter builds to use the recommended OpenCode provider.
-            </div>
+        {selectorDiscoveryConfig?.configured && !(selectorDiscoveryConfig.modelIds ?? []).includes(model) && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            The selected model is not present in the saved provider summary. Refresh AO models or save an updated provider document before running adapter builds.
           </div>
         )}
         {(selectorDiscoveryConfig?.warnings ?? []).length > 0 && (
@@ -804,7 +883,11 @@ export const SettingsPage: React.FC = () => {
             )}
           </div>
         </div>
-        {selectorDiscoveryMessage && <div className="text-sm text-slate-700">{selectorDiscoveryMessage}</div>}
+        {selectorDiscoveryMessage && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
+            {selectorDiscoveryMessage}
+          </div>
+        )}
         {selectorDiscoveryPreflight?.steps?.length > 0 && (
           <div className="rounded-md border border-slate-200 bg-white p-3 text-sm">
             <div className="font-medium text-slate-800">AO preflight steps</div>
@@ -826,10 +909,10 @@ export const SettingsPage: React.FC = () => {
         <div className="flex gap-3">
           <button
             onClick={handleSelectorDiscoverySave}
-            disabled={!aoBaseUrl.trim() || !model.trim() || !providerJson.trim()}
+            disabled={!aoBaseUrl.trim() || !model.trim() || (!selectorDiscoveryConfig?.configured && !providerJson.trim())}
             className="inline-flex justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
           >
-            Save selector-discovery
+            {text.settings.saveAoSettings}
           </button>
           <button
             onClick={handleSelectorDiscoveryTest}

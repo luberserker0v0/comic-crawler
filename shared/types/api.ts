@@ -34,7 +34,13 @@ export interface AdapterListItem {
   id: string;
   name: string;
   domains: string[];
+  parseMode: AdapterInfo['parseMode'];
   capabilities: AdapterCapabilities;
+  activeVersionLabel: string;
+  versionCount: number;
+  implementationKind?: 'project-source' | 'selector-manifest' | 'ts-implementation' | 'summary' | 'generated-draft';
+  sourceDiscoveryId?: string;
+  promotedAt?: string;
 }
 
 export type AdapterFunctionCapability = 'common' | 'verification' | 'metadata' | 'chapterImages';
@@ -58,12 +64,12 @@ export interface AdapterFunctionSourceResponse {
   adapterId: string;
   functionId: string;
   language: 'typescript' | 'json' | 'markdown';
-  sourceKind: 'builtin-source' | 'dynamic-manifest' | 'pipeline-summary';
+  sourceKind: 'project-source' | 'dynamic-manifest' | 'pipeline-summary';
   source: string;
   notes: string;
 }
 
-export type AdapterImplementationSourceType = 'built-in' | 'dynamic' | 'summary' | 'generated-draft';
+export type AdapterImplementationSourceType = 'project-source' | 'dynamic' | 'summary' | 'generated-draft';
 export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
 
 export interface AdapterImplementationSymbol {
@@ -85,7 +91,7 @@ export interface AdapterImplementationResponse {
   notes: string;
 }
 
-export type AdapterDraftSourceKind = 'built-in-source' | 'dynamic-manifest';
+export type AdapterDraftSourceKind = 'project-source' | 'dynamic-manifest' | 'generated-draft';
 export type AdapterDraftStatus = 'editing' | 'testing' | 'ready_for_review' | 'promoted' | 'discarded';
 
 export interface AdapterDraftSummary {
@@ -118,6 +124,13 @@ export interface SaveAdapterDraftContentRequest {
 export interface AdapterFunctionTestRequest {
   url: string;
   challengeDiscoveryId?: string;
+}
+
+export interface AdapterFunctionRevisionRequest {
+  functionId: string;
+  instruction: string;
+  currentSource?: string;
+  modelMode?: 'current-settings' | 'previous-task';
 }
 
 export interface CompleteHumanVerificationRequest {
@@ -349,7 +362,7 @@ export type SelectorDiscoveryTarget = 'full' | 'chapter-only';
 
 export interface SelectorDiscoveryConfigRequest {
   aoBaseUrl: string;
-  providerDocument: unknown;
+  providerDocument?: unknown;
   model: string;
 }
 
@@ -360,6 +373,29 @@ export interface SelectorDiscoverySettingsSummary {
   providerIds: string[];
   modelIds: string[];
   fingerprint?: string;
+}
+
+export interface SelectorDiscoveryAoModelSummary {
+  id: string;
+  modelId: string;
+  providerId: string;
+  name?: string;
+  status?: string;
+}
+
+export interface SelectorDiscoveryAoProviderSummary {
+  id: string;
+  name?: string;
+  source?: string;
+  modelCount: number;
+  models: SelectorDiscoveryAoModelSummary[];
+}
+
+export interface SelectorDiscoveryAoModelsResponse {
+  conversationId?: string;
+  bundleHash?: string;
+  providers: SelectorDiscoveryAoProviderSummary[];
+  models: SelectorDiscoveryAoModelSummary[];
 }
 
 export interface CreateSelectorDiscoveryRequest {
@@ -388,14 +424,31 @@ export interface SelectorDiscoveryJobSummary {
   aoBaseUrl?: string;
   createdAt: string;
   updatedAt: string;
+  phase1Markdown?: string;
   candidateMarkdown?: string;
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
+  functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: unknown;
   validation?: unknown;
   error?: string;
   adapterId?: string;
   adapterName?: string;
+}
+
+export interface SelectorDiscoveryFunctionRevisionTask {
+  id: string;
+  parentDiscoveryId: string;
+  functionId: string;
+  instruction: string;
+  status: 'queued' | 'running' | 'awaiting_review' | 'failed';
+  model?: string;
+  aoBaseUrl?: string;
+  conversationId?: string;
+  selfCheckMarkdown?: string;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
 }
 
 export interface SelectorDiscoveryJobListResponse {

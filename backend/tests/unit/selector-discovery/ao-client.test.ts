@@ -48,6 +48,26 @@ describe('AoClient', () => {
     });
   });
 
+  it('retries transient provider fetch failures from AO message requests', async () => {
+    let attempts = 0;
+    const baseUrl = await startFakeAoServer(async (request) => {
+      if (request.url === '/api/conversations/conv-1/message') {
+        attempts += 1;
+        if (attempts === 1) {
+          return { status: 500, body: { error: { code: 'INTERNAL_ERROR', message: 'fetch failed' } } };
+        }
+        return { status: 200, body: { text: 'ok after retry' } };
+      }
+      return { status: 404, body: { error: 'not found' } };
+    });
+
+    const client = new AoClient(baseUrl, { messageRetryBaseDelayMs: 1 });
+    await expect(client.message('conv-1', '# Task', 'provider/model', 'selector-discovery')).resolves.toMatchObject({
+      text: 'ok after retry',
+    });
+    expect(attempts).toBe(2);
+  });
+
   async function startFakeAoServer(
     handler: (request: IncomingMessage, body: string) => Promise<{ status: number; body: unknown }>
   ): Promise<string> {

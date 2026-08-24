@@ -1,9 +1,10 @@
 import type { ProviderDocument } from './types';
 import { AoClient, type AoConversationStatus } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
+import type { SelectorDiscoveryAoModelsResponse, SelectorDiscoveryAoModelSummary, SelectorDiscoveryAoProviderSummary } from '@comiccrawler/shared';
 
 export interface SelectorDiscoveryPreflightStep {
-  name: 'load-bundle' | 'create-conversation' | 'upload-bundle' | 'start' | 'status' | 'session' | 'message' | 'cleanup';
+  name: 'load-bundle' | 'create-conversation' | 'upload-bundle' | 'start' | 'status' | 'session' | 'providers' | 'message' | 'cleanup';
   ok: boolean;
   detail?: unknown;
   error?: string;
@@ -14,6 +15,12 @@ export interface SelectorDiscoveryPreflightResult {
   conversationId?: string;
   bundleHash?: string;
   status?: AoConversationStatus;
+  providers?: SelectorDiscoveryAoProviderSummary[];
+  models?: SelectorDiscoveryAoModelSummary[];
+  steps: SelectorDiscoveryPreflightStep[];
+}
+
+export interface SelectorDiscoveryAoProviderListResult extends SelectorDiscoveryAoModelsResponse {
   steps: SelectorDiscoveryPreflightStep[];
 }
 
@@ -58,6 +65,16 @@ export async function runSelectorDiscoveryPreflight(input: {
     }
     steps.push({ name: 'session', ok: true, detail: { sessionId: status.sessionId } });
 
+    const providerSummary = summarizeAoProviders(await client.listProviders(conversationId));
+    steps.push({
+      name: 'providers',
+      ok: true,
+      detail: {
+        providerCount: providerSummary.providers.length,
+        modelCount: providerSummary.models.length,
+      },
+    });
+
     const response = await client.message(
       conversationId,
       '# Selector Discovery Smoke Test\n\nReply with one Markdown sentence: selector-discovery ready. Do not output JSON.',
@@ -65,7 +82,15 @@ export async function runSelectorDiscoveryPreflight(input: {
       'selector-discovery'
     );
     steps.push({ name: 'message', ok: true, detail: { messageId: response.messageId, text: response.text ?? '' } });
-    return { ok: true, conversationId, bundleHash, status, steps };
+    return {
+      ok: true,
+      conversationId,
+      bundleHash,
+      status,
+      providers: providerSummary.providers,
+      models: providerSummary.models,
+      steps,
+    };
   } catch (error) {
     steps.push({
       name: inferFailedStep(steps),
@@ -73,6 +98,72 @@ export async function runSelectorDiscoveryPreflight(input: {
       error: error instanceof Error ? error.message : String(error),
     });
     return { ok: false, conversationId, bundleHash, status, steps };
+  } finally {
+    if (conversationId) {
+      try {
+        await client.deleteConversation(conversationId);
+        steps.push({ name: 'cleanup', ok: true });
+      } catch (error) {
+        steps.push({ name: 'cleanup', ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+}
+
+export async function listSelectorDiscoveryAoProviders(input: {
+  aoBaseUrl: string;
+  providerDocument: ProviderDocument;
+  model: string;
+  bundleManager?: SelectorDiscoveryBundleManager;
+}): Promise<SelectorDiscoveryAoProviderListResult> {
+  const steps: SelectorDiscoveryPreflightStep[] = [];
+  const client = new AoClient(input.aoBaseUrl);
+  const bundleManager = input.bundleManager ?? new SelectorDiscoveryBundleManager();
+  let conversationId: string | undefined;
+  let bundleHash: string | undefined;
+
+  try {
+    const bundle = await bundleManager.loadActive(input.providerDocument, input.model);
+    bundleHash = bundle.hash;
+    steps.push({ name: 'load-bundle', ok: true, detail: { bundleHash } });
+
+    conversationId = await client.createConversation();
+    steps.push({ name: 'create-conversation', ok: true, detail: { conversationId } });
+
+    await bundleManager.upload(client, conversationId, bundle);
+    steps.push({ name: 'upload-bundle', ok: true });
+
+    await client.start(conversationId);
+    steps.push({ name: 'start', ok: true });
+
+    const providerSummary = summarizeAoProviders(await client.listProviders(conversationId));
+    steps.push({
+      name: 'providers',
+      ok: true,
+      detail: {
+        providerCount: providerSummary.providers.length,
+        modelCount: providerSummary.models.length,
+      },
+    });
+
+    return {
+      conversationId,
+      bundleHash,
+      providers: providerSummary.providers,
+      models: providerSummary.models,
+      steps,
+    };
+  } catch (error) {
+    steps.push({
+      name: inferFailedStep(steps),
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+      steps,
+      conversationId,
+      bundleHash,
+    });
   } finally {
     if (conversationId) {
       try {
@@ -93,7 +184,48 @@ function inferFailedStep(steps: SelectorDiscoveryPreflightStep[]): SelectorDisco
   if (last === 'upload-bundle') return 'start';
   if (last === 'start') return 'status';
   if (last === 'status') return 'session';
-  if (last === 'session') return 'message';
+  if (last === 'session') return 'providers';
+  if (last === 'providers') return 'message';
   return 'message';
 }
 
+function summarizeAoProviders(value: unknown): Pick<SelectorDiscoveryAoModelsResponse, 'providers' | 'models'> {
+  const providersValue = isRecord(value) && Array.isArray(value.providers) ? value.providers : [];
+  const providers: SelectorDiscoveryAoProviderSummary[] = [];
+  const models: SelectorDiscoveryAoModelSummary[] = [];
+
+  for (const providerValue of providersValue) {
+    if (!isRecord(providerValue) || typeof providerValue.id !== 'string') continue;
+    const providerId = providerValue.id;
+    const providerModelsValue = isRecord(providerValue.models) ? providerValue.models : {};
+    const providerModels: SelectorDiscoveryAoModelSummary[] = [];
+
+    for (const [modelId, modelValue] of Object.entries(providerModelsValue)) {
+      if (!isRecord(modelValue)) continue;
+      const id = typeof modelValue.id === 'string' ? modelValue.id : modelId;
+      const summary: SelectorDiscoveryAoModelSummary = {
+        id: `${providerId}/${id}`,
+        modelId: id,
+        providerId,
+        name: typeof modelValue.name === 'string' ? modelValue.name : undefined,
+        status: typeof modelValue.status === 'string' ? modelValue.status : undefined,
+      };
+      providerModels.push(summary);
+      models.push(summary);
+    }
+
+    providers.push({
+      id: providerId,
+      name: typeof providerValue.name === 'string' ? providerValue.name : undefined,
+      source: typeof providerValue.source === 'string' ? providerValue.source : undefined,
+      modelCount: providerModels.length,
+      models: providerModels,
+    });
+  }
+
+  return { providers, models };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}

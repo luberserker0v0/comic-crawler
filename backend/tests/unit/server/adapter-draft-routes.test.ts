@@ -27,7 +27,7 @@ describe('Adapter draft routes', () => {
     const service = new AdapterDraftService(userPath, registry);
     const app = fastify();
     setupAdapterDraftRoutes(app, service);
-    return { app, userPath };
+    return { app, userPath, service };
   }
 
   it('creates, reads, saves, resets, and discards a dynamic manifest draft under user data', async () => {
@@ -117,7 +117,7 @@ describe('Adapter draft routes', () => {
     }
   });
 
-  it('does not execute built-in TypeScript drafts', async () => {
+  it('does not execute project-source TypeScript drafts', async () => {
     const { app, userPath } = await createApp();
     try {
       const created = await app.inject({ method: 'POST', url: '/api/adapters/happymh/drafts' });
@@ -130,14 +130,71 @@ describe('Adapter draft routes', () => {
       });
 
       expect(response.statusCode).toBe(400);
-      expect(response.json().error).toMatch(/only supported for dynamic manifest drafts/i);
+      expect(response.json().error).toMatch(/project-source typescript drafts can be saved but not executed/i);
     } finally {
       await app.close();
       await rm(userPath, { recursive: true, force: true });
     }
   });
 
-  it('creates a read/edit draft copy for allowlisted built-in source without executing it', async () => {
+  it('executes generated TypeScript implementation drafts without registering them', async () => {
+    const { app, userPath, service } = await createApp();
+    try {
+      const draft = await service.createFromGeneratedImplementation({
+        baseAdapterId: 'generated-demo',
+        baseAdapterName: 'Generated Demo',
+        content: `
+import { AdapterBase, CommonCapability, VerificationCapability, MetadataCapability, ChapterImagesCapability } from '../../base';
+import type { ChapterInfo } from '@comiccrawler/shared';
+
+export class GeneratedDemoAdapter extends AdapterBase {
+  readonly id = 'generated-demo';
+  readonly name = 'Generated Demo';
+  readonly domains = ['generated.test'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: true, metadata: true, chapterImages: true };
+  readonly common = new GeneratedCommon(this);
+  readonly verification = new GeneratedVerification(this);
+  readonly metadata = new GeneratedMetadata(this);
+  readonly chapterImages = new GeneratedImages(this);
+}
+class GeneratedCommon extends CommonCapability {
+  matchUrl(url: string): boolean { return new URL(url).hostname === 'generated.test'; }
+}
+class GeneratedVerification extends VerificationCapability {}
+class GeneratedMetadata extends MetadataCapability {
+  extractTitle(): string { return 'Generated'; }
+  extractChapterList(): ChapterInfo[] { return []; }
+}
+class GeneratedImages extends ChapterImagesCapability {
+  extractChapterImageUrls(): string[] { return []; }
+}
+`,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/adapter-drafts/${draft.draft.draftId}/functions/matchUrl/test`,
+        payload: { url: 'https://generated.test/manga/title' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toMatchObject({
+        ok: true,
+        adapterId: draft.draft.draftId,
+        resultSummary: {
+          matched: true,
+          draftId: draft.draft.draftId,
+          baseAdapterId: 'generated-demo',
+        },
+      });
+    } finally {
+      await app.close();
+      await rm(userPath, { recursive: true, force: true });
+    }
+  });
+
+  it('creates a read/edit draft copy for allowlisted project source without executing it', async () => {
     const { app, userPath } = await createApp();
     try {
       const created = await app.inject({ method: 'POST', url: '/api/adapters/happymh/drafts' });
@@ -147,7 +204,7 @@ describe('Adapter draft routes', () => {
       expect(created.json().data).toMatchObject({
         draft: {
           baseAdapterId: 'happymh',
-          sourceKind: 'built-in-source',
+          sourceKind: 'project-source',
           language: 'typescript',
         },
       });

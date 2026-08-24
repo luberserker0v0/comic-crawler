@@ -4,6 +4,7 @@ import type { AdapterDraftService } from '../../adapter-drafts/service';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
 import { isKnownAdapterFunction, testAdapterFunction } from './adapters';
+import { instantiateAdapterImplementationDraft } from '../../selector-discovery/adapter-draft-runtime';
 
 interface AdapterDraftRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
@@ -69,8 +70,8 @@ export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDr
         reply.code(404).send({ error: 'Adapter draft not found' });
         return;
       }
-      if (draft.draft.sourceKind !== 'dynamic-manifest') {
-        reply.code(400).send({ error: 'Draft execution is only supported for dynamic manifest drafts. Built-in TypeScript drafts can be saved but not executed yet.' });
+      if (draft.draft.sourceKind === 'project-source') {
+        reply.code(400).send({ error: 'Project-source TypeScript drafts can be saved but not executed yet. Generated TypeScript adapter drafts and dynamic manifest drafts are executable.' });
         return;
       }
 
@@ -80,8 +81,9 @@ export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDr
         return;
       }
 
-      const manifest = parseDynamicManifestDraft(draft.content);
-      const adapter = new DynamicSiteAdapter(manifest);
+      const adapter = draft.draft.sourceKind === 'generated-draft'
+        ? instantiateAdapterImplementationDraft(draft.content)
+        : new DynamicSiteAdapter(parseDynamicManifestDraft(draft.content));
       const result = await testAdapterFunction(adapter, functionId, body.url, {
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,

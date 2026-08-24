@@ -33,7 +33,7 @@ Recommended Docker-style token reference:
 ## Initial evaluation target
 
 - URL: `https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu`
-- Model: `opencode/deepseek-v4-flash-free`
+- Model: choose one from AO `GET /api/conversations/:id/providers`, for example `opencode/big-pickle` when available.
 
 ## Eval and release flow
 
@@ -54,7 +54,7 @@ Preview the eval plan without calling AO:
 comiccrawler agent bundle-eval \
   --ao-url http://127.0.0.1:32768 \
   --provider-json agent/ao/selector-discovery/provider.example.json \
-  --model opencode/deepseek-v4-flash-free \
+  --model <provider/model> \
   --dry-run
 ```
 
@@ -62,7 +62,7 @@ comiccrawler agent bundle-eval \
 comiccrawler agent bundle-eval \
   --ao-url http://127.0.0.1:32768 \
   --provider-json agent/ao/selector-discovery/provider.example.json \
-  --model opencode/deepseek-v4-flash-free
+  --model <provider/model>
 ```
 
 Run one case or repeat each selected case:
@@ -71,7 +71,7 @@ Run one case or repeat each selected case:
 comiccrawler agent bundle-eval \
   --ao-url http://127.0.0.1:32768 \
   --provider-json agent/ao/selector-discovery/provider.example.json \
-  --model opencode/deepseek-v4-flash-free \
+  --model <provider/model> \
   --case kuronavi-an-haxing-jian-guo-jia-noe-de-ling-zhu \
   --repeat 3
 ```
@@ -82,7 +82,7 @@ Live negative cases, such as search or home pages that may call AO, are disabled
 comiccrawler agent bundle-eval \
   --ao-url http://127.0.0.1:32768 \
   --provider-json agent/ao/selector-discovery/provider.example.json \
-  --model opencode/deepseek-v4-flash-free \
+  --model <provider/model> \
   --live-negative
 ```
 
@@ -98,7 +98,7 @@ For a larger release gate, relax positive flake tolerance explicitly while keepi
 comiccrawler agent bundle-eval \
   --ao-url http://127.0.0.1:32768 \
   --provider-json agent/ao/selector-discovery/provider.example.json \
-  --model opencode/deepseek-v4-flash-free \
+  --model <provider/model> \
   --repeat 3 \
   --min-positive-passes 23 \
   --max-positive-failures 1 \

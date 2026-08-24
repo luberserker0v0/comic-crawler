@@ -95,7 +95,7 @@ export const ImplementationEditor: React.FC<ImplementationEditorProps> = ({
         },
       ]);
     }
-  }, [selectedSymbol, content]);
+  }, [selectedSymbol]);
 
   if (!content) {
     return <PlainTextFallback content="" />;

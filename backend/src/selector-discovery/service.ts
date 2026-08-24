@@ -3,7 +3,11 @@ import { getAdapterCapabilities } from '../adapter/registry';
 import { AdapterBase } from '../adapter/base';
 import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../adapter/dynamic-site-adapter';
-import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
+import {
+  ACTIVE_DYNAMIC_ADAPTERS_KEY,
+  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
+} from '../adapter/runtime-state';
+import type { AdapterCapabilities, BrowserConfig, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
 import { AoClient } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
@@ -13,26 +17,42 @@ import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
 import { validateAdapterImplementationDraft, validateCapabilityDraft } from './adapter-implementation';
+import { instantiateAdapterImplementationDraft } from './adapter-draft-runtime';
 import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, extractRepresentativeChapterUrl, validatePhase1Markdown } from './task-markdown';
 import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
   DEFAULT_SELECTOR_DISCOVERY_MODEL,
   type DiscoveryInput,
+  type ProviderDocument,
   type SelectorDiscoveryOracleComparison,
   type SelectorDiscoveryJob,
   type SelectorDiscoveryCapabilityDraft,
   type SelectorDiscoveryShadowPromotion,
+  type SelectorDiscoverySettings,
 } from './types';
 
 const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
-const ACTIVE_DYNAMIC_ADAPTERS_KEY = 'selector-discovery-active-adapters';
 const SHADOW_PROMOTION_PREFIX = 'selector-discovery-shadow-promotion-';
 const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>> = [
   { stage: 'common-verification', sourcePath: 'outputs/common-verification.ts', reviewPath: 'outputs/common-verification-review.md' },
   { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
   { stage: 'chapter-images', sourcePath: 'outputs/chapter-images-capability.ts', reviewPath: 'outputs/chapter-images-review.md' },
 ];
+
+export interface ActiveImplementationAdapterRecord {
+  adapterId: string;
+  name: string;
+  domains: string[];
+  urlPatterns: string[];
+  parseMode: IComicAdapter['parseMode'];
+  capabilities: AdapterCapabilities;
+  sourceDiscoveryId: string;
+  adapterImplementationTs: string;
+  promotedAt: string;
+}
+
+export type SelectorDiscoveryPromotionResult = DynamicSiteAdapterManifest | ActiveImplementationAdapterRecord;
 
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
@@ -175,10 +195,44 @@ export class SelectorDiscoveryService {
     if (retainedManifests.length !== manifests.length) {
       await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, retainedManifests);
     }
+
+    const implementationRecords = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+    const retainedImplementationRecords: ActiveImplementationAdapterRecord[] = [];
+    for (const record of implementationRecords) {
+      try {
+        const adapter = instantiateAdapterImplementationDraft(record.adapterImplementationTs);
+        const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
+        if (this.adapterRegistry.has(adapter.id)) {
+          retainedImplementationRecords.push(record);
+          continue;
+        }
+        if (existingDomainAdapter && existingDomainAdapter.id !== adapter.id) {
+          continue;
+        }
+        this.adapterRegistry.register(adapter);
+        retainedImplementationRecords.push({
+          ...record,
+          adapterId: adapter.id,
+          name: adapter.name,
+          domains: adapter.domains,
+          parseMode: adapter.parseMode,
+          capabilities: getAdapterCapabilities(adapter),
+        });
+      } catch {
+        continue;
+      }
+    }
+    if (retainedImplementationRecords.length !== implementationRecords.length) {
+      await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, retainedImplementationRecords);
+    }
   }
 
-  async promote(id: string): Promise<DynamicSiteAdapterManifest> {
+  async promote(id: string): Promise<SelectorDiscoveryPromotionResult> {
     const job = await this.getRequiredJob(id);
+    if (!job.parsedCandidate && job.adapterImplementationTs?.trim()) {
+      return this.promoteImplementationDraft(job);
+    }
+
     const manifest = this.createManifestFromJob(job);
     const adapterId = manifest.adapterId;
     const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
@@ -197,7 +251,13 @@ export class SelectorDiscoveryService {
       const merged = this.mergeManifestWithBase(manifest, manifests, baseAdapterId);
       this.adapterRegistry.replace(new DynamicSiteAdapter(merged));
       await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== baseAdapterId), merged]);
-      await this.updateJob(id, { adapterId: baseAdapterId, adapterName: merged.name });
+      await this.updateJob(id, {
+        adapterId: baseAdapterId,
+        adapterName: merged.name,
+        status: 'promoted',
+        phase: 'complete',
+        error: undefined,
+      });
       return merged;
     }
 
@@ -212,7 +272,13 @@ export class SelectorDiscoveryService {
 
     this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
     await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== adapterId), manifest]);
-    await this.updateJob(id, { adapterId, adapterName: manifest.name });
+    await this.updateJob(id, {
+      adapterId,
+      adapterName: manifest.name,
+      status: 'promoted',
+      phase: 'complete',
+      error: undefined,
+    });
     return manifest;
   }
 
@@ -251,6 +317,79 @@ export class SelectorDiscoveryService {
     const job = await this.getRequiredJob(id);
     await this.updateJob(id, { status: 'invalid', error: 'Rejected by reviewer.' });
     return (await this.get(id)) ?? job;
+  }
+
+  async requestFunctionRevision(input: {
+    id: string;
+    functionId: string;
+    instruction: string;
+    currentSource?: string;
+  }): Promise<SelectorDiscoveryJob> {
+    const job = await this.getRequiredJob(input.id);
+    const source = input.currentSource?.trim() || job.adapterImplementationTs?.trim();
+    if (!source) {
+      throw new Error('Discovery job has no TypeScript implementation draft to revise.');
+    }
+    if (!input.instruction.trim()) {
+      throw new Error('Revision instruction is required.');
+    }
+    const now = new Date().toISOString();
+    const revisionTask = {
+      id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      parentDiscoveryId: job.id,
+      functionId: input.functionId,
+      instruction: input.instruction.trim(),
+      status: 'queued' as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.updateJob(job.id, {
+      functionRevisionTasks: [...(job.functionRevisionTasks ?? []), revisionTask],
+    });
+    void this.runFunctionRevision(job.id, revisionTask.id, source).catch(async (error) => {
+      const latest = await this.get(job.id);
+      if (!latest) return;
+      await this.updateFunctionRevisionTask(latest, revisionTask.id, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return this.getRequiredJob(job.id);
+  }
+
+  async retryFunctionRevision(input: {
+    id: string;
+    revisionTaskId: string;
+    currentSource?: string;
+    modelMode?: 'current-settings' | 'previous-task';
+  }): Promise<SelectorDiscoveryJob> {
+    const job = await this.getRequiredJob(input.id);
+    const revisionTask = job.functionRevisionTasks?.find((task) => task.id === input.revisionTaskId);
+    if (!revisionTask) {
+      throw new Error(`Function revision task "${input.revisionTaskId}" was not found.`);
+    }
+    if (revisionTask.status === 'running') {
+      throw new Error(`Function revision task "${input.revisionTaskId}" is already running.`);
+    }
+    const source = input.currentSource?.trim() || job.adapterImplementationTs?.trim();
+    if (!source) {
+      throw new Error('Discovery job has no TypeScript implementation draft to revise.');
+    }
+    await this.updateFunctionRevisionTask(job, input.revisionTaskId, {
+      status: 'queued',
+      error: undefined,
+    });
+    void this.runFunctionRevision(job.id, input.revisionTaskId, source, {
+      modelMode: input.modelMode ?? 'current-settings',
+    }).catch(async (error) => {
+      const latest = await this.get(job.id);
+      if (!latest) return;
+      await this.updateFunctionRevisionTask(latest, input.revisionTaskId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return this.getRequiredJob(job.id);
   }
 
   async revalidate(id: string): Promise<SelectorDiscoveryJob> {
@@ -833,6 +972,105 @@ ${finalUrl}
     await this.saveJob({ ...job, ...patch, updatedAt: new Date().toISOString() });
   }
 
+  private async updateFunctionRevisionTask(
+    job: SelectorDiscoveryJob,
+    revisionTaskId: string,
+    patch: Partial<NonNullable<SelectorDiscoveryJob['functionRevisionTasks']>[number]>
+  ): Promise<void> {
+    const tasks = (job.functionRevisionTasks ?? []).map((task) => (
+      task.id === revisionTaskId
+        ? { ...task, ...patch, updatedAt: new Date().toISOString() }
+        : task
+    ));
+    await this.updateJob(job.id, { functionRevisionTasks: tasks });
+  }
+
+  private async runFunctionRevision(
+    jobId: string,
+    revisionTaskId: string,
+    source: string,
+    options: { modelMode?: 'current-settings' | 'previous-task' } = {}
+  ): Promise<void> {
+    let job = await this.getRequiredJob(jobId);
+    const revisionTask = job.functionRevisionTasks?.find((task) => task.id === revisionTaskId);
+    if (!revisionTask) {
+      throw new Error(`Function revision task "${revisionTaskId}" was not found.`);
+    }
+    await this.updateFunctionRevisionTask(job, revisionTaskId, { status: 'running', error: undefined });
+    job = await this.getRequiredJob(jobId);
+
+    const settingsStore = new SelectorDiscoverySettingsStore(this.storage);
+    const { settings: storedSettings, providerDocument } = await settingsStore.getRequired();
+    const settings = options.modelMode === 'previous-task' && revisionTask.model && revisionTask.aoBaseUrl
+      ? { ...storedSettings, model: revisionTask.model, aoBaseUrl: revisionTask.aoBaseUrl }
+      : storedSettings;
+    await this.updateFunctionRevisionTask(job, revisionTaskId, {
+      model: settings.model,
+      aoBaseUrl: settings.aoBaseUrl,
+    });
+    job = await this.getRequiredJob(jobId);
+    const client = new AoClient(settings.aoBaseUrl);
+    let conversationId: string | undefined;
+    const outputPath = 'outputs/revised-adapter-implementation.ts';
+    const reviewPath = 'outputs/function-revision-review.md';
+    const selfCheckPath = 'outputs/function-revision-self-check.md';
+    try {
+      const bundle = await this.bundleManager.loadActive(providerDocument, settings.model);
+      conversationId = await client.createConversation();
+      await this.updateFunctionRevisionTask(job, revisionTaskId, { conversationId });
+      job = await this.getRequiredJob(jobId);
+      await this.bundleManager.upload(client, conversationId, bundle);
+      await client.uploadFile(conversationId, 'adapter-implementation.ts', source);
+      await client.uploadFile(conversationId, 'revision-task.md', createFunctionRevisionTaskMarkdown(job, revisionTask, source));
+      await client.start(conversationId);
+      const revisionResult = await runAoFunctionRevisionWithRetry({
+        client,
+        conversationId,
+        model: settings.model,
+        revisionTask,
+        outputPath,
+        reviewPath,
+        selfCheckPath,
+      });
+      const validation = validateAdapterImplementationDraft(revisionResult.revisedSource, {
+        target: job.target ?? 'full',
+      });
+      job = await this.getRequiredJob(jobId);
+      await this.saveJob({
+        ...job,
+        adapterImplementationTs: revisionResult.revisedSource,
+        reviewNotesMarkdown: [
+          job.reviewNotesMarkdown,
+          '',
+          `# Function Revision ${revisionTask.id}`,
+          '',
+          revisionResult.reviewNotes,
+        ].filter(Boolean).join('\n'),
+        implementationValidation: validation,
+        status: validation.valid ? 'awaiting_review' : 'invalid',
+        error: validation.valid ? undefined : validation.errors.join('; '),
+        functionRevisionTasks: (job.functionRevisionTasks ?? []).map((task) => (
+          task.id === revisionTaskId
+            ? {
+                ...task,
+                status: validation.valid ? 'awaiting_review' : 'failed',
+                error: validation.valid ? undefined : validation.errors.join('; '),
+                selfCheckMarkdown: revisionResult.selfCheckMarkdown,
+                updatedAt: new Date().toISOString(),
+              }
+            : task
+        )),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      throw new Error(formatAoFunctionRevisionFailure(error, settings, providerDocument));
+    } finally {
+      if (conversationId) {
+        await client.deleteConversation(conversationId).catch(() => undefined);
+      }
+    }
+  }
+
   private async saveJob(job: SelectorDiscoveryJob): Promise<void> {
     await this.storage.write(`${JOB_PREFIX}${job.id}`, job);
     const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
@@ -852,6 +1090,64 @@ ${finalUrl}
       this.getNetworkConfig?.(),
     ]);
     return { browser, network };
+  }
+
+  private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<ActiveImplementationAdapterRecord> {
+    if (job.status !== 'awaiting_review') {
+      throw new Error('Only awaiting_review discovery jobs can be promoted.');
+    }
+    if (!job.adapterImplementationTs?.trim()) {
+      throw new Error('Discovery job has no adapter implementation draft.');
+    }
+    if (!job.implementationValidation?.valid) {
+      const errors = job.implementationValidation?.errors?.join('; ') || 'implementation validation did not pass';
+      throw new Error(`Adapter implementation draft is invalid: ${errors}`);
+    }
+
+    const adapter = instantiateAdapterImplementationDraft(job.adapterImplementationTs);
+    const adapterId = adapter.id;
+    if (job.promotionMode === 'augment' && job.baseAdapterId && adapterId !== job.baseAdapterId) {
+      throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapterId}".`);
+    }
+
+    if (this.adapterRegistry.has(adapterId)) {
+      if (job.promotionMode === 'augment' && job.baseAdapterId === adapterId) {
+        this.adapterRegistry.replace(adapter);
+      } else {
+        throw new Error(`Adapter "${adapterId}" is already registered.`);
+      }
+    } else {
+      const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
+      if (existingDomainAdapter && existingDomainAdapter.id !== adapterId) {
+        throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
+      }
+      this.adapterRegistry.register(adapter);
+    }
+
+    const record: ActiveImplementationAdapterRecord = {
+      adapterId,
+      name: adapter.name,
+      domains: adapter.domains,
+      urlPatterns: adapter.domains.map((domain) => `https://${domain}/*`),
+      parseMode: adapter.parseMode,
+      capabilities: getAdapterCapabilities(adapter),
+      sourceDiscoveryId: job.id,
+      adapterImplementationTs: job.adapterImplementationTs,
+      promotedAt: new Date().toISOString(),
+    };
+    const records = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+    await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [
+      ...records.filter((item) => item.adapterId !== adapterId),
+      record,
+    ]);
+    await this.updateJob(job.id, {
+      adapterId,
+      adapterName: adapter.name,
+      status: 'promoted',
+      phase: 'complete',
+      error: undefined,
+    });
+    return record;
   }
 
   private createManifestFromJob(job: SelectorDiscoveryJob): DynamicSiteAdapterManifest {
@@ -1151,6 +1447,283 @@ function createCapabilityRetryFeedback(draft: SelectorDiscoveryCapabilityDraft, 
     );
   }
   return lines.join('\n');
+}
+
+function createFunctionRevisionTaskMarkdown(
+  job: SelectorDiscoveryJob,
+  revisionTask: NonNullable<SelectorDiscoveryJob['functionRevisionTasks']>[number],
+  source: string
+): string {
+  return `# Adapter Function Revision Task
+
+## Task Goal
+
+Revise exactly one adapter function in the existing TypeScript implementation.
+
+## Adapter Build Job
+
+- Discovery job id: ${job.id}
+- URL: ${job.normalizedUrl}
+- Hostname: ${job.hostname}
+- Target: ${job.target ?? 'full'}
+- Promotion mode: ${job.promotionMode ?? 'create'}
+- Base adapter id: ${job.baseAdapterId ?? '-'}
+
+## Function To Revise
+
+${revisionTask.functionId}
+
+## User Instruction
+
+${revisionTask.instruction}
+
+## Source Boundary
+
+The complete current adapter implementation is provided in \`adapter-implementation.ts\`.
+
+Only change logic needed for \`${revisionTask.functionId}\` and directly related helpers.
+
+Preserve unrelated capabilities and functions unless the requested change makes a tiny helper adjustment necessary.
+
+## Required Output Files
+
+- \`outputs/revised-adapter-implementation.ts\`: full revised TypeScript implementation.
+- \`outputs/function-revision-review.md\`: short review notes explaining what changed and what should be tested.
+- \`outputs/function-revision-self-check.md\`: your own Markdown self-check.
+
+## Validation Expectations
+
+- The revised source must instantiate as a ComicCrawler AdapterBase implementation.
+- It must keep the same adapter identity unless the instruction explicitly asks otherwise.
+- It must not output JSON.
+- It must not use browser globals such as document.querySelector.
+- It must use the existing AdapterBase / capability contract visible in the source.
+
+## Required Self-Check Headings
+
+\`outputs/function-revision-self-check.md\` must contain:
+
+- \`## Target Function\`
+- \`## Signature Check\`
+- \`## Runtime Context Check\`
+- \`## Output Contract Check\`
+- \`## Evidence\`
+- \`## Risks\`
+
+The Runtime Context Check must explicitly discuss helper function binding and whether any standalone helper incorrectly depends on \`this\`.
+
+## Current Source Size
+
+${source.length} characters.
+`;
+}
+
+async function runAoFunctionRevisionWithRetry(input: {
+  client: AoClient;
+  conversationId: string;
+  model: string;
+  revisionTask: NonNullable<SelectorDiscoveryJob['functionRevisionTasks']>[number];
+  outputPath: string;
+  reviewPath: string;
+  selfCheckPath: string;
+}): Promise<{ revisedSource: string; reviewNotes: string; selfCheckMarkdown: string }> {
+  let lastChatText = '';
+  let lastErrors: string[] = [];
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await input.client.message(
+      input.conversationId,
+      createFunctionRevisionMessage(input.revisionTask, input.outputPath, input.reviewPath, input.selfCheckPath, lastErrors),
+      input.model,
+      DEFAULT_SELECTOR_DISCOVERY_AGENT
+    );
+    lastChatText = response.text?.trim() || '';
+
+    const revisedSource = (await input.client.readFile(input.conversationId, input.outputPath).catch(() => '')).trim()
+      || extractFirstTypeScriptFence(lastChatText);
+    const reviewNotes = (await input.client.readFile(input.conversationId, input.reviewPath).catch(() => '')).trim()
+      || `# Function Revision Review\n\nAO revised ${input.revisionTask.functionId}.`;
+    const selfCheckMarkdown = (await input.client.readFile(input.conversationId, input.selfCheckPath).catch(() => '')).trim();
+
+    lastErrors = [];
+    if (!revisedSource) {
+      lastErrors.push(`missing full revised TypeScript source at ${input.outputPath}`);
+    }
+    lastErrors.push(...validateFunctionRevisionSelfCheck(selfCheckMarkdown));
+    if (lastErrors.length === 0) {
+      return { revisedSource, reviewNotes, selfCheckMarkdown };
+    }
+  }
+
+  const eventSummary = summarizeAoConversationEvents(
+    await input.client.listEvents(input.conversationId).catch(() => undefined)
+  );
+  throw new Error([
+    'AO function revision output is incomplete after retry.',
+    ...lastErrors.map((error) => `- ${error}`),
+    lastChatText ? `AO chat excerpt: ${truncateForError(lastChatText)}` : 'AO chat excerpt: (empty)',
+    eventSummary ? `AO event summary: ${eventSummary}` : undefined,
+  ].filter(Boolean).join('\n'));
+}
+
+function summarizeAoConversationEvents(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  const messageEvents = value
+    .filter((event): event is { payload?: Record<string, unknown> } => (
+      Boolean(event && typeof event === 'object' && (event as { type?: unknown }).type === 'conversation.message')
+    ))
+    .slice(-3);
+  if (messageEvents.length === 0) return '';
+  return messageEvents.map((event) => {
+    const payload = event.payload ?? {};
+    const text = typeof payload.text === 'string' ? payload.text : '';
+    const parts = Array.isArray(payload.parts) ? payload.parts : [];
+    const tokenParts = parts
+      .map((part) => (part && typeof part === 'object' ? (part as { tokens?: unknown }).tokens : undefined))
+      .filter(Boolean);
+    return `messageId=${String(payload.messageId ?? '-')}, textLength=${text.length}, parts=${parts.length}, tokens=${truncateForError(JSON.stringify(tokenParts), 400)}`;
+  }).join(' | ');
+}
+
+function createFunctionRevisionMessage(
+  revisionTask: NonNullable<SelectorDiscoveryJob['functionRevisionTasks']>[number],
+  outputPath: string,
+  reviewPath: string,
+  selfCheckPath: string,
+  retryErrors: string[]
+): string {
+  const retryFeedback = retryErrors.length > 0
+    ? `\n## Retry Feedback\n\nYour previous response was incomplete:\n${retryErrors.map((error) => `- ${error}`).join('\n')}\n\nRewrite all required output files now. Do not merely explain what you would do.\n`
+    : '';
+  return `# Adapter Function Revision Task
+
+Read revision-task.md and adapter-implementation.ts.
+
+Revise exactly this function target:
+
+- ${revisionTask.functionId}
+
+Use the user's instruction from revision-task.md. Keep the AdapterBase shell and all capability classes intact.
+
+${retryFeedback}
+## Required AO Output
+
+- Write the full revised TypeScript adapter implementation to ${outputPath}.
+- Write concise Markdown review notes to ${reviewPath}.
+- Write your own Markdown self-check to ${selfCheckPath}.
+- Return a short confirmation in chat.
+
+Rules:
+
+- Do not output JSON.
+- Do not only output the function body; write the full TypeScript implementation file.
+- Do not change adapter id, name, domains, parseMode, or capabilities unless the user instruction explicitly says so.
+- Keep imports compatible with the existing source.
+- Preserve unrelated functions as much as possible.
+
+## Required Self-Check Markdown
+
+${selfCheckPath} must include these headings:
+
+- ## Target Function
+- ## Signature Check
+- ## Runtime Context Check
+- ## Output Contract Check
+- ## Evidence
+- ## Risks
+
+In Runtime Context Check, explicitly verify whether helper functions use valid binding. If a helper needs adapter methods, pass the adapter or URL resolver explicitly; do not rely on \`this\` inside standalone helpers.`;
+}
+
+function formatAoFunctionRevisionFailure(
+  error: unknown,
+  settings: SelectorDiscoverySettings,
+  providerDocument: ProviderDocument
+): string {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const providerIds = Object.keys(providerDocument.provider);
+  const configuredModelIds = providerIds.flatMap((providerId) => (
+    Object.keys(providerDocument.provider[providerId]?.models ?? {}).map((modelId) => `${providerId}/${modelId}`)
+  ));
+  const selectedProviderId = settings.model.split('/')[0];
+  const visibleProviderIds = selectedProviderId ? Array.from(new Set([...providerIds, selectedProviderId])) : providerIds;
+  const visibleModelIds = Array.from(new Set([...configuredModelIds, settings.model]));
+  const lines = [
+    'Agent function revision failed while sending the task to AO.',
+    '',
+    `AO URL: ${settings.aoBaseUrl}`,
+    `Model: ${settings.model}`,
+    `Configured providers: ${visibleProviderIds.length > 0 ? visibleProviderIds.join(', ') : '(none)'}`,
+    `Configured models: ${visibleModelIds.length > 0 ? visibleModelIds.join(', ') : '(none)'}`,
+    `Raw AO error: ${rawMessage}`,
+  ];
+
+  if (rawMessage.includes('/message') && /fetch failed|INTERNAL_ERROR/i.test(rawMessage)) {
+    lines.push(
+      '',
+      'Likely cause: AO accepted the conversation, but failed while fetching from the configured model provider.',
+      'Check that the provider baseURL is reachable from the AO/OpenCode runtime and that the selected model exists there.'
+    );
+  }
+
+  if (settings.warnings && settings.warnings.length > 0) {
+    lines.push('', 'Configuration warnings:', ...settings.warnings.map((warning) => `- ${warning}`));
+  }
+
+  return lines.join('\n');
+}
+
+function truncateForError(value: string, maxLength = 1200): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength)}…`;
+}
+
+function validateFunctionRevisionSelfCheck(markdown: string): string[] {
+  const errors: string[] = [];
+  if (!markdown.trim()) {
+    return ['missing outputs/function-revision-self-check.md'];
+  }
+  const requiredHeadings = [
+    'Target Function',
+    'Signature Check',
+    'Runtime Context Check',
+    'Output Contract Check',
+    'Evidence',
+    'Risks',
+  ];
+  for (const heading of requiredHeadings) {
+    const pattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'im');
+    if (!pattern.test(markdown)) {
+      errors.push(`missing heading "## ${heading}"`);
+    }
+  }
+  const runtimeContext = extractMarkdownSection(markdown, 'Runtime Context Check');
+  if (!/helper|binding|this/i.test(runtimeContext)) {
+    errors.push('Runtime Context Check must discuss helper binding and standalone this usage');
+  }
+  return errors;
+}
+
+function extractMarkdownSection(markdown: string, heading: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const headingPattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, 'i');
+  const anyLevelTwoHeadingPattern = /^##\s+\S/;
+  const startIndex = lines.findIndex((line) => headingPattern.test(line.trim()));
+  if (startIndex < 0) return '';
+
+  const sectionLines: string[] = [];
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    if (anyLevelTwoHeadingPattern.test(line.trim())) {
+      break;
+    }
+    sectionLines.push(line);
+  }
+  return sectionLines.join('\n').trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function createAoPhaseRetryFeedback(outputPath: string, output: string, errors: string[]): string {

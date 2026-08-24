@@ -6,6 +6,7 @@ import type {
   AdapterDraftDetailResponse,
   AdapterDraftListResponse,
   AdapterFunctionSourceResponse,
+  AdapterFunctionRevisionRequest,
   AdapterFunctionTestRequest,
   AdapterFunctionTestResponse,
   CompleteHumanVerificationRequest,
@@ -28,6 +29,7 @@ import type {
   OpenVerificationBrowserRequest,
   SaveAdapterDraftContentRequest,
   SelectorDiscoveryConfigRequest,
+  SelectorDiscoveryAoModelsResponse,
   SelectorDiscoveryJobListResponse,
   SelectorDiscoveryJobSummary,
   SelectorDiscoverySettingsSummary,
@@ -182,6 +184,11 @@ export class ApiClient {
     return response.data;
   }
 
+  async getSelectorDiscoveryAoModels(): Promise<ApiResponse<SelectorDiscoveryAoModelsResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.selectorDiscoveryConfig}/models`);
+    return response.data;
+  }
+
   async updateSelectorDiscoveryConfig(config: SelectorDiscoveryConfigRequest): Promise<ApiResponse<SelectorDiscoverySettingsSummary>> {
     const response = await this.client.put(API_ENDPOINTS.selectorDiscoveryConfig, config);
     return response.data;
@@ -199,6 +206,11 @@ export class ApiClient {
 
   async getAdapters(): Promise<ApiResponse<AdapterListItem[]>> {
     const response = await this.client.get(API_ENDPOINTS.adapters);
+    return response.data;
+  }
+
+  async deleteAdapter(id: string): Promise<ApiResponse<{ adapterId: string; message: string }>> {
+    const response = await this.client.delete(`${API_ENDPOINTS.adapters}/${id}`);
     return response.data;
   }
 
@@ -349,12 +361,60 @@ export class ApiClient {
     return response.data;
   }
 
+  async getSelectorDiscoveryImplementation(id: string): Promise<ApiResponse<AdapterImplementationResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.selectorDiscovery}/${id}/implementation`);
+    return response.data;
+  }
+
+  async getSelectorDiscoveryCapabilities(id: string): Promise<ApiResponse<AdapterCapabilityDetailResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.selectorDiscovery}/${id}/capabilities`);
+    return response.data;
+  }
+
+  async testSelectorDiscoveryFunction(
+    id: string,
+    functionId: string,
+    input: AdapterFunctionTestRequest
+  ): Promise<ApiResponse<AdapterFunctionTestResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/functions/${functionId}/test`, input);
+    return response.data;
+  }
+
+  async requestSelectorDiscoveryFunctionRevision(
+    id: string,
+    functionId: string,
+    input: AdapterFunctionRevisionRequest
+  ): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
+    const response = await this.client.post(
+      `${API_ENDPOINTS.selectorDiscovery}/${id}/functions/${functionId}/revision-requests`,
+      input
+    );
+    return response.data;
+  }
+
+  async retrySelectorDiscoveryFunctionRevision(
+    id: string,
+    revisionTaskId: string,
+    input?: Pick<AdapterFunctionRevisionRequest, 'currentSource' | 'modelMode'>
+  ): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
+    const response = await this.client.post(
+      `${API_ENDPOINTS.selectorDiscovery}/${id}/function-revisions/${revisionTaskId}/retry`,
+      input ?? {}
+    );
+    return response.data;
+  }
+
+  async createSelectorDiscoveryDraft(id: string): Promise<ApiResponse<AdapterDraftDetailResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/drafts`);
+    return response.data;
+  }
+
   async retrySelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/retry`);
     return response.data;
   }
 
-  async promoteSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
+  async promoteSelectorDiscovery(id: string): Promise<ApiResponse<any>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/promote`);
     return response.data;
   }

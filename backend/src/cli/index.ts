@@ -736,12 +736,12 @@ export class ComicCrawlerCli {
       reasons.push(`Candidate extraction validation failed: ${(job.extractionValidation?.errors ?? []).join('; ') || 'unknown error'}`);
     }
     if (!job.oracleComparison) {
-      reasons.push('No built-in oracle comparison was available.');
+      reasons.push('No existing adapter oracle comparison was available.');
     } else {
       if (evalCase?.oracleAdapterId && job.oracleComparison.adapterId !== evalCase.oracleAdapterId) {
         reasons.push(`Oracle adapter was "${job.oracleComparison.adapterId}", expected "${evalCase.oracleAdapterId}".`);
       }
-      if (!job.oracleComparison.titleMatched) reasons.push('Candidate title differs from built-in oracle title.');
+      if (!job.oracleComparison.titleMatched) reasons.push('Candidate title differs from existing adapter oracle title.');
       if (job.oracleComparison.chapterCountDelta !== 0) reasons.push(`Chapter count delta is ${job.oracleComparison.chapterCountDelta}.`);
       if ((job.oracleComparison.imageCountDelta ?? 0) !== 0) reasons.push(`Image count delta is ${job.oracleComparison.imageCountDelta}.`);
       for (const warning of job.oracleComparison.warnings) reasons.push(warning);

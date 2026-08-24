@@ -421,7 +421,7 @@ export class CrawlerEngine {
       }
     }
 
-    checkpoint.resumable = false;
+    checkpoint.resumable = failedImages > 0;
     checkpoint.lastError = undefined;
     checkpoint.totalImages = totalImages;
     checkpoint.completedImages = downloadedImages;

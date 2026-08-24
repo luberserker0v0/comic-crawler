@@ -9,11 +9,7 @@ import type {
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../adapter/registry';
 import { DynamicSiteAdapter } from '../adapter/dynamic-site-adapter';
-
-const BUILTIN_ADAPTER_SOURCE: Record<string, string> = {
-  kuronavi: join('backend', 'src', 'adapter', 'sites', 'kuronavi', 'adapter.ts'),
-  happymh: join('backend', 'src', 'adapter', 'sites', 'happymh', 'adapter.ts'),
-};
+import { PROJECT_ADAPTER_SOURCE } from '../adapter/runtime-state';
 
 interface AdapterDraftMeta {
   draftId: string;
@@ -77,6 +73,34 @@ export class AdapterDraftService {
     return this.toDetail(meta, initial.content);
   }
 
+  async createFromGeneratedImplementation(input: {
+    baseAdapterId: string;
+    baseAdapterName: string;
+    content: string;
+  }): Promise<AdapterDraftDetailResponse> {
+    if (!input.content.trim()) throw new Error('Generated adapter implementation content is required.');
+
+    const now = new Date().toISOString();
+    const draftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const meta: AdapterDraftMeta = {
+      draftId,
+      baseAdapterId: input.baseAdapterId,
+      baseAdapterName: input.baseAdapterName,
+      sourceKind: 'generated-draft',
+      language: 'typescript',
+      status: 'editing',
+      createdAt: now,
+      updatedAt: now,
+      contentFile: 'implementation.ts',
+    };
+
+    const dir = this.draftDir(draftId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, meta.contentFile), input.content, 'utf-8');
+    await this.writeMeta(meta);
+    return this.toDetail(meta, input.content);
+  }
+
   async get(draftId: string): Promise<AdapterDraftDetailResponse | undefined> {
     const meta = await this.readMeta(draftId).catch(() => undefined);
     if (!meta || meta.status === 'discarded') return undefined;
@@ -95,6 +119,9 @@ export class AdapterDraftService {
 
   async reset(draftId: string): Promise<AdapterDraftDetailResponse> {
     const meta = await this.requireMeta(draftId);
+    if (meta.sourceKind === 'generated-draft') {
+      throw new Error('Generated implementation drafts cannot be reset from an active adapter. Use Reload saved or discard the draft.');
+    }
     const initial = await this.loadInitialContent(meta.baseAdapterId);
     if (initial.language !== meta.language) {
       throw new Error(`Base adapter source kind changed from ${meta.language} to ${initial.language}. Create a new draft instead.`);
@@ -127,12 +154,12 @@ export class AdapterDraftService {
       };
     }
 
-    const relativePath = BUILTIN_ADAPTER_SOURCE[adapter.id];
-    if (!relativePath) throw new Error(`Built-in source is not allowlisted for adapter "${adapter.id}".`);
+    const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
+    if (!relativePath) throw new Error(`Project source is not registered for adapter "${adapter.id}".`);
     const sourcePath = resolveAllowlistedSourcePath(relativePath);
     if (!existsSync(sourcePath)) throw new Error(`Allowlisted source file was not found: ${relativePath}`);
     return {
-      sourceKind: 'built-in-source',
+      sourceKind: 'project-source',
       language: 'typescript',
       content: await readFile(sourcePath, 'utf-8'),
     };

@@ -196,10 +196,17 @@ export class TaskManager {
 
   async resumeTask(taskId: string): Promise<boolean> {
     const task = this.queue.get(taskId) ?? this.records.get(taskId)?.task;
-    if (!task || (task.status !== 'paused' && task.status !== 'interrupted' && task.status !== 'waiting_verification' && task.status !== 'failed')) return false;
+    const checkpoint = this.records.get(taskId)?.checkpoint;
+    const canResumeCompletedTask = task?.status === 'completed' && checkpoint?.resumable === true;
+    if (!task || (
+      task.status !== 'paused' &&
+      task.status !== 'interrupted' &&
+      task.status !== 'waiting_verification' &&
+      task.status !== 'failed' &&
+      !canResumeCompletedTask
+    )) return false;
 
     task.status = 'pending';
-    const checkpoint = this.records.get(taskId)?.checkpoint;
     await this.updateTaskRecord(taskId, {
       task: {
         status: 'pending',

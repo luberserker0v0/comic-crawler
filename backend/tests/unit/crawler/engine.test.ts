@@ -255,6 +255,48 @@ describe('CrawlerEngine progress tracking', () => {
     await engine.dispose();
   });
 
+  it('should keep checkpoint resumable when crawl completes with failed image downloads', async () => {
+    const engine = new CrawlerEngine({
+      downloadDir: 'D:/downloads',
+      concurrency: 2,
+    });
+    const metadata = createSingleChapterMetadata();
+    const images: ImageInfo[] = [
+      { url: 'https://img.example.com/1.jpg', index: 0 },
+      { url: 'https://img.example.com/2.jpg', index: 1 },
+    ];
+    const adapter = new FixtureAdapter({
+      metadata: () => metadata,
+      images: () => images,
+    });
+    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue('<html></html>');
+
+    await (engine as any).imageDownloader.dispose();
+    (engine as any).imageDownloader = {
+      downloadBatch: jest.fn(async (batch: ImageInfo[], options: { onProgress?: (completed: number, total: number, result: { path: string } | null, image: ImageInfo) => void }) => {
+        options.onProgress?.(1, batch.length, { path: 'D:/downloads/001.jpg' }, batch[0]!);
+        options.onProgress?.(2, batch.length, null, batch[1]!);
+        return [{ path: 'D:/downloads/001.jpg', size: 128, url: batch[0]!.url }];
+      }),
+      dispose: jest.fn(),
+    };
+    let latestCheckpoint: any;
+
+    const result = await engine.crawl(adapter, 'https://example.com/manga/demo', {
+      taskId: 'task-partial',
+      onCheckpoint: (checkpoint) => {
+        latestCheckpoint = JSON.parse(JSON.stringify(checkpoint));
+      },
+    });
+
+    expect(result.downloadedImages).toBe(1);
+    expect(result.failedImages).toBe(1);
+    expect(latestCheckpoint.resumable).toBe(true);
+    expect(latestCheckpoint.chapters['chapter-1'].failedImageIndexes).toEqual([1]);
+    await adapter.dispose();
+    await engine.dispose();
+  });
+
   it('should not use Playwright renderer in static mode', async () => {
     const engine = new CrawlerEngine({
       downloadDir: 'D:/downloads',

@@ -98,6 +98,22 @@ source DOM, readiness result, extracted values, and known risks first. A
 challenge page, recommendation card, footer, or partially expanded page is not a
 valid source for adapter promotion.
 
+### Delete an adapter
+
+Open **Maintain Adapters** and select the **Site adapters** tab. Pick the adapter
+and click **Delete Adapter**.
+
+Deletion means removal, not just hiding:
+
+- Generated adapters are removed from ComicCrawler runtime storage.
+- Project TypeScript adapters have their source directory deleted from
+  `backend/src/adapter/sites/`.
+- The backend unregisters the adapter immediately and records the deletion so it
+  does not come back after restart.
+
+This is a project code change. If you delete the wrong adapter during
+development, restore it from Git before committing.
+
 ## Adapter Lab
 
 Adapter Lab is for reviewing and testing what an adapter actually implements.
@@ -117,7 +133,7 @@ The implementation panel shows the full adapter source or dynamic selector
 manifest. Function selection only chooses the test target; helper functions and
 shared constants can still be part of the implementation.
 
-Editable drafts are user-owned copies. Built-in TypeScript drafts can be saved,
+Editable drafts are user-owned copies. Project-source TypeScript drafts can be saved,
 reset, discarded, and diffed against the active adapter, but they are not
 executed yet. Dynamic manifest drafts can be tested without promoting or
 registering them.

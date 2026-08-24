@@ -213,4 +213,55 @@ describe('TaskManager persistence', () => {
     expect(manager.getTaskResult('task-4')?.status).not.toBe('interrupted');
     expect(manager.getTaskResult('task-4')?.error).toBeUndefined();
   });
+
+  it('should allow completed tasks with resumable checkpoints to be resumed', async () => {
+    let releaseExecutor!: () => void;
+    const executorBlocked = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    let runCount = 0;
+    const manager = new TaskManager(async () => {
+      runCount += 1;
+      if (runCount > 1) {
+        await executorBlocked;
+      }
+    }, { eventBus, storage });
+    managers.push(manager);
+    await manager.initialize();
+
+    await manager.createTask({
+      id: 'task-completed-partial',
+      url: 'https://example.com/comic/partial',
+      adapterId: 'kuronavi',
+    });
+    await flushAsyncWork();
+
+    const checkpoint = createEmptyCheckpoint('task-completed-partial');
+    checkpoint.resumable = true;
+    checkpoint.totalImages = 2;
+    checkpoint.completedImages = 1;
+    checkpoint.failedImages = 1;
+    await manager.updateCheckpoint('task-completed-partial', checkpoint);
+    const internalRecord = (manager as any).records.get('task-completed-partial');
+    if (internalRecord) {
+      internalRecord.task.status = 'completed';
+      internalRecord.result.status = 'completed';
+      internalRecord.result.completedAt = new Date();
+      internalRecord.result.downloadedImages = 1;
+      internalRecord.result.failedImages = 1;
+      internalRecord.result.totalImages = 2;
+    }
+
+    const resumed = await manager.resumeTask('task-completed-partial');
+
+    try {
+      expect(resumed).toBe(true);
+      expect(['pending', 'running']).toContain(manager.getTask('task-completed-partial')?.status);
+      expect(manager.getTaskResult('task-completed-partial')?.status).toBe('pending');
+      expect(manager.getTaskResult('task-completed-partial')?.downloadedImages).toBe(1);
+      expect(manager.getTaskResult('task-completed-partial')?.failedImages).toBe(1);
+    } finally {
+      releaseExecutor();
+    }
+  });
 });

@@ -2,6 +2,6 @@
   "name": "selector-discovery",
   "version": "draft",
   "agent": "selector-discovery",
-  "defaultModel": "opencode/deepseek-v4-flash-free",
+  "defaultModel": "opencode/big-pickle",
   "contracts": "Markdown task/review notes plus TypeScript capability draft output"
 }

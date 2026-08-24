@@ -70,6 +70,15 @@ function getDetailMode(detail: TaskDetail): 'all' | 'chapters' {
   return detail.task.mode === 'chapters' ? 'chapters' : 'all';
 }
 
+function canResumeTaskDetail(detail: TaskDetail): boolean {
+  return (
+    detail.task.status === 'paused' ||
+    detail.task.status === 'interrupted' ||
+    detail.task.status === 'waiting_verification' ||
+    ((detail.task.status === 'failed' || detail.task.status === 'completed') && detail.checkpoint?.resumable === true)
+  );
+}
+
 function getCurrentStage(detail: TaskDetail): CrawlStage {
   if (detail.task.status === 'waiting_verification') return 'verification';
   if (detail.task.status === 'completed') return 'completed';
@@ -821,7 +830,7 @@ export const TaskManagerPage: React.FC = () => {
                         {text.taskList.pause}
                       </button>
                     )}
-                    {(detail.task.status === 'paused' || detail.task.status === 'interrupted' || detail.task.status === 'waiting_verification') && (
+                    {canResumeTaskDetail(detail) && (
                       <button
                         onClick={() => void handleResumeTask(detail.task.id)}
                         disabled={taskAction !== null || isVerificationBrowserOpening || isExternalVerificationUnreadable}

@@ -27,14 +27,26 @@ export function listProviderModelIds(document: ProviderDocument): { providerIds:
   return { providerIds, modelIds };
 }
 
-export function assertModelExists(document: ProviderDocument, model: string): void {
+export function parseProviderModelId(model: string): { providerId: string; modelId: string } {
   const [providerId, ...modelParts] = model.split('/');
   const modelId = modelParts.join('/');
   if (!providerId || !modelId) {
     throw new Error('Model must use the "<provider>/<model>" format.');
   }
+  return { providerId, modelId };
+}
 
+export function isAoBuiltinProviderModel(model: string): boolean {
+  const { providerId } = parseProviderModelId(model);
+  return providerId === 'opencode';
+}
+
+export function assertModelExists(document: ProviderDocument, model: string): void {
+  const { providerId, modelId } = parseProviderModelId(model);
   if (!document.provider[providerId]?.models?.[modelId]) {
+    if (isAoBuiltinProviderModel(model)) {
+      return;
+    }
     throw new Error(`Model "${model}" was not found in the provider document.`);
   }
 }

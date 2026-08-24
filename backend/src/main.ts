@@ -11,12 +11,11 @@ import { ConfigManager } from './config/manager';
 import { resolveRuntimeConfig, type DataDirectoryLayout } from './config/runtime';
 import { EventBus } from './events/bus';
 import { AdapterRegistry } from './adapter/registry';
+import { registerProjectAdapters } from './adapter/runtime-state';
 import { TaskManager, type TaskDefinition } from './task/manager';
 import type { TaskItem } from './task/types';
 import { CrawlerEngine } from './crawler/engine';
 import { ComicError, ErrorType, errorToLogObject } from './error/types';
-import { KuronaviAdapter } from './adapter/sites/kuronavi';
-import { HappyMhAdapter } from './adapter/sites/happymh';
 import { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from './selector-discovery';
 import { ChallengeDiscoveryService } from './challenge';
 import { AdapterDraftService } from './adapter-drafts/service';
@@ -43,9 +42,7 @@ async function main(): Promise<void> {
 
     const adapterRegistry = new AdapterRegistry(eventBus);
 
-    const kuronaviAdapter = new KuronaviAdapter();
-    adapterRegistry.register(kuronaviAdapter);
-    adapterRegistry.register(new HappyMhAdapter());
+    await registerProjectAdapters(storage, (adapter) => adapterRegistry.register(adapter));
 
     const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
     const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
@@ -142,6 +139,7 @@ async function main(): Promise<void> {
       challengeDiscoveryService,
       adapterDraftService,
       fixtureCaptureService,
+      storage,
       staticDir: runtime.staticDir,
     });
 

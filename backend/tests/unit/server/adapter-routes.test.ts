@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import fastify from 'fastify';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AdapterRegistry } from '../../../src/adapter/registry';
@@ -8,6 +9,37 @@ import { HappyMhAdapter } from '../../../src/adapter/sites/happymh';
 import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
 import { AdapterBase } from '../../../src/adapter/base';
 import { setupAdaptersRoutes } from '../../../src/server/routes/adapters';
+import {
+  ACTIVE_DYNAMIC_ADAPTERS_KEY,
+  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
+  DELETED_ADAPTERS_KEY,
+  registerProjectAdapters,
+} from '../../../src/adapter/runtime-state';
+import type { IStorage } from '../../../src/storage/types';
+
+class MemoryStorage implements IStorage {
+  readonly data = new Map<string, unknown>();
+
+  async read<T>(key: string): Promise<T | null> {
+    return (this.data.get(key) as T | undefined) ?? null;
+  }
+
+  async write(key: string, value: unknown): Promise<void> {
+    this.data.set(key, value);
+  }
+
+  async delete(key: string): Promise<void> {
+    this.data.delete(key);
+  }
+
+  async list(): Promise<string[]> {
+    return Array.from(this.data.keys());
+  }
+
+  async exists(key: string): Promise<boolean> {
+    return this.data.has(key);
+  }
+}
 
 class StaticDemoAdapter extends AdapterBase {
   readonly id: string = 'static-demo';
@@ -38,10 +70,12 @@ class StaticDemoAdapter extends AdapterBase {
 
 describe('Adapter routes', () => {
   let previousAgentWorkspacePath: string | undefined;
+  let previousProjectSourceRoot: string | undefined;
   let testAgentWorkspacePath: string | undefined;
 
   beforeEach(async () => {
     previousAgentWorkspacePath = process.env.AGENT_WORKSPACE_PATH;
+    previousProjectSourceRoot = process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT;
     testAgentWorkspacePath = await mkdtemp(join(tmpdir(), 'comiccrawler-adapter-lab-'));
     process.env.AGENT_WORKSPACE_PATH = testAgentWorkspacePath;
   });
@@ -51,6 +85,11 @@ describe('Adapter routes', () => {
       delete process.env.AGENT_WORKSPACE_PATH;
     } else {
       process.env.AGENT_WORKSPACE_PATH = previousAgentWorkspacePath;
+    }
+    if (previousProjectSourceRoot === undefined) {
+      delete process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT;
+    } else {
+      process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT = previousProjectSourceRoot;
     }
     if (testAgentWorkspacePath) {
       await rm(testAgentWorkspacePath, { recursive: true, force: true });
@@ -107,6 +146,138 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
+  it('lists adapters with same-level runtime metadata', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    registry.register(new HappyMhAdapter());
+    registry.register(new DynamicSiteAdapter({
+      adapterId: 'dynamic-demo',
+      name: 'Dynamic Demo',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/read/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-1',
+      promotedAt: '2026-07-09T00:00:00.000Z',
+    }));
+    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [{
+      adapterId: 'dynamic-demo',
+      name: 'Dynamic Demo',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/read/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-1',
+      promotedAt: '2026-07-09T00:00:00.000Z',
+    }]);
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'GET', url: '/api/adapters' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'happymh',
+        activeVersionLabel: 'current',
+        versionCount: 1,
+        implementationKind: 'project-source',
+      }),
+      expect.objectContaining({
+        id: 'dynamic-demo',
+        activeVersionLabel: '2026-07-09T00:00:00.000Z',
+        versionCount: 1,
+        implementationKind: 'selector-manifest',
+      }),
+    ]));
+
+    await app.close();
+  });
+
+  it('deletes project-source adapters by removing source files and persisting a runtime deletion marker', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'comiccrawler-source-root-'));
+    const adapterSourceDir = join(sourceRoot, 'backend', 'src', 'adapter', 'sites', 'happymh');
+    await mkdir(adapterSourceDir, { recursive: true });
+    await writeFile(join(adapterSourceDir, 'adapter.ts'), 'export class HappyMhAdapter {}\n', 'utf-8');
+    process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT = sourceRoot;
+    registry.register(new HappyMhAdapter());
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'DELETE', url: '/api/adapters/happymh' });
+
+    expect(response.statusCode).toBe(200);
+    expect(registry.has('happymh')).toBe(false);
+    expect(existsSync(adapterSourceDir)).toBe(false);
+    expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([
+      expect.objectContaining({ adapterId: 'happymh' }),
+    ]);
+
+    await app.close();
+    await rm(sourceRoot, { recursive: true, force: true });
+  });
+
+  it('does not re-register a deleted project-source adapter during startup registration', async () => {
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    await storage.write(DELETED_ADAPTERS_KEY, [{ adapterId: 'happymh', deletedAt: '2026-07-09T00:00:00.000Z' }]);
+
+    await registerProjectAdapters(storage, (adapter) => registry.register(adapter), [new HappyMhAdapter()]);
+
+    expect(registry.has('happymh')).toBe(false);
+  });
+
+  it('deletes generated adapters from active runtime storage', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    registry.register(new DynamicSiteAdapter({
+      adapterId: 'dynamic-demo',
+      name: 'Dynamic Demo',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/read/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-1',
+      promotedAt: '2026-07-09T00:00:00.000Z',
+    }));
+    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [{
+      adapterId: 'dynamic-demo',
+      name: 'Dynamic Demo',
+      domains: ['example.com'],
+      urlPatterns: ['https://example.com/read/*'],
+      capabilities: { verification: true, metadata: false, chapterImages: true },
+      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      sourceDiscoveryId: 'disc-1',
+      promotedAt: '2026-07-09T00:00:00.000Z',
+    }]);
+    await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [{ adapterId: 'other-demo' }]);
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'DELETE', url: '/api/adapters/dynamic-demo' });
+
+    expect(response.statusCode).toBe(200);
+    expect(registry.has('dynamic-demo')).toBe(false);
+    expect(await storage.read(ACTIVE_DYNAMIC_ADAPTERS_KEY)).toEqual([]);
+    expect(await storage.read(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)).toEqual([{ adapterId: 'other-demo' }]);
+
+    await app.close();
+  });
+
+  it('returns 404 when deleting an unknown adapter', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    setupAdaptersRoutes(app, registry, { storage: new MemoryStorage() });
+
+    const response = await app.inject({ method: 'DELETE', url: '/api/adapters/missing' });
+
+    expect(response.statusCode).toBe(404);
+
+    await app.close();
+  });
+
   it('lists adapter function descriptors by capability', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
@@ -134,7 +305,7 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
-  it('returns allowlisted built-in source snippets', async () => {
+  it('returns allowlisted project source snippets', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
     registry.register(new HappyMhAdapter());
@@ -147,14 +318,14 @@ describe('Adapter routes', () => {
       adapterId: 'happymh',
       functionId: 'extractTitle',
       language: 'typescript',
-      sourceKind: 'builtin-source',
+      sourceKind: 'project-source',
     });
     expect(response.json().data.source).toContain('extractTitle');
 
     await app.close();
   });
 
-  it('returns full built-in adapter implementation for Adapter Lab workbench', async () => {
+  it('returns full project-source adapter implementation for Adapter Lab workbench', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
     registry.register(new HappyMhAdapter());
@@ -165,7 +336,7 @@ describe('Adapter routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
       adapterId: 'happymh',
-      sourceType: 'built-in',
+      sourceType: 'project-source',
       language: 'typescript',
     });
     expect(response.json().data.content).toContain('class HappyMhMetadataCapability');

@@ -1,20 +1,17 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { AgentPage } from '../../src/pages/AgentPage';
 import { api } from '../../src/api/client';
 import { useAgentStore } from '../../src/store';
 import { uiText } from '../../src/text/zhTW';
 
-let realtimeCallback: ((message: { event?: string; data?: Record<string, unknown> }) => void) | undefined;
-
 jest.mock('../../src/hooks', () => {
   const actual = jest.requireActual('../../src/hooks') as object;
 
   return {
     ...actual,
-    useWebSocket: (_url: string, onMessage?: (message: { event?: string; data?: Record<string, unknown> }) => void) => {
-      realtimeCallback = onMessage;
+    useWebSocket: () => {
       return {
         connected: true,
         subscribe: jest.fn(),
@@ -38,6 +35,29 @@ const baseSummary = [
     activeVersion: null,
     latestCandidate: null,
     versionCount: 0,
+  },
+];
+
+const siteAdapters = [
+  {
+    id: 'kuronavi',
+    name: 'Kuronavi',
+    domains: ['kuronavi.one'],
+    parseMode: 'static',
+    capabilities: { verification: false, metadata: true, chapterImages: true },
+    activeVersionLabel: 'current',
+    versionCount: 1,
+    implementationKind: 'project-source',
+  },
+  {
+    id: 'mocksite',
+    name: 'Mock Site',
+    domains: ['mocksite.example'],
+    parseMode: 'dynamic',
+    capabilities: { verification: true, metadata: false, chapterImages: true },
+    activeVersionLabel: 'current',
+    versionCount: 1,
+    implementationKind: 'ts-implementation',
   },
 ];
 
@@ -119,10 +139,10 @@ describe('AgentPage interactions', () => {
   let getAgentAdaptersSpy: ReturnType<typeof jest.spyOn>;
   let getAgentAdapterSpy: ReturnType<typeof jest.spyOn>;
   let promoteSpy: ReturnType<typeof jest.spyOn>;
+  let deleteAdapterSpy: ReturnType<typeof jest.spyOn>;
 
   beforeEach(() => {
     jest.restoreAllMocks();
-    realtimeCallback = undefined;
     window.localStorage.clear();
     useAgentStore.setState({
       adapters: [],
@@ -133,9 +153,12 @@ describe('AgentPage interactions', () => {
       error: null,
     } as Partial<ReturnType<typeof useAgentStore.getState>>);
 
+    jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: siteAdapters });
+    jest.spyOn(api, 'listSelectorDiscoveries').mockResolvedValue({ data: { jobs: [] } });
     getAgentAdaptersSpy = jest.spyOn(api, 'getAgentAdapters').mockResolvedValue({ data: baseSummary });
     getAgentAdapterSpy = jest.spyOn(api, 'getAgentAdapter').mockResolvedValue({ data: baseDetail });
     promoteSpy = jest.spyOn(api, 'promoteAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
+    deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({ data: { adapterId: 'kuronavi', message: 'Adapter deleted' } });
     jest.spyOn(api, 'rejectAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
     jest.spyOn(api, 'rollbackAgentAdapter').mockResolvedValue({ data: { success: true, currentVersion: 'v1' } });
   });
@@ -165,28 +188,19 @@ describe('AgentPage interactions', () => {
     expect(screen.getByText(uiText.agent.syntaxPassed)).toBeInTheDocument();
   });
 
-  it('should patch adapter summary from realtime events without refetching the full list', async () => {
+  it('should delete a site adapter through confirmation', async () => {
     render(<AgentPage />);
 
-    await screen.findByText('mocksite');
-    const getAgentAdaptersCallsBefore = getAgentAdaptersSpy.mock.calls.length;
-    const getAgentAdapterCallsBefore = getAgentAdapterSpy.mock.calls.length;
+    await screen.findByText('kuronavi');
+    fireEvent.click(screen.getByText(uiText.agent.deleteAdapter));
+    expect(screen.getByText(uiText.agent.pendingActions.deleteAdapterTitle)).toBeInTheDocument();
 
-    await act(async () => {
-      realtimeCallback?.({
-        event: 'adapter:repair:candidate-created',
-        data: {
-          adapterId: 'mocksite',
-          version: 'v3',
-        },
-      });
-    });
+    fireEvent.click(screen.getByText(uiText.agent.pendingActions.confirm));
 
     await waitFor(() => {
-      expect(screen.getByText('v3')).toBeInTheDocument();
+      expect(deleteAdapterSpy).toHaveBeenCalledWith('kuronavi');
     });
-
-    expect(getAgentAdaptersSpy.mock.calls.length).toBe(getAgentAdaptersCallsBefore);
-    expect(getAgentAdapterSpy.mock.calls.length).toBe(getAgentAdapterCallsBefore);
+    expect(getAgentAdaptersSpy).toHaveBeenCalled();
+    expect(getAgentAdapterSpy).toHaveBeenCalled();
   });
 });

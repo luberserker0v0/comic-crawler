@@ -1,6 +1,6 @@
 import type { SiteSelectors } from '@comiccrawler/shared';
 
-export const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/deepseek-v4-flash-free';
+export const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/big-pickle';
 export const DEFAULT_SELECTOR_DISCOVERY_AGENT = 'selector-discovery';
 export const KURONAVI_DISCOVERY_TEST_URL = 'https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu';
 
@@ -39,7 +39,7 @@ export interface SelectorDiscoveryJob {
   url: string;
   normalizedUrl: string;
   hostname: string;
-  status: 'queued' | 'known_adapter' | 'configuration_required' | 'running' | 'awaiting_review' | 'invalid' | 'failed';
+  status: 'queued' | 'known_adapter' | 'configuration_required' | 'running' | 'awaiting_review' | 'promoted' | 'invalid' | 'failed';
   target?: 'full' | 'chapter-only';
   promotionMode?: 'create' | 'augment';
   baseAdapterId?: string;
@@ -58,12 +58,28 @@ export interface SelectorDiscoveryJob {
   capabilityDrafts?: SelectorDiscoveryCapabilityDraft[];
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
+  functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: AdapterImplementationValidation;
   parsedCandidate?: ParsedMarkdownCandidate;
   validation?: MarkdownCandidateValidation;
   extractionValidation?: SelectorExtractionValidation;
   shadowPromotion?: SelectorDiscoveryShadowPromotion;
   oracleComparison?: SelectorDiscoveryOracleComparison;
+}
+
+export interface SelectorDiscoveryFunctionRevisionTask {
+  id: string;
+  parentDiscoveryId: string;
+  functionId: string;
+  instruction: string;
+  status: 'queued' | 'running' | 'awaiting_review' | 'failed';
+  model?: string;
+  aoBaseUrl?: string;
+  conversationId?: string;
+  selfCheckMarkdown?: string;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
 }
 
 export interface SelectorExtractionValidation {

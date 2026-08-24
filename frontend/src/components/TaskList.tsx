@@ -36,6 +36,12 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks, showDetailLink = fals
   };
 
   const getStatusLabel = (status: string) => text.taskList.statusLabels[status as keyof typeof text.taskList.statusLabels] ?? status;
+  const canResumeTask = (task: Task) => (
+    task.status === 'paused' ||
+    task.status === 'interrupted' ||
+    task.status === 'waiting_verification' ||
+    ((task.status === 'failed' || task.status === 'completed') && task.checkpoint?.resumable === true)
+  );
 
   return (
     <div className="overflow-x-auto">
@@ -87,7 +93,7 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks, showDetailLink = fals
                     {text.taskList.pause}
                   </button>
                 )}
-                {(task.status === 'paused' || task.status === 'interrupted' || task.status === 'waiting_verification') && (
+                {canResumeTask(task) && (
                   <button
                     onClick={() => resumeTask(task.id)}
                     className="text-green-600 hover:text-green-900"

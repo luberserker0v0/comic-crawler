@@ -67,11 +67,31 @@ visible in the adapter source or selector manifest being reviewed.
 Function tests return a structured summary. `extractChapterImageUrls` returns
 the complete `imageUrls` list, not a shortened `firstImageUrls` preview.
 
+## Adapter deletion
+
+All registered site adapters are managed at the same product level. The WebUI
+does not expose a separate adapter class such as "project provided" versus
+"generated" to users.
+
+Deleting an adapter is a real removal operation:
+
+- Generated TypeScript or selector-manifest adapters are removed from runtime
+  storage and unregistered immediately.
+- Project TypeScript adapters are unregistered and their source directory under
+  `backend/src/adapter/sites/<adapter-id>/` is deleted.
+- A deleted marker is stored so a removed adapter is not registered again on the
+  next backend start.
+
+Because project TypeScript adapter deletion changes the repository source tree,
+review `git status` before committing or pushing. If a deleted adapter needs to
+be restored, restore it from Git or rebuild it through the adapter discovery and
+review flow.
+
 ## Drafts
 
 Adapter Lab can create user-owned editable drafts:
 
-- Built-in TypeScript drafts can be saved, reset, diffed, and discarded, but are
+- Project-source TypeScript drafts can be saved, reset, diffed, and discarded, but are
   not executed yet.
 - Dynamic manifest drafts can be tested through a temporary adapter without
   registering or promoting them.

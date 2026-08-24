@@ -11,8 +11,8 @@ This directory contains user- and contributor-facing documentation for the
 - `openapi.yaml` - machine-readable contract for the public REST crawl flow;
   the running backend serves Swagger UI at `GET /api-docs`.
 - `ARCHITECTURE.md` - current subsystem overview and runtime data flow.
-- `ADAPTERS.md` - adapter contract, capabilities, Adapter Lab, drafts, and
-  verified fixture policy.
+- `ADAPTERS.md` - adapter contract, capabilities, deletion behavior, Adapter
+  Lab, drafts, and verified fixture policy.
 - `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
   `AdapterBase` output contract, and AO API lifecycle.
 

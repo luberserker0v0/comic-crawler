@@ -17,13 +17,15 @@ export interface AoConversationStatus {
 export class AoClient {
   private readonly baseUrl: string;
   private readonly requestTimeoutMs: number;
+  private readonly messageRetryBaseDelayMs: number;
 
-  constructor(baseUrl: string, options?: { requestTimeoutMs?: number }) {
+  constructor(baseUrl: string, options?: { requestTimeoutMs?: number; messageRetryBaseDelayMs?: number }) {
     if (!baseUrl) {
       throw new Error('AO URL is required.');
     }
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.requestTimeoutMs = options?.requestTimeoutMs ?? 15 * 60 * 1000;
+    this.messageRetryBaseDelayMs = options?.messageRetryBaseDelayMs ?? 5000;
   }
 
   async createConversation(id?: string): Promise<string> {
@@ -119,6 +121,18 @@ export class AoClient {
     return this.getConversationStatus(conversationId);
   }
 
+  async listProviders(conversationId: string): Promise<unknown> {
+    return this.request(`/api/conversations/${encodeURIComponent(conversationId)}/providers`, {
+      method: 'GET',
+    });
+  }
+
+  async listEvents(conversationId: string): Promise<unknown> {
+    return this.request(`/api/conversations/${encodeURIComponent(conversationId)}/events`, {
+      method: 'GET',
+    });
+  }
+
   async waitForReady(conversationId: string, timeoutMs = 180_000): Promise<AoConversationStatus> {
     const startedAt = Date.now();
     let latest: AoConversationStatus | undefined;
@@ -139,6 +153,7 @@ export class AoClient {
     const path = `/api/conversations/${encodeURIComponent(conversationId)}/message`;
     const body = JSON.stringify({ text, model, agent });
     let lastError: unknown;
+    let transientProviderFailures = 0;
 
     for (let attempt = 0; attempt < 90; attempt++) {
       try {
@@ -149,6 +164,15 @@ export class AoClient {
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('SESSION_NOT_READY')) {
+          await sleep(2000);
+          continue;
+        }
+        if (isTransientProviderFetchFailure(message) && transientProviderFailures < 2) {
+          transientProviderFailures += 1;
+          await sleep(this.messageRetryBaseDelayMs * transientProviderFailures);
+          continue;
+        }
         if (!message.includes('SESSION_NOT_READY')) {
           throw error;
         }
@@ -196,4 +220,9 @@ export class AoClient {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientProviderFetchFailure(message: string): boolean {
+  return /AO POST .*\/message failed with HTTP 500/i.test(message)
+    && /"message"\s*:\s*"fetch failed"|fetch failed/i.test(message);
 }

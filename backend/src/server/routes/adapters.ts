@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type {
+  AdapterListItem,
   AdapterCapabilityDetailResponse,
   AdapterFunctionDescriptor,
   AdapterFunctionCapability,
@@ -20,6 +21,17 @@ import * as cheerio from 'cheerio';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import { DynamicSiteAdapter } from '../../adapter/dynamic-site-adapter';
+import {
+  ACTIVE_DYNAMIC_ADAPTERS_KEY,
+  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
+  PROJECT_ADAPTER_SOURCE,
+  deleteProjectAdapterSource,
+  markAdapterDeleted,
+  type AdapterImplementationKind,
+} from '../../adapter/runtime-state';
+import type { DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
+import type { ActiveImplementationAdapterRecord } from '../../selector-discovery/service';
+import type { IStorage } from '../../storage/types';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { ChallengeDiscoveryJob } from '../../challenge/discovery-types';
 import { looksLikeAntiBotChallenge } from '../../crawler/anti-bot';
@@ -28,11 +40,6 @@ import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 
 const STATIC_ADAPTER_FUNCTION_TIMEOUT_MS = 30_000;
 const PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS = 15 * 60 * 1000;
-const BUILTIN_ADAPTER_SOURCE: Record<string, string> = {
-  kuronavi: join('backend', 'src', 'adapter', 'sites', 'kuronavi', 'adapter.ts'),
-  happymh: join('backend', 'src', 'adapter', 'sites', 'happymh', 'adapter.ts'),
-};
-
 export type AdapterFunctionId =
   | 'matchUrl'
   | 'detectVerificationRequired'
@@ -48,6 +55,7 @@ export type AdapterFunctionId =
 
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
+  storage?: IStorage;
 }
 
 interface VerifiedChallengeDocument {
@@ -77,8 +85,39 @@ class TimingCollector {
 
 export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegistry, options: AdapterRouteOptions = {}): void {
   app.get('/api/adapters', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const adapters = registry.list();
+    const adapters = await describeAdapterList(registry, options.storage);
     reply.send({ data: adapters });
+  });
+
+  app.delete('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!options.storage) {
+      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
+      return;
+    }
+    const { id } = request.params as { id: string };
+    if (!registry.has(id)) {
+      reply.code(404).send({ error: 'Adapter not found' });
+      return;
+    }
+
+    const manifests = (await options.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+    const implementationRecords = (await options.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+    await options.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, manifests.filter((item) => item.adapterId !== id));
+    await options.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, implementationRecords.filter((item) => item.adapterId !== id));
+    const sourceDeletion = PROJECT_ADAPTER_SOURCE[id]
+      ? await deleteProjectAdapterSource(id)
+      : { deleted: false };
+    await markAdapterDeleted(options.storage, id);
+    registry.unregister(id);
+
+    reply.send({
+      data: {
+        adapterId: id,
+        message: sourceDeletion.deleted
+          ? 'Adapter deleted and source files removed'
+          : 'Adapter deleted',
+      },
+    });
   });
 
   app.post('/api/adapters/resolve', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -131,17 +170,8 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
-    reply.send({
-      data: {
-        id: adapter.id,
-        name: adapter.name,
-        domains: adapter.domains,
-        parseMode: adapter.parseMode,
-        supportsLogin: !!adapter.login,
-        supportsSearch: !!adapter.search,
-        capabilities: getAdapterCapabilities(adapter),
-      },
-    });
+    const details = (await describeAdapterList(registry, options.storage)).find((item) => item.id === adapter.id);
+    reply.send({ data: details ?? describeAdapter(adapter) });
   });
 
   app.get('/api/adapters/:id/capabilities', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -232,6 +262,39 @@ function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>
     parseMode: adapter.parseMode,
     capabilities: getAdapterCapabilities(adapter),
   };
+}
+
+async function describeAdapterList(registry: AdapterRegistry, storage?: IStorage): Promise<AdapterListItem[]> {
+  const manifests = storage
+    ? (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? []
+    : [];
+  const implementationRecords = storage
+    ? (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? []
+    : [];
+
+  return registry.getAll().map((adapter) => {
+    const implementationRecord = implementationRecords.find((record) => record.adapterId === adapter.id);
+    const manifest = manifests.find((record) => record.adapterId === adapter.id);
+    const implementationKind: AdapterImplementationKind = implementationRecord
+      ? 'ts-implementation'
+      : manifest
+        ? 'selector-manifest'
+        : PROJECT_ADAPTER_SOURCE[adapter.id]
+          ? 'project-source'
+          : 'summary';
+    return {
+      ...describeAdapter(adapter),
+      activeVersionLabel: implementationRecord?.promotedAt ?? manifest?.promotedAt ?? 'current',
+      versionCount: 1,
+      implementationKind,
+      ...(implementationRecord?.sourceDiscoveryId || manifest?.sourceDiscoveryId
+        ? { sourceDiscoveryId: implementationRecord?.sourceDiscoveryId ?? manifest?.sourceDiscoveryId }
+        : {}),
+      ...(implementationRecord?.promotedAt || manifest?.promotedAt
+        ? { promotedAt: implementationRecord?.promotedAt ?? manifest?.promotedAt }
+        : {}),
+    };
+  });
 }
 
 function getAdapterFromRequest(request: FastifyRequest, registry: AdapterRegistry): NonNullable<ReturnType<AdapterRegistry['get']>> | undefined {
@@ -374,7 +437,7 @@ async function getAdapterImplementation(
     };
   }
 
-  const relativePath = BUILTIN_ADAPTER_SOURCE[adapter.id];
+  const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
   if (!relativePath) {
     return {
       adapterId: adapter.id,
@@ -382,7 +445,7 @@ async function getAdapterImplementation(
       language: 'markdown',
       content: `# Adapter implementation\n\nFull source is not allowlisted for adapter "${adapter.id}".`,
       outline: [],
-      notes: 'Only known built-in adapter source files are exposed.',
+      notes: 'Only project adapter source files registered in the source map are exposed.',
     };
   }
 
@@ -390,7 +453,7 @@ async function getAdapterImplementation(
   if (!existsSync(sourcePath)) {
     return {
       adapterId: adapter.id,
-      sourceType: 'built-in',
+      sourceType: 'project-source',
       language: 'markdown',
       filePath: relativePath,
       content: `# Adapter implementation\n\nAllowlisted source file was not found: ${relativePath}`,
@@ -402,7 +465,7 @@ async function getAdapterImplementation(
   const content = await readFile(sourcePath, 'utf-8');
   return {
     adapterId: adapter.id,
-    sourceType: 'built-in',
+    sourceType: 'project-source',
     language: 'typescript',
     filePath: relativePath,
     content,
@@ -543,15 +606,15 @@ async function getAdapterFunctionSource(
     };
   }
 
-  const relativePath = BUILTIN_ADAPTER_SOURCE[adapter.id];
+  const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
   if (!relativePath) {
     return {
       adapterId: adapter.id,
       functionId,
       language: 'markdown',
-      sourceKind: 'builtin-source',
+      sourceKind: 'project-source',
       source: `Source snippet is not allowlisted for adapter "${adapter.id}".`,
-      notes: 'Only known built-in adapter source files are exposed.',
+      notes: 'Only project adapter source files registered in the source map are exposed.',
     };
   }
 
@@ -561,7 +624,7 @@ async function getAdapterFunctionSource(
       adapterId: adapter.id,
       functionId,
       language: 'markdown',
-      sourceKind: 'builtin-source',
+      sourceKind: 'project-source',
       source: `Allowlisted source file was not found: ${relativePath}`,
       notes: 'The application may be running from compiled output without source files.',
     };
@@ -572,7 +635,7 @@ async function getAdapterFunctionSource(
     adapterId: adapter.id,
     functionId,
     language: 'typescript',
-    sourceKind: 'builtin-source',
+    sourceKind: 'project-source',
     source: extractFunctionSnippet(source, functionId),
     notes: `Source snippet from ${relativePath}.`,
   };

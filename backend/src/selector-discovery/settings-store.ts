@@ -1,6 +1,6 @@
 import type { IStorage } from '../storage/types';
 import type { ProviderDocument, SelectorDiscoverySettings, SelectorDiscoverySettingsSummary } from './types';
-import { assertModelExists, diagnoseProviderDocument, fingerprintProviderDocument, listProviderModelIds, validateProviderDocument } from './provider-config';
+import { assertModelExists, diagnoseProviderDocument, fingerprintProviderDocument, listProviderModelIds, parseProviderModelId, validateProviderDocument } from './provider-config';
 
 const SETTINGS_KEY = 'selector-discovery-settings';
 const PROVIDER_KEY = 'selector-discovery-provider';
@@ -34,7 +34,7 @@ export class SelectorDiscoverySettingsStore {
     return { settings, providerDocument };
   }
 
-  async save(input: { aoBaseUrl: string; model: string; providerDocument: unknown }): Promise<SelectorDiscoverySettingsSummary> {
+  async save(input: { aoBaseUrl: string; model: string; providerDocument?: unknown }): Promise<SelectorDiscoverySettingsSummary> {
     if (!input.aoBaseUrl?.trim()) {
       throw new Error('AO URL is required.');
     }
@@ -42,15 +42,23 @@ export class SelectorDiscoverySettingsStore {
       throw new Error('Model is required.');
     }
 
-    const providerDocument = validateProviderDocument(input.providerDocument);
+    const existingProviderDocument = await this.storage.read<ProviderDocument>(PROVIDER_KEY);
+    const providerDocument = input.providerDocument === undefined
+      ? existingProviderDocument
+      : validateProviderDocument(input.providerDocument);
+    if (!providerDocument) {
+      throw new Error('Provider document is required.');
+    }
     assertModelExists(providerDocument, input.model);
     const { providerIds, modelIds } = listProviderModelIds(providerDocument);
+    const selectedModel = input.model.trim();
+    const selectedProviderId = parseProviderModelId(selectedModel).providerId;
     const settings: SelectorDiscoverySettings = {
       aoBaseUrl: input.aoBaseUrl.trim().replace(/\/+$/, ''),
-      model: input.model.trim(),
+      model: selectedModel,
       providerFingerprint: fingerprintProviderDocument(providerDocument),
-      providerIds,
-      modelIds,
+      providerIds: Array.from(new Set([...providerIds, selectedProviderId])),
+      modelIds: Array.from(new Set([...modelIds, selectedModel])),
       configuredAt: new Date().toISOString(),
       warnings: diagnoseProviderDocument(providerDocument),
     };

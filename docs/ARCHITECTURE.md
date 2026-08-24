@@ -79,10 +79,17 @@ not perform hidden generic site operations such as scanning and clicking
 "show all chapters" controls before calling an extraction function.
 
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
-tasks require only chapter-image support. Built-in adapters have priority over
-dynamic adapters. AO discovery now produces TypeScript `AdapterBase`
+tasks require only chapter-image support. All site adapters are resolved through
+the same registry; implementation source is an internal loading detail, not a
+product category. AO discovery now produces TypeScript `AdapterBase`
 implementation drafts for review. Dynamic selector manifests remain legacy
 runtime support and are not the primary AO output.
+
+Project TypeScript adapters are loaded through a project adapter source map at
+backend startup, not through hard static imports in the server entrypoint. This
+keeps adapter deletion and restart behavior consistent: if an adapter source
+directory under `backend/src/adapter/sites/<adapter-id>/` has been deleted, the
+startup loader skips it instead of crashing or re-registering it.
 
 Adapter Lab is the human review workbench for this boundary. It displays the
 full adapter source or dynamic manifest, supports user-owned drafts, locks

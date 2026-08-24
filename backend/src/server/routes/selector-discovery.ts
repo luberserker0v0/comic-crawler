@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AdapterFunctionTestRequest, AdapterImplementationResponse, AdapterImplementationSymbol } from '@comiccrawler/shared';
+import type { AdapterFunctionRevisionRequest, AdapterFunctionTestRequest, AdapterImplementationResponse, AdapterImplementationSymbol } from '@comiccrawler/shared';
 import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '../../selector-discovery';
-import { runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '../../selector-discovery';
+import { listSelectorDiscoveryAoProviders, runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
+import type { AdapterDraftService } from '../../adapter-drafts/service';
 import { instantiateAdapterImplementationDraft } from '../../selector-discovery/adapter-draft-runtime';
 import { describeAdapterFunctions, isKnownAdapterFunction, testAdapterFunction, type AdapterFunctionId } from './adapters';
 import { promises as fs } from 'node:fs';
@@ -15,7 +16,7 @@ export function setupSelectorDiscoveryRoutes(
   discoveryService: SelectorDiscoveryService,
   settingsStore: SelectorDiscoverySettingsStore,
   bundleManager = new SelectorDiscoveryBundleManager(),
-  options: { challengeDiscoveryService?: ChallengeDiscoveryService } = {}
+  options: { challengeDiscoveryService?: ChallengeDiscoveryService; adapterDraftService?: AdapterDraftService } = {}
 ): void {
   app.get('/api/config/selector-discovery', async (_request: FastifyRequest, reply: FastifyReply) => {
     reply.send({ data: await settingsStore.getSummary() });
@@ -34,6 +35,33 @@ export function setupSelectorDiscoveryRoutes(
       reply.send({ data: { evaluations: await listBundleEvaluations() } });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.get('/api/config/selector-discovery/models', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { settings, providerDocument } = await settingsStore.getRequired();
+      const result = await listSelectorDiscoveryAoProviders({
+        aoBaseUrl: settings.aoBaseUrl,
+        providerDocument,
+        model: settings.model,
+        bundleManager,
+      });
+      reply.send({ data: result });
+    } catch (error) {
+      const maybePreflightError = error as { steps?: unknown[]; conversationId?: string; bundleHash?: string };
+      reply.code(400).send({
+        error: error instanceof Error ? error.message : String(error),
+        data: maybePreflightError.steps
+          ? {
+              conversationId: maybePreflightError.conversationId,
+              bundleHash: maybePreflightError.bundleHash,
+              providers: [],
+              models: [],
+              steps: maybePreflightError.steps,
+            }
+          : undefined,
+      });
     }
   });
 
@@ -82,7 +110,7 @@ function setupDiscoveryJobRoutes(
   app: FastifyInstance,
   prefix: '/api/selector-discovery' | '/api/site-discovery',
   discoveryService: SelectorDiscoveryService,
-  options: { challengeDiscoveryService?: ChallengeDiscoveryService } = {}
+  options: { challengeDiscoveryService?: ChallengeDiscoveryService; adapterDraftService?: AdapterDraftService } = {}
 ): void {
   app.post(prefix, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -259,6 +287,73 @@ function setupDiscoveryJobRoutes(
           },
         },
       });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post(`${prefix}/:id/functions/:functionId/revision-requests`, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id, functionId } = request.params as { id: string; functionId: AdapterFunctionId };
+      if (!isKnownAdapterFunction(functionId)) {
+        reply.code(400).send({ error: 'Unknown adapter function.' });
+        return;
+      }
+      const body = request.body as AdapterFunctionRevisionRequest;
+      const instruction = typeof body.instruction === 'string' ? body.instruction : '';
+      reply.code(202).send({
+        data: await discoveryService.requestFunctionRevision({
+          id,
+          functionId,
+          instruction,
+          currentSource: typeof body.currentSource === 'string' ? body.currentSource : undefined,
+        }),
+      });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post(`${prefix}/:id/function-revisions/:revisionTaskId/retry`, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id, revisionTaskId } = request.params as { id: string; revisionTaskId: string };
+      const body = request.body as { currentSource?: string; modelMode?: 'current-settings' | 'previous-task' };
+      reply.code(202).send({
+        data: await discoveryService.retryFunctionRevision({
+          id,
+          revisionTaskId,
+          currentSource: typeof body.currentSource === 'string' ? body.currentSource : undefined,
+          modelMode: body.modelMode === 'previous-task' ? 'previous-task' : 'current-settings',
+        }),
+      });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post(`${prefix}/:id/drafts`, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      if (!options.adapterDraftService) {
+        reply.code(400).send({ error: 'Adapter draft service is not available.' });
+        return;
+      }
+      const { id } = request.params as { id: string };
+      const job = await discoveryService.get(id);
+      if (!job) {
+        reply.code(404).send({ error: 'Discovery job not found.' });
+        return;
+      }
+      if (!job.adapterImplementationTs?.trim()) {
+        reply.code(400).send({ error: 'Discovery job has no TypeScript implementation draft to edit.' });
+        return;
+      }
+      const adapter = instantiateAdapterImplementationDraft(job.adapterImplementationTs);
+      const draft = await options.adapterDraftService.createFromGeneratedImplementation({
+        baseAdapterId: adapter.id,
+        baseAdapterName: adapter.name,
+        content: job.adapterImplementationTs,
+      });
+      reply.send({ data: draft });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

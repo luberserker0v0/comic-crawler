@@ -63,6 +63,74 @@ On Windows PowerShell, if terminal encoding looks broken:
 npm run dev:utf8
 ```
 
+## GUI page guide
+
+The WebUI navigation bar provides five main pages. Screenshots are tracked under
+[`docs/images/pages/`](docs/images/pages/README.md) with fixed filenames, so the
+images can be refreshed without changing these README links.
+
+### Dashboard (`/`)
+
+The dashboard is the main entry point for creating crawl tasks and checking
+overall status. It shows task counts by status, lets users choose all-chapter or
+specific-chapter crawling, previews the required URL shape, and lists registered
+adapter capabilities. If no compatible adapter supports the entered URL, task
+creation queues selector discovery instead of creating a crawl task.
+
+![View the Dashboard screenshot](docs/images/pages/dashboard.png)
+
+### Task Manager (`/tasks`, `/tasks/:taskId`)
+
+Task Manager combines the crawl task list with details for the selected task.
+It shows forced task order, task status cards, crawl flow stages, progress,
+metadata, chapter information, checkpoints, errors, and downloaded file
+previews. Users can pause, resume, cancel, or delete tasks when their current
+status permits it. When human verification is required, the task detail panel
+opens an isolated browser and resumes from checkpoint afterward.
+
+![View the Task Manager screenshot](docs/images/pages/task-manager.png)
+
+### Settings (`/settings`)
+
+Settings manages interface language, download directory, concurrency, naming
+template, image format, network timeouts, retry behavior, and browser rendering
+options. It also manages Selector Discovery (AO) configuration: service URL,
+provider document, selected model, connection tests, bundle release status, and
+evaluation command guidance. General settings can be saved or reset to their
+defaults.
+
+![View the Settings screenshot](docs/images/pages/settings.png)
+
+### Maintain Adapters (`/agent`)
+
+Maintain Adapters is the workspace for managing registered site adapters and
+adapter build jobs. The **Site adapters** tab lists each adapter's domains,
+capabilities, DOM strategy, active version label, version count, and
+implementation source. Users can delete an adapter from this tab; generated
+adapters are removed from runtime storage, and project TypeScript adapters
+delete their source directory under `backend/src/adapter/sites/` as a code
+change.
+
+The **Adapter build jobs** tab shows selector-discovery work for unknown sites
+or missing capabilities. Review panels let users inspect generated TypeScript
+drafts, run function tests, ask the Agent to revise one function, approve a
+draft, or reject it.
+
+![View the Maintain Adapters screenshot](docs/images/pages/agent-maintenance.png)
+
+### Adapter Lab (`/adapter-lab`)
+
+Adapter Lab is a workspace for inspecting, editing, and testing adapter
+implementations; it does not create crawl tasks. After resolving an entered URL,
+the page identifies the matching adapter and URL type, locks unavailable
+capabilities, and lets the user choose one implemented function as the test
+target. It displays the full implementation with an outline, supports
+user-owned drafts, and reports DOM source, readiness, timing, and extraction
+summary. When human verification is required, the test result points users to
+the handoff flow.
+
+![View the Adapter Lab screenshot](docs/images/pages/adapter-lab.png)
+
 ## Verification gates
 
 Use these commands before handing off changes:

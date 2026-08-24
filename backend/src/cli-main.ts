@@ -3,8 +3,7 @@ import { JsonFileStore } from './storage/json-store';
 import { ConfigManager } from './config/manager';
 import { resolveRuntimeConfig } from './config/runtime';
 import { AdapterRegistry } from './adapter/registry';
-import { KuronaviAdapter } from './adapter/sites/kuronavi';
-import { HappyMhAdapter } from './adapter/sites/happymh';
+import { registerProjectAdapters } from './adapter/runtime-state';
 import { CrawlerEngine } from './crawler/engine';
 import { TaskManager, type TaskDefinition } from './task/manager';
 import type { TaskItem } from './task/types';
@@ -28,8 +27,10 @@ async function main(): Promise<void> {
     const config = await configManager.get();
 
     const adapterRegistry = new AdapterRegistry(eventBus);
-    adapterRegistry.register(new KuronaviAdapter());
-    adapterRegistry.register(new HappyMhAdapter());
+    await registerProjectAdapters(
+      storage,
+      (adapter) => adapterRegistry.register(adapter)
+    );
 
     const crawlerEngine = new CrawlerEngine({
       downloadDir: config.download.directory,

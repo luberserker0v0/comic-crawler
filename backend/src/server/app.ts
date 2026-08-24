@@ -11,6 +11,7 @@ import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '.
 import type { ChallengeDiscoveryService } from '../challenge';
 import type { AdapterDraftService } from '../adapter-drafts/service';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
+import type { IStorage } from '../storage/types';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -38,6 +39,7 @@ export interface ServerOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
   adapterDraftService?: AdapterDraftService;
   fixtureCaptureService?: FixtureCaptureService;
+  storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
   auth?: { username: string; password: string };
@@ -111,6 +113,7 @@ export class ComicCrawlerServer {
     setupConfigRoutes(this.app, this.options.configManager);
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
+      storage: this.options.storage,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
     setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
@@ -125,7 +128,10 @@ export class ComicCrawlerServer {
         this.options.selectorDiscoveryService,
         this.options.selectorDiscoverySettingsStore,
         undefined,
-        { challengeDiscoveryService: this.options.challengeDiscoveryService }
+        {
+          challengeDiscoveryService: this.options.challengeDiscoveryService,
+          adapterDraftService: this.options.adapterDraftService,
+        }
       );
     }
     if (this.options.challengeDiscoveryService) {

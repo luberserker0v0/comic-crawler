@@ -60,6 +60,60 @@ class OracleAdapter extends AdapterBase {
   }
 }
 
+function createImplementationDraftSource(adapterId = 'generated-adapter', domain = 'generated.test'): string {
+  return `
+import type { ChapterInfo } from '@comiccrawler/shared';
+import {
+  AdapterBase,
+  CommonCapability,
+  VerificationCapability,
+  MetadataCapability,
+  ChapterImagesCapability,
+} from '../../base';
+
+export class GeneratedAdapter extends AdapterBase {
+  readonly id = '${adapterId}';
+  readonly name = 'Generated Adapter';
+  readonly domains = ['${domain}'];
+  readonly parseMode = 'static' as const;
+  readonly capabilities = { verification: true, metadata: true, chapterImages: true };
+  readonly common = new GeneratedCommonCapability(this);
+  readonly verification = new GeneratedVerificationCapability(this);
+  readonly metadata = new GeneratedMetadataCapability(this);
+  readonly chapterImages = new GeneratedChapterImagesCapability(this);
+}
+
+class GeneratedCommonCapability extends CommonCapability {
+  matchUrl(url: string): boolean {
+    return new URL(url).hostname === '${domain}';
+  }
+}
+
+class GeneratedVerificationCapability extends VerificationCapability {}
+
+class GeneratedMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string {
+    return this.adapter.asCheerio(document)('h1').text().trim();
+  }
+
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    const $ = this.adapter.asCheerio(document);
+    return $('a[href*="/chapter-"]').map((_, element) => {
+      const url = this.adapter.resolveUrl(sourceUrl, $(element).attr('href') ?? '');
+      return { id: new URL(url).pathname.split('/').filter(Boolean).at(-1) ?? 'chapter', title: $(element).text().trim(), url };
+    }).get();
+  }
+}
+
+class GeneratedChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document);
+    return $('#reader img').map((_, element) => this.adapter.resolveUrl(sourceUrl, $(element).attr('src') ?? '')).get();
+  }
+}
+`;
+}
+
 describe('SelectorDiscoveryService shadow promotion', () => {
   it('augments an existing chapter-only dynamic adapter instead of registering a second adapter', async () => {
     const storage = new MemoryStorage();
@@ -128,13 +182,20 @@ describe('SelectorDiscoveryService shadow promotion', () => {
     const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
 
     expect(registry.size).toBe(1);
-    expect(promoted.adapterId).toBe('example-dynamic');
-    expect(promoted.capabilities).toEqual({ verification: true, metadata: true, chapterImages: true });
-    expect(promoted.selectors.metadata?.title).toBe('h1');
-    expect(promoted.selectors.images).toEqual(baseManifest.selectors.images);
+    const promotedManifest = promoted as DynamicSiteAdapterManifest;
+    expect(promotedManifest.adapterId).toBe('example-dynamic');
+    expect(promotedManifest.capabilities).toEqual({ verification: true, metadata: true, chapterImages: true });
+    expect(promotedManifest.selectors.metadata?.title).toBe('h1');
+    expect(promotedManifest.selectors.images).toEqual(baseManifest.selectors.images);
     expect(active).toHaveLength(1);
     expect(active?.[0]?.adapterId).toBe('example-dynamic');
     expect(registry.get('example-dynamic')?.capabilities).toEqual({ verification: true, metadata: true, chapterImages: true });
+    await expect(storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-augment')).resolves.toMatchObject({
+      status: 'promoted',
+      phase: 'complete',
+      adapterId: 'example-dynamic',
+      adapterName: 'Example Dynamic Full',
+    });
   });
 
   it('rejects augment promotion when the candidate changes adapter identity', async () => {
@@ -342,5 +403,172 @@ describe('SelectorDiscoveryService shadow promotion', () => {
     expect(updated.oracleComparison?.titleMatched).toBe(true);
     expect(updated.oracleComparison?.chapterCountDelta).toBe(0);
     expect(await storage.exists('selector-discovery-shadow-promotion-disc-test')).toBe(true);
+  });
+
+  it('promotes an awaiting_review TypeScript implementation draft', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-ts',
+      url: 'https://generated.test/manga/title',
+      normalizedUrl: 'https://generated.test/manga/title',
+      hostname: 'generated.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource(),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-ts', job);
+    await storage.write('selector-discovery-index', ['disc-ts']);
+
+    const promoted = await service.promote('disc-ts');
+    const active = await storage.read<Array<{ adapterId: string; adapterImplementationTs: string }>>(
+      'selector-discovery-active-implementation-adapters'
+    );
+
+    expect(promoted.adapterId).toBe('generated-adapter');
+    expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
+    expect(active).toHaveLength(1);
+    expect(active?.[0]?.adapterImplementationTs).toContain('GeneratedAdapter');
+    await expect(storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-ts')).resolves.toMatchObject({
+      status: 'promoted',
+      phase: 'complete',
+      adapterId: 'generated-adapter',
+      adapterName: 'Generated Adapter',
+    });
+  });
+
+  it('rejects invalid TypeScript implementation draft promotion', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-invalid-ts',
+      url: 'https://generated.test/manga/title',
+      normalizedUrl: 'https://generated.test/manga/title',
+      hostname: 'generated.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource(),
+      implementationValidation: { valid: false, syntaxValid: true, errors: ['missing metadata capability'], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-invalid-ts', job);
+    await storage.write('selector-discovery-index', ['disc-invalid-ts']);
+
+    await expect(service.promote('disc-invalid-ts')).rejects.toThrow('Adapter implementation draft is invalid');
+    expect(registry.size).toBe(0);
+  });
+
+  it('rejects TypeScript implementation draft adapter id collisions', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    registry.register(new OracleAdapter());
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-id-collision-ts',
+      url: 'https://other.test/manga/title',
+      normalizedUrl: 'https://other.test/manga/title',
+      hostname: 'other.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource('oracle', 'other.test'),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-id-collision-ts', job);
+    await storage.write('selector-discovery-index', ['disc-id-collision-ts']);
+
+    await expect(service.promote('disc-id-collision-ts')).rejects.toThrow('Adapter "oracle" is already registered');
+  });
+
+  it('rejects TypeScript implementation draft domain conflicts', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    registry.register(new OracleAdapter());
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-domain-collision-ts',
+      url: 'https://example.com/manga/title',
+      normalizedUrl: 'https://example.com/manga/title',
+      hostname: 'example.com',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource('other-generated', 'example.com'),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-domain-collision-ts', job);
+    await storage.write('selector-discovery-index', ['disc-domain-collision-ts']);
+
+    await expect(service.promote('disc-domain-collision-ts')).rejects.toThrow('Domain conflict detected for example.com');
+  });
+
+  it('loads promoted TypeScript implementation adapters on startup', async () => {
+    const storage = new MemoryStorage();
+    await storage.write('selector-discovery-active-implementation-adapters', [
+      {
+        adapterId: 'generated-adapter',
+        name: 'Generated Adapter',
+        domains: ['generated.test'],
+        urlPatterns: ['https://generated.test/*'],
+        parseMode: 'static',
+        capabilities: { verification: true, metadata: true, chapterImages: true },
+        sourceDiscoveryId: 'disc-ts',
+        adapterImplementationTs: createImplementationDraftSource(),
+        promotedAt: '2026-06-25T00:00:00.000Z',
+      },
+    ]);
+    const registry = new AdapterRegistry();
+    const service = new SelectorDiscoveryService(storage, registry);
+
+    await service.loadActiveDynamicAdapters();
+
+    expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
+  });
+
+  it('records a function revision subtask under an awaiting review implementation draft', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const service = new SelectorDiscoveryService(storage, registry);
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-revision',
+      url: 'https://generated.test/manga/title',
+      normalizedUrl: 'https://generated.test/manga/title',
+      hostname: 'generated.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource(),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-revision', job);
+    await storage.write('selector-discovery-index', ['disc-revision']);
+
+    const updated = await service.requestFunctionRevision({
+      id: 'disc-revision',
+      functionId: 'extractTitle',
+      instruction: 'Only read the primary catalog title.',
+    });
+
+    expect(updated.functionRevisionTasks).toHaveLength(1);
+    expect(updated.functionRevisionTasks?.[0]).toMatchObject({
+      parentDiscoveryId: 'disc-revision',
+      functionId: 'extractTitle',
+      instruction: 'Only read the primary catalog title.',
+      status: 'queued',
+    });
   });
 });

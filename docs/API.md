@@ -215,11 +215,12 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/adapters/:id/functions/:functionId/source` | Read the legacy function source snippet view. Prefer `/implementation` for review. |
 | `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
+| `DELETE` | `/api/adapters/:id` | Delete a registered adapter. Generated runtime records are removed; project TypeScript adapter source directories under `backend/src/adapter/sites/` are deleted as a code change. |
 | `GET` | `/api/adapter-drafts` | List user-owned adapter drafts. |
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
 | `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |
 | `POST` | `/api/adapter-drafts/:id/reset` | Reset draft content from the active adapter. |
-| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest draft with a temporary adapter. Built-in TS drafts are not executed. |
+| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest draft with a temporary adapter. Project-source TS drafts are not executed. |
 | `DELETE` | `/api/adapter-drafts/:id` | Discard a draft. |
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |

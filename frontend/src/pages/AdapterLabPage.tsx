@@ -409,7 +409,7 @@ export const AdapterLabPage: React.FC = () => {
       return;
     }
     if (draft && !canExecuteDraft) {
-      setError('Built-in TypeScript draft execution is not supported yet. Save the draft, then test the active adapter or wait for TS draft sandbox support.');
+      setError('Project-source TypeScript draft execution is not supported yet. Save the draft, then test the active adapter or wait for TS draft sandbox support.');
       return;
     }
     const adapterDomStrategy = capabilityDetail?.adapter.parseMode === 'dynamic' || capabilityDetail?.adapter.parseMode === 'interactive'
@@ -741,7 +741,7 @@ export const AdapterLabPage: React.FC = () => {
                     {isDraftMode
                       ? canExecuteDraft
                         ? `Draft ${draft?.draft.draftId} is stored under user adapter-drafts. Tests run against this temporary draft manifest and do not modify the active adapter.`
-                        : `Draft ${draft?.draft.draftId} is stored under user adapter-drafts. Built-in TypeScript draft execution is not supported yet.`
+                        : `Draft ${draft?.draft.draftId} is stored under user adapter-drafts. Project-source TypeScript draft execution is not supported yet.`
                       : 'The active adapter is read-only. Create a draft to edit and save a user-owned copy.'}
                   </div>
                 </div>

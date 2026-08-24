@@ -56,6 +56,50 @@ paths:
                         $ref: "#/components/schemas/AdapterResolveResponse"
         "400":
           $ref: "#/components/responses/Error"
+  /api/adapters/{id}:
+    get:
+      summary: Read adapter detail
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+      responses:
+        "200":
+          description: Adapter detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdapterListItem"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete a registered adapter
+      description: Removes generated adapter runtime records. For project TypeScript adapters, deletes the adapter source directory as a project code change.
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+      responses:
+        "200":
+          description: Adapter deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [adapterId, message]
+                        properties:
+                          adapterId:
+                            type: string
+                          message:
+                            type: string
+        "404":
+          $ref: "#/components/responses/Error"
   /api/adapters/{id}/capabilities:
     get:
       summary: Read Adapter Lab capabilities and function descriptors
@@ -426,7 +470,7 @@ components:
           $ref: "#/components/schemas/Capabilities"
     AdapterListItem:
       type: object
-      required: [id, name, domains, capabilities]
+      required: [id, name, domains, parseMode, capabilities, activeVersionLabel, versionCount]
       properties:
         id:
           type: string
@@ -436,8 +480,23 @@ components:
           type: array
           items:
             type: string
+        parseMode:
+          type: string
+          enum: [static, dynamic, interactive]
         capabilities:
           $ref: "#/components/schemas/Capabilities"
+        activeVersionLabel:
+          type: string
+        versionCount:
+          type: integer
+        implementationKind:
+          type: string
+          enum: [project-source, selector-manifest, ts-implementation, summary, generated-draft]
+        sourceDiscoveryId:
+          type: string
+        promotedAt:
+          type: string
+          format: date-time
     AdapterResolveRequest:
       type: object
       required: [url]
