@@ -215,6 +215,22 @@ describe('Integration: REST-only crawl flow', () => {
     expect(resolveResponse.statusCode).toBe(200);
     expect(resolveResponse.json().data.status).toBe('matched');
 
+    const imagesResponse = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/adapters/chapter-images',
+      payload: { url: chapterUrl },
+    });
+    expect(imagesResponse.statusCode).toBe(200);
+    expect(imagesResponse.json().data).toMatchObject({
+      adapterId: 'rest-only',
+      chapterUrl,
+      imageUrlCount: 2,
+      imageUrls: [
+        'https://rest-only.example/images/001.jpg',
+        'https://rest-only.example/images/002.jpg',
+      ],
+    });
+
     const createResponse = await server.getApp().inject({
       method: 'POST',
       url: '/api/tasks',

@@ -146,6 +146,38 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
+  it('extracts the complete ordered image URL list directly through the matched adapter', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const adapter = new StaticDemoAdapter();
+    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(
+      '<div class="reader"><img src="/images/1.jpg"><img src="/images/2.jpg"><img src="/images/3.webp"></div>'
+    );
+    registry.register(adapter);
+    setupAdaptersRoutes(app, registry);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/adapters/chapter-images',
+      payload: { url: 'https://example.com/read/1' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      adapterId: 'static-demo',
+      chapterUrl: 'https://example.com/read/1',
+      imageUrlCount: 3,
+      imageUrls: [
+        'https://example.com/images/1.jpg',
+        'https://example.com/images/2.jpg',
+        'https://example.com/images/3.webp',
+      ],
+      domSource: 'static',
+    });
+
+    await app.close();
+  });
+
   it('lists adapters with same-level runtime metadata', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();

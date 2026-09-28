@@ -54,6 +54,8 @@ export type {
   CrawlMode,
   AdapterResolveRequest,
   AdapterResolveResponse,
+  ChapterImagesRequest,
+  ChapterImagesResponse,
   AdapterListItem,
   AdapterFunctionCapability,
   AdapterFunctionInputKind,

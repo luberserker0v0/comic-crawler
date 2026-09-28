@@ -12,6 +12,8 @@ import type {
   AdapterDomSource,
   DomReadinessReport,
   DomReadinessTarget,
+  ChapterImagesRequest,
+  ChapterImagesResponse,
 } from '@comiccrawler/shared';
 import { DEFAULTS } from '@comiccrawler/shared';
 import { existsSync } from 'node:fs';
@@ -159,6 +161,68 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  app.post('/api/adapters/chapter-images', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = (request.body ?? {}) as Partial<ChapterImagesRequest>;
+    if (!body.url) {
+      reply.code(400).send({ error: 'URL is required' });
+      return;
+    }
+
+    let chapterUrl: string;
+    try {
+      chapterUrl = new URL(body.url).href;
+    } catch {
+      reply.code(400).send({ error: 'URL must be a valid absolute URL' });
+      return;
+    }
+
+    const adapter = body.adapterId
+      ? registry.get(body.adapterId)
+      : registry.findByUrlWithCapabilities(chapterUrl, { chapterImages: true });
+    if (!adapter) {
+      reply.code(404).send({
+        error: body.adapterId
+          ? `Adapter "${body.adapterId}" was not found.`
+          : 'No registered adapter with chapterImages capability matches this URL.',
+      });
+      return;
+    }
+
+    if (!adapter.matchUrl(chapterUrl)) {
+      reply.code(422).send({ error: `Adapter "${adapter.id}" does not match this chapter URL.` });
+      return;
+    }
+    if (!getAdapterCapabilities(adapter).chapterImages) {
+      reply.code(422).send({ error: `Adapter "${adapter.id}" does not support chapterImages capability.` });
+      return;
+    }
+
+    const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+      challengeDiscoveryId: body.challengeDiscoveryId,
+      challengeDiscoveryService: options.challengeDiscoveryService,
+    });
+    if (!extraction.ok) {
+      reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
+        error: extraction.error ?? 'Chapter image extraction failed.',
+        data: extraction,
+      });
+      return;
+    }
+
+    const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
+      ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
+      : [];
+    const data: ChapterImagesResponse = {
+      adapterId: adapter.id,
+      chapterUrl,
+      imageUrlCount: imageUrls.length,
+      imageUrls,
+      domSource: extraction.domSource,
+      durationMs: extraction.durationMs,
+    };
+    reply.send({ data });
   });
 
   app.get('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {

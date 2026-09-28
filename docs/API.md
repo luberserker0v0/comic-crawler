@@ -67,6 +67,43 @@ Possible `data.status` values:
   the requested capability.
 - `not_found` - no adapter matches the URL.
 
+### Extract every image URL from one chapter
+
+Use the public chapter-images endpoint when a client needs the adapter's complete
+ordered URL result without creating a download task:
+
+```http
+POST /api/adapters/chapter-images
+```
+
+```json
+{
+  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}"
+}
+```
+
+The adapter is resolved from the URL. An optional `adapterId` selects a specific
+registered adapter, and an optional `challengeDiscoveryId` reuses a completed
+human-verification handoff. A successful response does not truncate the list.
+`imageUrlCount` always equals `imageUrls.length`; the example below therefore
+contains two URLs and reports a count of `2`:
+
+```json
+{
+  "data": {
+    "adapterId": "site-adapter",
+    "chapterUrl": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
+    "imageUrlCount": 2,
+    "imageUrls": [
+      "https://cdn.example/001.jpg",
+      "https://cdn.example/002.jpg"
+    ],
+    "domSource": "static",
+    "durationMs": 42
+  }
+}
+```
+
 ### 2. Create task or queue adapter discovery
 
 ```http
@@ -209,6 +246,7 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | --- | --- | --- |
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
+| `POST` | `/api/adapters/chapter-images` | Resolve an adapter and return every ordered image URL extracted from one chapter. |
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
 | `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |

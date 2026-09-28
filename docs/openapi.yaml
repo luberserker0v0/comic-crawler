@@ -56,6 +56,46 @@ paths:
                         $ref: "#/components/schemas/AdapterResolveResponse"
         "400":
           $ref: "#/components/responses/Error"
+  /api/adapters/chapter-images:
+    post:
+      summary: Extract every image URL from one chapter
+      description: Resolves a compatible adapter unless adapterId is supplied, then returns the complete ordered image URL list without creating a download task. imageUrlCount always equals imageUrls.length; imageUrls is never truncated to a preview subset.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChapterImagesRequest"
+      responses:
+        "200":
+          description: Complete chapter image URL result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChapterImagesResponse"
+              example:
+                data:
+                  adapterId: site-adapter
+                  chapterUrl: https://comic.example/manga/example/chapter-10
+                  imageUrlCount: 2
+                  imageUrls:
+                    - https://cdn.example/001.jpg
+                    - https://cdn.example/002.jpg
+                  domSource: static
+                  durationMs: 42
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /api/adapters/{id}:
     get:
       summary: Read adapter detail
@@ -529,6 +569,43 @@ components:
         discoveryTarget:
           type: string
           enum: [full, chapter-only]
+    ChapterImagesRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        adapterId:
+          type: string
+        challengeDiscoveryId:
+          type: string
+    ChapterImagesResponse:
+      type: object
+      required: [adapterId, chapterUrl, imageUrlCount, imageUrls, domSource, durationMs]
+      properties:
+        adapterId:
+          type: string
+        chapterUrl:
+          type: string
+          format: uri
+        imageUrlCount:
+          type: integer
+          minimum: 1
+          description: Number of entries in imageUrls. Always equals imageUrls.length.
+        imageUrls:
+          type: array
+          minItems: 1
+          description: Complete ordered image URL list. This array is never truncated to a preview subset.
+          items:
+            type: string
+            format: uri
+        domSource:
+          type: string
+          enum: [static, rendered, verified-fixture, handoff-required]
+        durationMs:
+          type: integer
+          minimum: 0
     AdapterFunctionTestRequest:
       type: object
       required: [url]

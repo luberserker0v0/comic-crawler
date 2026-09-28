@@ -30,6 +30,21 @@ export interface AdapterResolveResponse {
   discoveryTarget: SelectorDiscoveryTarget;
 }
 
+export interface ChapterImagesRequest {
+  url: string;
+  adapterId?: string;
+  challengeDiscoveryId?: string;
+}
+
+export interface ChapterImagesResponse {
+  adapterId: string;
+  chapterUrl: string;
+  imageUrlCount: number;
+  imageUrls: string[];
+  domSource: AdapterDomSource;
+  durationMs: number;
+}
+
 export interface AdapterListItem {
   id: string;
   name: string;
