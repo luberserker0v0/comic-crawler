@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: comiccrawler
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    ports:
+      - '4100:4100'
+    environment:
+      - NODE_ENV=production
+      - COMICCRAWLER_HOST=0.0.0.0
+      - COMICCRAWLER_PORT=4100
+      - COMICCRAWLER_DATA_PATH=/app/data
+      - STATIC_DIR=/app/static
+    volumes:
+      - comic-data:/app/data
+      - comic-downloads:/app/downloads
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:4100/api/status']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+volumes:
+  comic-data:
+    driver: local
+  comic-downloads:
+    driver: local

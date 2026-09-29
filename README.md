@@ -63,6 +63,30 @@ On Windows PowerShell, if terminal encoding looks broken:
 npm run dev:utf8
 ```
 
+## Docker
+
+From this repository root, build and start the production container with:
+
+```bash
+docker compose up --build -d
+```
+
+Docker maps container port `4100` to host port `4100`. The built frontend and
+REST API are served by the same backend process:
+
+- WebUI: `http://127.0.0.1:4100/`
+- REST status: `http://127.0.0.1:4100/api/status`
+- Swagger UI: `http://127.0.0.1:4100/api-docs`
+
+Runtime data and downloads are persisted in the `comic-data` and
+`comic-downloads` named volumes. Container logs rotate at 10 MB and retain up to
+three files, limiting Docker JSON logs to approximately 30 MB per container. To
+stop the container without deleting those volumes, run:
+
+```bash
+docker compose down
+```
+
 ## GUI page guide
 
 The WebUI navigation bar provides five main pages. Screenshots are tracked under
