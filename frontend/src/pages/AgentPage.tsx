@@ -12,6 +12,7 @@ import type {
   AdapterDraftDetailResponse,
   AdapterFunctionTestResponse,
   AdapterImplementationResponse,
+  DeletedAdapterListItem,
   SelectorDiscoveryJobSummary,
 } from '@comiccrawler/shared';
 
@@ -35,7 +36,14 @@ type PendingAction =
   | { type: 'promote'; adapterId: string; version: string }
   | { type: 'reject'; adapterId: string; version: string }
   | { type: 'rollback'; adapterId: string; version?: string }
-  | { type: 'deleteAdapter'; adapterId: string; adapterName?: string };
+  | {
+      type: 'deleteAdapter';
+      adapterId: string;
+      adapterName?: string;
+      implementationKind?: AdapterListItem['implementationKind'];
+      sourcePath?: string;
+      sourceWillBeDeleted?: boolean;
+    };
 
 function getBadgeLabel(
   text: ReturnType<typeof useI18n>['text'],
@@ -86,12 +94,18 @@ function formatActionDescription(text: ReturnType<typeof useI18n>['text'], actio
     return formatText(text.agent.pendingActions.deleteAdapterDescription, {
       adapterId: action.adapterId,
       adapterName: action.adapterName ?? action.adapterId,
+      implementationKind: action.implementationKind ?? '-',
+      sourcePath: action.sourcePath ?? '-',
     });
   }
 
-  return action.version
-    ? formatText(text.agent.pendingActions.rollbackDescriptionWithVersion, action as Required<PendingAction>)
-    : formatText(text.agent.pendingActions.rollbackDescriptionWithoutVersion, action);
+  const rollbackAction = action as Extract<PendingAction, { type: 'rollback' }>;
+  return rollbackAction.version
+    ? formatText(text.agent.pendingActions.rollbackDescriptionWithVersion, {
+      adapterId: rollbackAction.adapterId,
+      version: rollbackAction.version,
+    })
+    : formatText(text.agent.pendingActions.rollbackDescriptionWithoutVersion, { adapterId: rollbackAction.adapterId });
 }
 
 function VersionDetails({
@@ -266,12 +280,18 @@ export const AgentPage: React.FC = () => {
   const [selectedVersionId, setSelectedVersionId] = useLocalStorage<string | null>('agent:selected-version', null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [persistedAdapterId, setPersistedAdapterId] = useLocalStorage<string | null>('agent:selected-adapter', null);
-  const [activeSection, setActiveSection] = useLocalStorage<'site-adapters' | 'build-jobs'>('agent:active-section', 'site-adapters');
+  const [activeSection, setActiveSection] = useLocalStorage<'site-adapters' | 'build-jobs' | 'deleted-adapters'>('agent:active-section', 'site-adapters');
   const [siteAdapters, setSiteAdapters] = useState<AdapterListItem[]>([]);
   const [siteAdaptersLoading, setSiteAdaptersLoading] = useState(false);
   const [siteAdaptersError, setSiteAdaptersError] = useState<string | null>(null);
   const [selectedSiteAdapterId, setSelectedSiteAdapterId] = useLocalStorage<string | null>('agent:selected-site-adapter', null);
   const [deleteAdapterLoading, setDeleteAdapterLoading] = useState(false);
+  const [deleteAdapterConfirmation, setDeleteAdapterConfirmation] = useState('');
+  const [deleteAdapterResult, setDeleteAdapterResult] = useState<string | null>(null);
+  const [deletedAdapters, setDeletedAdapters] = useState<DeletedAdapterListItem[]>([]);
+  const [deletedAdaptersLoading, setDeletedAdaptersLoading] = useState(false);
+  const [deletedAdaptersError, setDeletedAdaptersError] = useState<string | null>(null);
+  const [restoringAdapterId, setRestoringAdapterId] = useState<string | null>(null);
   const [buildJobs, setBuildJobs] = useState<SelectorDiscoveryJobSummary[]>([]);
   const [buildJobsLoading, setBuildJobsLoading] = useState(false);
   const [buildJobsError, setBuildJobsError] = useState<string | null>(null);
@@ -324,6 +344,22 @@ export const AgentPage: React.FC = () => {
       setSiteAdaptersLoading(false);
     }
   }, [selectedSiteAdapterId, setSelectedSiteAdapterId]);
+
+  const fetchDeletedAdapters = useCallback(async () => {
+    setDeletedAdaptersLoading(true);
+    try {
+      const response = await api.getDeletedAdapters();
+      const items = [...(response.data.adapters ?? [])].sort((a, b) => (
+        new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime()
+      ));
+      setDeletedAdapters(items);
+      setDeletedAdaptersError(null);
+    } catch (error) {
+      setDeletedAdaptersError(getApiErrorMessage(error));
+    } finally {
+      setDeletedAdaptersLoading(false);
+    }
+  }, []);
 
   const fetchBuildJobs = useCallback(async () => {
     setBuildJobsLoading(true);
@@ -526,6 +562,19 @@ export const AgentPage: React.FC = () => {
     }
   }, [fetchBuildJobs, reviewJob]);
 
+  const restoreDeletedAdapter = useCallback(async (adapterId: string) => {
+    setRestoringAdapterId(adapterId);
+    setDeletedAdaptersError(null);
+    try {
+      await api.restoreAdapter(adapterId);
+      await Promise.all([fetchDeletedAdapters(), fetchSiteAdapters(), fetchAdapters()]);
+    } catch (error) {
+      setDeletedAdaptersError(getApiErrorMessage(error));
+    } finally {
+      setRestoringAdapterId(null);
+    }
+  }, [fetchAdapters, fetchDeletedAdapters, fetchSiteAdapters]);
+
   useEffect(() => {
     void fetchBuildJobs();
   }, [fetchBuildJobs]);
@@ -533,6 +582,10 @@ export const AgentPage: React.FC = () => {
   useEffect(() => {
     void fetchSiteAdapters();
   }, [fetchSiteAdapters]);
+
+  useEffect(() => {
+    void fetchDeletedAdapters();
+  }, [fetchDeletedAdapters]);
 
   useEffect(() => {
     if (siteAdapters.length === 0) {
@@ -643,6 +696,8 @@ export const AgentPage: React.FC = () => {
     () => siteAdapters.find((adapter) => adapter.id === selectedSiteAdapterId) ?? null,
     [selectedSiteAdapterId, siteAdapters]
   );
+  const deleteRequiresTypedConfirmation = pendingAction?.type === 'deleteAdapter' && Boolean(pendingAction.sourceWillBeDeleted);
+  const deleteConfirmationMatches = !deleteRequiresTypedConfirmation || deleteAdapterConfirmation.trim() === pendingAction?.adapterId;
 
   const runPendingAction = async () => {
     if (!pendingAction) return;
@@ -654,8 +709,14 @@ export const AgentPage: React.FC = () => {
     } else if (pendingAction.type === 'deleteAdapter') {
       setDeleteAdapterLoading(true);
       try {
-        await api.deleteAdapter(pendingAction.adapterId);
-        await Promise.all([fetchSiteAdapters(), fetchAdapters()]);
+        const response = await api.deleteAdapter(pendingAction.adapterId);
+        await Promise.all([fetchSiteAdapters(), fetchAdapters(), fetchDeletedAdapters()]);
+        setDeleteAdapterResult([
+          response.data.message,
+          `Registry removed: ${response.data.registryRemoved ? 'yes' : 'no'}`,
+          `Source deleted: ${response.data.sourceDeleted ? 'yes' : 'no'}`,
+          `Deleted marker: ${response.data.deletedMarkerWritten ? 'written' : 'missing'}`,
+        ].join(' · '));
         if (selectedSiteAdapterId === pendingAction.adapterId) {
           setSelectedSiteAdapterId(null);
         }
@@ -673,6 +734,7 @@ export const AgentPage: React.FC = () => {
     }
 
     setPendingAction(null);
+    setDeleteAdapterConfirmation('');
   };
 
   return (
@@ -690,6 +752,7 @@ export const AgentPage: React.FC = () => {
             void fetchAdapters();
             void fetchSiteAdapters();
             void fetchBuildJobs();
+            void fetchDeletedAdapters();
             if (selectedAdapterId) {
               void selectAdapter(selectedAdapterId);
             }
@@ -712,23 +775,49 @@ export const AgentPage: React.FC = () => {
         </div>
       )}
 
+      {deleteAdapterResult && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+          <div>{deleteAdapterResult}</div>
+          <button onClick={() => setDeleteAdapterResult(null)} className="mt-2 font-medium underline">
+            {text.settings.dismissError}
+          </button>
+        </div>
+      )}
+
       {pendingAction && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-amber-900">{formatActionTitle(text, pendingAction)}</h2>
               <p className="mt-1 text-sm text-amber-800">{formatActionDescription(text, pendingAction)}</p>
+              {pendingAction.type === 'deleteAdapter' && pendingAction.sourceWillBeDeleted && (
+                <div className="mt-3 max-w-2xl rounded-lg border border-rose-200 bg-white p-3 text-sm text-rose-800">
+                  <div>{text.agent.pendingActions.deleteSourcePath}: <span className="font-mono">{pendingAction.sourcePath ?? '-'}</span></div>
+                  <label className="mt-3 block">
+                    <span className="font-medium">{formatText(text.agent.pendingActions.typeAdapterIdToConfirm, { adapterId: pendingAction.adapterId })}</span>
+                    <input
+                      value={deleteAdapterConfirmation}
+                      onChange={(event) => setDeleteAdapterConfirmation(event.target.value)}
+                      className="mt-2 w-full rounded-lg border border-rose-200 px-3 py-2 font-mono text-sm text-slate-900"
+                      placeholder={pendingAction.adapterId}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => setPendingAction(null)}
+                onClick={() => {
+                  setPendingAction(null);
+                  setDeleteAdapterConfirmation('');
+                }}
                 className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900"
               >
                 {text.agent.pendingActions.cancel}
               </button>
               <button
                 onClick={runPendingAction}
-                disabled={actionLoading || deleteAdapterLoading}
+                disabled={actionLoading || deleteAdapterLoading || !deleteConfirmationMatches}
                 className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {actionLoading || deleteAdapterLoading ? text.agent.pendingActions.working : text.agent.pendingActions.confirm}
@@ -760,6 +849,17 @@ export const AgentPage: React.FC = () => {
           }`}
         >
           {text.agent.buildJobsTab}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('deleted-adapters')}
+          className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+            activeSection === 'deleted-adapters'
+              ? 'bg-slate-900 text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {text.agent.deletedAdaptersTab}
         </button>
       </div>
 
@@ -862,6 +962,74 @@ export const AgentPage: React.FC = () => {
           )}
         </div>
       </section>
+      )}
+
+      {activeSection === 'deleted-adapters' && (
+        <section className="rounded-2xl bg-white p-6 shadow">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">{text.agent.deletedAdapters}</h2>
+              <p className="mt-1 text-sm text-slate-500">{text.agent.deletedAdaptersDescription}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void fetchDeletedAdapters()}
+              disabled={deletedAdaptersLoading}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deletedAdaptersLoading ? `${text.agent.refresh}...` : text.agent.refresh}
+            </button>
+          </div>
+
+          {deletedAdaptersError && (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{deletedAdaptersError}</div>
+          )}
+
+          <div className="mt-5 space-y-3">
+            {deletedAdapters.map((adapter) => (
+              <div key={`${adapter.adapterId}-${adapter.deletedAt}`} className="rounded-xl border border-slate-200 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">{adapter.adapterId}</div>
+                    <div className="mt-1 text-xs text-slate-500">{text.agent.deletedAt}: {formatDateTime(adapter.deletedAt)}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                        {formatImplementationKind(text, adapter.implementationKind)}
+                      </span>
+                      <span className={`rounded-full px-2 py-1 ${adapter.restorable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {adapter.restorable ? text.agent.restorable : text.agent.notRestorable}
+                      </span>
+                    </div>
+                    {adapter.sourcePath && (
+                      <div className="mt-3 break-all text-xs text-slate-600">
+                        {text.agent.sourcePath}: <span className="font-mono">{adapter.sourcePath}</span>
+                      </div>
+                    )}
+                    {adapter.sourceDirectory && (
+                      <div className="mt-1 break-all text-xs text-slate-500">
+                        {text.agent.sourceDirectory}: <span className="font-mono">{adapter.sourceDirectory}</span>
+                      </div>
+                    )}
+                    <div className="mt-3 text-sm text-slate-600">{adapter.restoreReason}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void restoreDeletedAdapter(adapter.adapterId)}
+                    disabled={!adapter.restorable || restoringAdapterId === adapter.adapterId}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {restoringAdapterId === adapter.adapterId ? `${text.agent.restoreAdapter}...` : text.agent.restoreAdapter}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {deletedAdapters.length === 0 && !deletedAdaptersLoading && (
+              <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+                {text.agent.noDeletedAdapters}
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {reviewJob && (
@@ -1232,7 +1400,14 @@ export const AgentPage: React.FC = () => {
                 <button
                   onClick={() =>
                     selectedSiteAdapter &&
-                    setPendingAction({ type: 'deleteAdapter', adapterId: selectedSiteAdapter.id, adapterName: selectedSiteAdapter.name })
+                    setPendingAction({
+                      type: 'deleteAdapter',
+                      adapterId: selectedSiteAdapter.id,
+                      adapterName: selectedSiteAdapter.name,
+                      implementationKind: selectedSiteAdapter.implementationKind,
+                      sourcePath: selectedSiteAdapter.sourcePath,
+                      sourceWillBeDeleted: selectedSiteAdapter.sourceWillBeDeleted,
+                    })
                   }
                   disabled={!selectedSiteAdapter || actionLoading || deleteAdapterLoading}
                   className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
@@ -1292,6 +1467,16 @@ export const AgentPage: React.FC = () => {
                 <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.agent.implementationKind}</div>
                 <div className="mt-2 text-sm font-semibold text-slate-900">{formatImplementationKind(text, selectedSiteAdapter?.implementationKind)}</div>
                 <div className="mt-3 text-sm text-slate-600">{text.agent.parseMode}: {selectedSiteAdapter?.parseMode ?? '-'}</div>
+                {selectedSiteAdapter?.sourcePath && (
+                  <div className="mt-3 break-all text-xs text-slate-500">
+                    {text.agent.sourcePath}: <span className="font-mono">{selectedSiteAdapter.sourcePath}</span>
+                  </div>
+                )}
+                {selectedSiteAdapter?.sourceWillBeDeleted && (
+                  <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">
+                    {text.agent.sourceWillBeDeleted}
+                  </div>
+                )}
               </div>
             </div>
           </div>

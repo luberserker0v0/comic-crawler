@@ -14,6 +14,9 @@ import type {
   DomReadinessTarget,
   ChapterImagesRequest,
   ChapterImagesResponse,
+  DeletedAdapterListResponse,
+  DeleteAdapterResponse,
+  RestoreAdapterResponse,
 } from '@comiccrawler/shared';
 import { DEFAULTS } from '@comiccrawler/shared';
 import { existsSync } from 'node:fs';
@@ -29,6 +32,11 @@ import {
   PROJECT_ADAPTER_SOURCE,
   deleteProjectAdapterSource,
   markAdapterDeleted,
+  readDeletedAdapterRecords,
+  removeDeletedAdapterRecord,
+  restoreDeletedAdapter,
+  projectAdapterSourceExists,
+  resolveProjectAdapterSourceDir,
   type AdapterImplementationKind,
 } from '../../adapter/runtime-state';
 import type { DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
@@ -91,6 +99,37 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     reply.send({ data: adapters });
   });
 
+  app.get('/api/adapters/deleted', async (_request: FastifyRequest, reply: FastifyReply) => {
+    if (!options.storage) {
+      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
+      return;
+    }
+
+    const data: DeletedAdapterListResponse = {
+      adapters: (await readDeletedAdapterRecords(options.storage)).map((record) => {
+        const sourceExists = record.sourcePath ? projectAdapterSourceExists(record.adapterId) : undefined;
+        const hasRuntimeBackup = Boolean(record.activeManifest || record.activeImplementationRecord);
+        const restorable = hasRuntimeBackup || Boolean(record.sourcePath && sourceExists);
+        return {
+          adapterId: record.adapterId,
+          deletedAt: record.deletedAt,
+          implementationKind: record.implementationKind,
+          sourcePath: record.sourcePath,
+          sourceDirectory: record.sourceDirectory,
+          sourceDeleted: record.sourceDeleted,
+          sourceExists,
+          restorable,
+          restoreReason: restorable
+            ? 'Adapter can be restored from saved runtime data or existing project source.'
+            : record.sourcePath
+              ? 'Project TypeScript source is missing. Restore it with git before restoring this adapter.'
+              : 'No restorable runtime data is available.',
+        };
+      }),
+    };
+    reply.send({ data });
+  });
+
   app.delete('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!options.storage) {
       reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
@@ -104,22 +143,83 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
 
     const manifests = (await options.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
     const implementationRecords = (await options.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+    const activeManifest = manifests.find((item) => item.adapterId === id);
+    const activeImplementationRecord = implementationRecords.find((item) => item.adapterId === id);
+    const implementationKind: AdapterImplementationKind = activeImplementationRecord
+      ? 'ts-implementation'
+      : activeManifest
+        ? 'selector-manifest'
+        : PROJECT_ADAPTER_SOURCE[id]
+          ? 'project-source'
+          : 'summary';
     await options.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, manifests.filter((item) => item.adapterId !== id));
     await options.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, implementationRecords.filter((item) => item.adapterId !== id));
     const sourceDeletion = PROJECT_ADAPTER_SOURCE[id]
       ? await deleteProjectAdapterSource(id)
       : { deleted: false };
-    await markAdapterDeleted(options.storage, id);
+    const deletedRecord = await markAdapterDeleted(options.storage, id, {
+      implementationKind,
+      sourcePath: PROJECT_ADAPTER_SOURCE[id],
+      sourceDirectory: sourceDeletion.sourceDir,
+      sourceDeleted: sourceDeletion.deleted,
+      activeManifest,
+      activeImplementationRecord,
+    });
     registry.unregister(id);
 
-    reply.send({
-      data: {
-        adapterId: id,
-        message: sourceDeletion.deleted
-          ? 'Adapter deleted and source files removed'
-          : 'Adapter deleted',
+    const data: DeleteAdapterResponse = {
+      adapterId: id,
+      message: sourceDeletion.deleted
+        ? 'Adapter deleted and source files removed'
+        : 'Adapter deleted',
+      implementationKind,
+      registryRemoved: !registry.has(id),
+      deletedMarkerWritten: Boolean(deletedRecord),
+      sourcePath: PROJECT_ADAPTER_SOURCE[id],
+      sourceDirectory: sourceDeletion.sourceDir,
+      sourceDeleted: sourceDeletion.deleted,
+      runtimeRecordsRemoved: {
+        selectorManifest: Boolean(activeManifest),
+        tsImplementation: Boolean(activeImplementationRecord),
       },
-    });
+    };
+    reply.send({ data });
+  });
+
+  app.post('/api/adapters/:id/restore', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!options.storage) {
+      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
+      return;
+    }
+    const { id } = request.params as { id: string };
+    if (registry.has(id)) {
+      await removeDeletedAdapterRecord(options.storage, id);
+      const data: RestoreAdapterResponse = {
+        adapterId: id,
+        message: 'Adapter is already active; stale deletion marker was removed.',
+        restored: true,
+        sourcePath: PROJECT_ADAPTER_SOURCE[id],
+        sourceDirectory: resolveProjectAdapterSourceDir(id),
+      };
+      reply.send({ data });
+      return;
+    }
+
+    const result = await restoreDeletedAdapter(options.storage, id, (adapter) => registry.register(adapter));
+    if (!result.restored) {
+      reply.code(result.record ? 409 : 404).send({ error: result.reason ?? 'Adapter could not be restored.' });
+      return;
+    }
+
+    const data: RestoreAdapterResponse = {
+      adapterId: id,
+      message: 'Adapter restored',
+      implementationKind: result.record?.implementationKind,
+      restored: true,
+      sourcePath: result.record?.sourcePath,
+      sourceDirectory: result.record?.sourceDirectory,
+    };
+    reply.send({ data });
   });
 
   app.post('/api/adapters/resolve', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -351,6 +451,9 @@ async function describeAdapterList(registry: AdapterRegistry, storage?: IStorage
       activeVersionLabel: implementationRecord?.promotedAt ?? manifest?.promotedAt ?? 'current',
       versionCount: 1,
       implementationKind,
+      ...(PROJECT_ADAPTER_SOURCE[adapter.id]
+        ? { sourcePath: PROJECT_ADAPTER_SOURCE[adapter.id], sourceWillBeDeleted: true }
+        : { sourceWillBeDeleted: false }),
       ...(implementationRecord?.sourceDiscoveryId || manifest?.sourceDiscoveryId
         ? { sourceDiscoveryId: implementationRecord?.sourceDiscoveryId ?? manifest?.sourceDiscoveryId }
         : {}),

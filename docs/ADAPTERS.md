@@ -76,16 +76,23 @@ does not expose a separate adapter class such as "project provided" versus
 Deleting an adapter is a real removal operation:
 
 - Generated TypeScript or selector-manifest adapters are removed from runtime
-  storage and unregistered immediately.
+  storage and unregistered immediately. Their runtime record is copied into the
+  deleted adapter marker so they can be restored from the WebUI.
 - Project TypeScript adapters are unregistered and their source directory under
   `backend/src/adapter/sites/<adapter-id>/` is deleted.
 - A deleted marker is stored so a removed adapter is not registered again on the
   next backend start.
 
 Because project TypeScript adapter deletion changes the repository source tree,
-review `git status` before committing or pushing. If a deleted adapter needs to
-be restored, restore it from Git or rebuild it through the adapter discovery and
-review flow.
+the WebUI requires the adapter id to be typed before confirmation. Review `git
+status` before committing or pushing.
+
+The deleted adapter list shows whether an adapter can be restored:
+
+- Generated adapters can be restored when their runtime backup is still present.
+- Project TypeScript adapters can only be restored after their source directory
+  has been restored with git.
+- ComicCrawler does not recreate missing TypeScript source files.
 
 ## Drafts
 

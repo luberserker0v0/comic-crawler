@@ -96,6 +96,46 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /api/adapters/deleted:
+    get:
+      summary: List deleted adapters
+      responses:
+        "200":
+          description: Deleted adapters and restore availability
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          adapters:
+                            type: array
+                            items:
+                              type: object
+                              required: [adapterId, deletedAt, restorable, restoreReason]
+                              properties:
+                                adapterId:
+                                  type: string
+                                deletedAt:
+                                  type: string
+                                implementationKind:
+                                  type: string
+                                sourcePath:
+                                  type: string
+                                sourceDirectory:
+                                  type: string
+                                sourceDeleted:
+                                  type: boolean
+                                sourceExists:
+                                  type: boolean
+                                restorable:
+                                  type: boolean
+                                restoreReason:
+                                  type: string
   /api/adapters/{id}:
     get:
       summary: Read adapter detail
@@ -117,7 +157,7 @@ paths:
           $ref: "#/components/responses/Error"
     delete:
       summary: Delete a registered adapter
-      description: Removes generated adapter runtime records. For project TypeScript adapters, deletes the adapter source directory as a project code change.
+      description: Removes generated adapter runtime records with a deleted-record backup. For project TypeScript adapters, deletes the adapter source directory as a project code change.
       parameters:
         - $ref: "#/components/parameters/AdapterId"
       responses:
@@ -132,13 +172,68 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [adapterId, message]
+                        required: [adapterId, message, registryRemoved, deletedMarkerWritten, sourceDeleted, runtimeRecordsRemoved]
                         properties:
                           adapterId:
                             type: string
                           message:
                             type: string
+                          implementationKind:
+                            type: string
+                          registryRemoved:
+                            type: boolean
+                          deletedMarkerWritten:
+                            type: boolean
+                          sourcePath:
+                            type: string
+                          sourceDirectory:
+                            type: string
+                          sourceDeleted:
+                            type: boolean
+                          runtimeRecordsRemoved:
+                            type: object
+                            properties:
+                              selectorManifest:
+                                type: boolean
+                              tsImplementation:
+                                type: boolean
         "404":
+          $ref: "#/components/responses/Error"
+  /api/adapters/{id}/restore:
+    post:
+      summary: Restore a deleted adapter
+      description: Restores generated adapters from the deleted-record backup or project-source adapters only after their source exists again.
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+      responses:
+        "200":
+          description: Adapter restored
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [adapterId, message, restored]
+                        properties:
+                          adapterId:
+                            type: string
+                          message:
+                            type: string
+                          implementationKind:
+                            type: string
+                          restored:
+                            type: boolean
+                          sourcePath:
+                            type: string
+                          sourceDirectory:
+                            type: string
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
           $ref: "#/components/responses/Error"
   /api/adapters/{id}/capabilities:
     get:
@@ -532,6 +627,10 @@ components:
         implementationKind:
           type: string
           enum: [project-source, selector-manifest, ts-implementation, summary, generated-draft]
+        sourcePath:
+          type: string
+        sourceWillBeDeleted:
+          type: boolean
         sourceDiscoveryId:
           type: string
         promotedAt:

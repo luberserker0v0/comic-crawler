@@ -48,6 +48,8 @@ const siteAdapters = [
     activeVersionLabel: 'current',
     versionCount: 1,
     implementationKind: 'project-source',
+    sourcePath: 'backend/src/adapter/sites/kuronavi/adapter.ts',
+    sourceWillBeDeleted: true,
   },
   {
     id: 'mocksite',
@@ -140,6 +142,7 @@ describe('AgentPage interactions', () => {
   let getAgentAdapterSpy: ReturnType<typeof jest.spyOn>;
   let promoteSpy: ReturnType<typeof jest.spyOn>;
   let deleteAdapterSpy: ReturnType<typeof jest.spyOn>;
+  let restoreAdapterSpy: ReturnType<typeof jest.spyOn>;
 
   beforeEach(() => {
     jest.restoreAllMocks();
@@ -154,11 +157,41 @@ describe('AgentPage interactions', () => {
     } as Partial<ReturnType<typeof useAgentStore.getState>>);
 
     jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: siteAdapters });
+    jest.spyOn(api, 'getDeletedAdapters').mockResolvedValue({
+      data: {
+        adapters: [{
+          adapterId: 'oldsite',
+          deletedAt: '2026-07-09T00:00:00.000Z',
+          implementationKind: 'selector-manifest',
+          restorable: true,
+          restoreReason: 'Adapter can be restored from saved runtime data or existing project source.',
+        }],
+      },
+    });
     jest.spyOn(api, 'listSelectorDiscoveries').mockResolvedValue({ data: { jobs: [] } });
     getAgentAdaptersSpy = jest.spyOn(api, 'getAgentAdapters').mockResolvedValue({ data: baseSummary });
     getAgentAdapterSpy = jest.spyOn(api, 'getAgentAdapter').mockResolvedValue({ data: baseDetail });
     promoteSpy = jest.spyOn(api, 'promoteAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
-    deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({ data: { adapterId: 'kuronavi', message: 'Adapter deleted' } });
+    deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({
+      data: {
+        adapterId: 'kuronavi',
+        message: 'Adapter deleted and source files removed',
+        implementationKind: 'project-source',
+        registryRemoved: true,
+        deletedMarkerWritten: true,
+        sourcePath: 'backend/src/adapter/sites/kuronavi/adapter.ts',
+        sourceDeleted: true,
+        runtimeRecordsRemoved: { selectorManifest: false, tsImplementation: false },
+      },
+    });
+    restoreAdapterSpy = jest.spyOn(api, 'restoreAdapter').mockResolvedValue({
+      data: {
+        adapterId: 'oldsite',
+        message: 'Adapter restored',
+        implementationKind: 'selector-manifest',
+        restored: true,
+      },
+    });
     jest.spyOn(api, 'rejectAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
     jest.spyOn(api, 'rollbackAgentAdapter').mockResolvedValue({ data: { success: true, currentVersion: 'v1' } });
   });
@@ -194,7 +227,10 @@ describe('AgentPage interactions', () => {
     await screen.findByText('kuronavi');
     fireEvent.click(screen.getByText(uiText.agent.deleteAdapter));
     expect(screen.getByText(uiText.agent.pendingActions.deleteAdapterTitle)).toBeInTheDocument();
+    expect(screen.getByText(/請輸入 adapter id/)).toBeInTheDocument();
+    expect(screen.getByText(uiText.agent.pendingActions.confirm)).toBeDisabled();
 
+    fireEvent.change(screen.getByPlaceholderText('kuronavi'), { target: { value: 'kuronavi' } });
     fireEvent.click(screen.getByText(uiText.agent.pendingActions.confirm));
 
     await waitFor(() => {
@@ -202,5 +238,17 @@ describe('AgentPage interactions', () => {
     });
     expect(getAgentAdaptersSpy).toHaveBeenCalled();
     expect(getAgentAdapterSpy).toHaveBeenCalled();
+  });
+
+  it('should show deleted adapters and restore restorable entries', async () => {
+    render(<AgentPage />);
+
+    fireEvent.click(await screen.findByText(uiText.agent.deletedAdaptersTab));
+    expect(await screen.findByText('oldsite')).toBeInTheDocument();
+    fireEvent.click(screen.getByText(uiText.agent.restoreAdapter));
+
+    await waitFor(() => {
+      expect(restoreAdapterSpy).toHaveBeenCalledWith('oldsite');
+    });
   });
 });

@@ -54,8 +54,50 @@ export interface AdapterListItem {
   activeVersionLabel: string;
   versionCount: number;
   implementationKind?: 'project-source' | 'selector-manifest' | 'ts-implementation' | 'summary' | 'generated-draft';
+  sourcePath?: string;
+  sourceWillBeDeleted?: boolean;
   sourceDiscoveryId?: string;
   promotedAt?: string;
+}
+
+export interface DeletedAdapterListItem {
+  adapterId: string;
+  deletedAt: string;
+  implementationKind?: AdapterListItem['implementationKind'];
+  sourcePath?: string;
+  sourceDirectory?: string;
+  sourceDeleted?: boolean;
+  sourceExists?: boolean;
+  restorable: boolean;
+  restoreReason: string;
+}
+
+export interface DeletedAdapterListResponse {
+  adapters: DeletedAdapterListItem[];
+}
+
+export interface DeleteAdapterResponse {
+  adapterId: string;
+  message: string;
+  implementationKind?: AdapterListItem['implementationKind'];
+  registryRemoved: boolean;
+  deletedMarkerWritten: boolean;
+  sourcePath?: string;
+  sourceDirectory?: string;
+  sourceDeleted: boolean;
+  runtimeRecordsRemoved: {
+    selectorManifest: boolean;
+    tsImplementation: boolean;
+  };
+}
+
+export interface RestoreAdapterResponse {
+  adapterId: string;
+  message: string;
+  implementationKind?: AdapterListItem['implementationKind'];
+  restored: boolean;
+  sourcePath?: string;
+  sourceDirectory?: string;
 }
 
 export type AdapterFunctionCapability = 'common' | 'verification' | 'metadata' | 'chapterImages';

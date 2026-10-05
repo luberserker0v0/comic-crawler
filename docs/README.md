@@ -15,6 +15,8 @@ This directory contains user- and contributor-facing documentation for the
   Lab, drafts, and verified fixture policy.
 - `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
   `AdapterBase` output contract, and AO API lifecycle.
+- `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
+  forced task order, and adapter lifecycle recovery.
 
 ## Documentation boundary
 
@@ -25,5 +27,4 @@ This directory contains user- and contributor-facing documentation for the
 
 ## Missing docs to add
 
-- `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
-  and forced task order.
+- None at the current documentation-entry level.

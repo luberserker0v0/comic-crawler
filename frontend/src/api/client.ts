@@ -9,6 +9,8 @@ import type {
   AdapterFunctionRevisionRequest,
   AdapterFunctionTestRequest,
   AdapterFunctionTestResponse,
+  DeleteAdapterResponse,
+  DeletedAdapterListResponse,
   CompleteHumanVerificationRequest,
   DomReadinessCheckRequest,
   DomReadinessCheckResponse,
@@ -27,6 +29,7 @@ import type {
   FixtureFunctionTestRequest,
   MessageResponse,
   OpenVerificationBrowserRequest,
+  RestoreAdapterResponse,
   SaveAdapterDraftContentRequest,
   SelectorDiscoveryConfigRequest,
   SelectorDiscoveryAoModelsResponse,
@@ -209,8 +212,18 @@ export class ApiClient {
     return response.data;
   }
 
-  async deleteAdapter(id: string): Promise<ApiResponse<{ adapterId: string; message: string }>> {
+  async getDeletedAdapters(): Promise<ApiResponse<DeletedAdapterListResponse>> {
+    const response = await this.client.get(`${API_ENDPOINTS.adapters}/deleted`);
+    return response.data;
+  }
+
+  async deleteAdapter(id: string): Promise<ApiResponse<DeleteAdapterResponse>> {
     const response = await this.client.delete(`${API_ENDPOINTS.adapters}/${id}`);
+    return response.data;
+  }
+
+  async restoreAdapter(id: string): Promise<ApiResponse<RestoreAdapterResponse>> {
+    const response = await this.client.post(`${API_ENDPOINTS.adapters}/${id}/restore`);
     return response.data;
   }
 

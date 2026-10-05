@@ -1,12 +1,14 @@
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { IComicAdapter } from '@comiccrawler/shared';
+import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from './dynamic-site-adapter';
+import type { ActiveImplementationAdapterRecord } from '../selector-discovery/service';
 import type { IStorage } from '../storage/types';
 
 export const PROJECT_ADAPTER_SOURCE: Record<string, string> = {
-  kuronavi: join('backend', 'src', 'adapter', 'sites', 'kuronavi', 'adapter.ts'),
-  happymh: join('backend', 'src', 'adapter', 'sites', 'happymh', 'adapter.ts'),
+  kuronavi: 'backend/src/adapter/sites/kuronavi/adapter.ts',
+  happymh: 'backend/src/adapter/sites/happymh/adapter.ts',
 };
 
 const PROJECT_ADAPTER_LOADERS: Record<string, () => Promise<{ adapter: IComicAdapter }>> = {
@@ -24,19 +26,44 @@ export type AdapterDraftSourceKind = 'project-source' | 'dynamic-manifest' | 'ge
 export interface DeletedAdapterRecord {
   adapterId: string;
   deletedAt: string;
+  implementationKind?: AdapterImplementationKind;
+  sourcePath?: string;
+  sourceDirectory?: string;
+  sourceDeleted?: boolean;
+  activeManifest?: DynamicSiteAdapterManifest;
+  activeImplementationRecord?: ActiveImplementationAdapterRecord;
+}
+
+export async function readDeletedAdapterRecords(storage: IStorage): Promise<DeletedAdapterRecord[]> {
+  return (await storage.read<DeletedAdapterRecord[]>(DELETED_ADAPTERS_KEY)) ?? [];
 }
 
 export async function readDeletedAdapterIds(storage: IStorage): Promise<Set<string>> {
-  const records = (await storage.read<DeletedAdapterRecord[]>(DELETED_ADAPTERS_KEY)) ?? [];
+  const records = await readDeletedAdapterRecords(storage);
   return new Set(records.map((record) => record.adapterId));
 }
 
-export async function markAdapterDeleted(storage: IStorage, adapterId: string): Promise<void> {
-  const records = (await storage.read<DeletedAdapterRecord[]>(DELETED_ADAPTERS_KEY)) ?? [];
+export async function markAdapterDeleted(
+  storage: IStorage,
+  adapterId: string,
+  details: Omit<DeletedAdapterRecord, 'adapterId' | 'deletedAt'> = {}
+): Promise<DeletedAdapterRecord> {
+  const records = await readDeletedAdapterRecords(storage);
+  const record: DeletedAdapterRecord = {
+    adapterId,
+    deletedAt: new Date().toISOString(),
+    ...details,
+  };
   await storage.write(DELETED_ADAPTERS_KEY, [
     ...records.filter((record) => record.adapterId !== adapterId),
-    { adapterId, deletedAt: new Date().toISOString() },
+    record,
   ]);
+  return record;
+}
+
+export async function removeDeletedAdapterRecord(storage: IStorage, adapterId: string): Promise<void> {
+  const records = await readDeletedAdapterRecords(storage);
+  await storage.write(DELETED_ADAPTERS_KEY, records.filter((record) => record.adapterId !== adapterId));
 }
 
 export async function registerProjectAdapters(
@@ -82,12 +109,12 @@ export async function deleteProjectAdapterSource(adapterId: string): Promise<{ d
   return { deleted: true, sourceDir };
 }
 
-function projectAdapterSourceExists(adapterId: string): boolean {
+export function projectAdapterSourceExists(adapterId: string): boolean {
   const relativePath = PROJECT_ADAPTER_SOURCE[adapterId];
   return Boolean(relativePath && resolveProjectPathCandidates(relativePath).some((candidate) => existsSync(candidate)));
 }
 
-function resolveProjectAdapterSourceDir(adapterId: string): string | undefined {
+export function resolveProjectAdapterSourceDir(adapterId: string): string | undefined {
   const relativePath = PROJECT_ADAPTER_SOURCE[adapterId];
   if (!relativePath) return undefined;
   const sourceFile = resolveProjectPathCandidates(relativePath).find((candidate) => existsSync(candidate))
@@ -95,11 +122,70 @@ function resolveProjectAdapterSourceDir(adapterId: string): string | undefined {
   return sourceFile ? dirname(sourceFile) : undefined;
 }
 
+export async function restoreDeletedAdapter(
+  storage: IStorage,
+  adapterId: string,
+  register: (adapter: IComicAdapter) => void
+): Promise<{
+  restored: boolean;
+  record?: DeletedAdapterRecord;
+  reason?: string;
+}> {
+  const record = (await readDeletedAdapterRecords(storage)).find((item) => item.adapterId === adapterId);
+  if (!record) {
+    return { restored: false, reason: 'Deleted adapter record was not found.' };
+  }
+
+  if (record.activeManifest) {
+    const manifests = (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [
+      ...manifests.filter((item) => item.adapterId !== adapterId),
+      record.activeManifest,
+    ]);
+    register(new DynamicSiteAdapter(record.activeManifest));
+    await removeDeletedAdapterRecord(storage, adapterId);
+    return { restored: true, record };
+  }
+
+  if (record.activeImplementationRecord) {
+    const implementationRecords = (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+    await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [
+      ...implementationRecords.filter((item) => item.adapterId !== adapterId),
+      record.activeImplementationRecord,
+    ]);
+    const { instantiateAdapterImplementationDraft } = await import('../selector-discovery/adapter-draft-runtime');
+    register(instantiateAdapterImplementationDraft(record.activeImplementationRecord.adapterImplementationTs));
+    await removeDeletedAdapterRecord(storage, adapterId);
+    return { restored: true, record };
+  }
+
+  if (PROJECT_ADAPTER_SOURCE[adapterId]) {
+    if (!projectAdapterSourceExists(adapterId)) {
+      return {
+        restored: false,
+        record,
+        reason: 'Project TypeScript source is missing. Restore the source directory with git before restoring this adapter.',
+      };
+    }
+    await removeDeletedAdapterRecord(storage, adapterId);
+    const { adapter } = await loadProjectAdapterModule(adapterId, PROJECT_ADAPTER_CLASS_NAMES[adapterId] ?? '');
+    register(adapter);
+    return { restored: true, record };
+  }
+
+  return {
+    restored: false,
+    record,
+    reason: 'No restorable runtime manifest, TypeScript implementation, or project source is available.',
+  };
+}
+
 function resolveProjectPathCandidates(relativePath: string): string[] {
   const overrideRoot = process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT;
-  const overrideCandidates = overrideRoot ? [resolve(overrideRoot, relativePath)] : [];
+  if (overrideRoot) {
+    return [resolve(overrideRoot, relativePath)];
+  }
   return [
-    ...overrideCandidates,
     resolve(process.cwd(), relativePath),
     resolve(process.cwd(), '..', relativePath),
   ];
@@ -108,8 +194,7 @@ function resolveProjectPathCandidates(relativePath: string): string[] {
 function isProjectAdapterSourceDir(sourceDir: string): boolean {
   const normalized = resolve(sourceDir);
   const overrideRoot = process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT;
-  const roots = [
-    ...(overrideRoot ? [resolve(overrideRoot, 'backend', 'src', 'adapter', 'sites')] : []),
+  const roots = overrideRoot ? [resolve(overrideRoot, 'backend', 'src', 'adapter', 'sites')] : [
     resolve(process.cwd(), 'backend', 'src', 'adapter', 'sites'),
     resolve(process.cwd(), '..', 'backend', 'src', 'adapter', 'sites'),
   ];
@@ -125,3 +210,8 @@ async function loadProjectAdapterModule(adapterId: string, className: string): P
   }
   return { adapter: new (AdapterClass as new () => IComicAdapter)() };
 }
+
+const PROJECT_ADAPTER_CLASS_NAMES: Record<string, string> = {
+  kuronavi: 'KuronaviAdapter',
+  happymh: 'HappyMhAdapter',
+};

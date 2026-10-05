@@ -241,10 +241,26 @@ describe('Adapter routes', () => {
     const response = await app.inject({ method: 'DELETE', url: '/api/adapters/happymh' });
 
     expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      adapterId: 'happymh',
+      implementationKind: 'project-source',
+      registryRemoved: true,
+      deletedMarkerWritten: true,
+      sourcePath: 'backend/src/adapter/sites/happymh/adapter.ts',
+      sourceDeleted: true,
+      runtimeRecordsRemoved: {
+        selectorManifest: false,
+        tsImplementation: false,
+      },
+    });
     expect(registry.has('happymh')).toBe(false);
     expect(existsSync(adapterSourceDir)).toBe(false);
     expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([
-      expect.objectContaining({ adapterId: 'happymh' }),
+      expect.objectContaining({
+        adapterId: 'happymh',
+        implementationKind: 'project-source',
+        sourceDeleted: true,
+      }),
     ]);
 
     await app.close();
@@ -291,11 +307,126 @@ describe('Adapter routes', () => {
     const response = await app.inject({ method: 'DELETE', url: '/api/adapters/dynamic-demo' });
 
     expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      adapterId: 'dynamic-demo',
+      implementationKind: 'selector-manifest',
+      registryRemoved: true,
+      sourceDeleted: false,
+      runtimeRecordsRemoved: {
+        selectorManifest: true,
+        tsImplementation: false,
+      },
+    });
     expect(registry.has('dynamic-demo')).toBe(false);
     expect(await storage.read(ACTIVE_DYNAMIC_ADAPTERS_KEY)).toEqual([]);
     expect(await storage.read(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)).toEqual([{ adapterId: 'other-demo' }]);
+    expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([
+      expect.objectContaining({
+        adapterId: 'dynamic-demo',
+        activeManifest: expect.objectContaining({ adapterId: 'dynamic-demo' }),
+      }),
+    ]);
 
     await app.close();
+  });
+
+  it('lists deleted adapters with restore status', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'comiccrawler-source-root-'));
+    process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT = sourceRoot;
+    await storage.write(DELETED_ADAPTERS_KEY, [
+      {
+        adapterId: 'dynamic-demo',
+        deletedAt: '2026-07-09T00:00:00.000Z',
+        implementationKind: 'selector-manifest',
+        activeManifest: {
+          adapterId: 'dynamic-demo',
+          name: 'Dynamic Demo',
+          domains: ['example.com'],
+          urlPatterns: ['https://example.com/read/*'],
+          capabilities: { verification: true, metadata: false, chapterImages: true },
+          selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+        },
+      },
+      {
+        adapterId: 'happymh',
+        deletedAt: '2026-07-10T00:00:00.000Z',
+        implementationKind: 'project-source',
+        sourcePath: 'backend/src/adapter/sites/happymh/adapter.ts',
+        sourceDeleted: true,
+      },
+    ]);
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'GET', url: '/api/adapters/deleted' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.adapters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ adapterId: 'dynamic-demo', restorable: true }),
+      expect.objectContaining({ adapterId: 'happymh', restorable: false }),
+    ]));
+
+    await app.close();
+    await rm(sourceRoot, { recursive: true, force: true });
+  });
+
+  it('restores deleted generated adapters from the deletion record backup', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    await storage.write(DELETED_ADAPTERS_KEY, [{
+      adapterId: 'dynamic-demo',
+      deletedAt: '2026-07-09T00:00:00.000Z',
+      implementationKind: 'selector-manifest',
+      activeManifest: {
+        adapterId: 'dynamic-demo',
+        name: 'Dynamic Demo',
+        domains: ['example.com'],
+        urlPatterns: ['https://example.com/read/*'],
+        capabilities: { verification: true, metadata: false, chapterImages: true },
+        selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+      },
+    }]);
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'POST', url: '/api/adapters/dynamic-demo/restore' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ adapterId: 'dynamic-demo', restored: true });
+    expect(registry.has('dynamic-demo')).toBe(true);
+    expect(await storage.read(ACTIVE_DYNAMIC_ADAPTERS_KEY)).toEqual([
+      expect.objectContaining({ adapterId: 'dynamic-demo' }),
+    ]);
+    expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([]);
+
+    await app.close();
+  });
+
+  it('does not restore deleted project-source adapters when the source directory is missing', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    const storage = new MemoryStorage();
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'comiccrawler-source-root-'));
+    process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT = sourceRoot;
+    await storage.write(DELETED_ADAPTERS_KEY, [{
+      adapterId: 'happymh',
+      deletedAt: '2026-07-09T00:00:00.000Z',
+      implementationKind: 'project-source',
+      sourcePath: 'backend/src/adapter/sites/happymh/adapter.ts',
+      sourceDeleted: true,
+    }]);
+    setupAdaptersRoutes(app, registry, { storage });
+
+    const response = await app.inject({ method: 'POST', url: '/api/adapters/happymh/restore' });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toContain('Project TypeScript source is missing');
+    expect(registry.has('happymh')).toBe(false);
+
+    await app.close();
+    await rm(sourceRoot, { recursive: true, force: true });
   });
 
   it('returns 404 when deleting an unknown adapter', async () => {

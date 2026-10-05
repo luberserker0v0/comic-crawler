@@ -131,9 +131,11 @@ Maintain Adapters is the workspace for managing registered site adapters and
 adapter build jobs. The **Site adapters** tab lists each adapter's domains,
 capabilities, DOM strategy, active version label, version count, and
 implementation source. Users can delete an adapter from this tab; generated
-adapters are removed from runtime storage, and project TypeScript adapters
-delete their source directory under `backend/src/adapter/sites/` as a code
-change.
+adapters are removed from runtime storage with a restorable deletion record, and
+project TypeScript adapters delete their source directory under
+`backend/src/adapter/sites/` as a code change after typed confirmation. The
+**Deleted adapters** tab shows what can be restored and when git source recovery
+is required.
 
 The **Adapter build jobs** tab shows selector-discovery work for unknown sites
 or missing capabilities. Review panels let users inspect generated TypeScript
