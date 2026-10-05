@@ -1,5 +1,6 @@
 services:
   app:
+    image: luberserker0v0/comiccrawler:latest
     build:
       context: .
       dockerfile: Dockerfile
