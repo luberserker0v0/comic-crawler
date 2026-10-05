@@ -65,7 +65,16 @@ npm run dev:utf8
 
 ## Docker
 
-From this repository root, build and start the production container with:
+The fastest way to run ComicCrawler is the prebuilt image on Docker Hub
+([`luberserker/comiccrawler`](https://hub.docker.com/r/luberserker/comiccrawler)).
+No checkout or build is needed:
+
+```bash
+docker compose up -d
+```
+
+This pulls `luberserker/comiccrawler:latest` and starts the production
+container. To build the image locally from source instead, run:
 
 ```bash
 docker compose up --build -d
