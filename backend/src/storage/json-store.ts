@@ -72,6 +72,16 @@ export class JsonFileStore implements IStorage {
     }
   }
 
+  async stat(key: string): Promise<{ mtimeMs: number } | null> {
+    const filePath = this.resolvePath(key);
+    try {
+      const stats = await fs.stat(filePath);
+      return { mtimeMs: stats.mtimeMs };
+    } catch {
+      return null;
+    }
+  }
+
   private resolvePath(key: string): string {
     const safeKey = key.replace(/[<>:"/\\|?*]/g, '_');
     return join(this.basePath, `${safeKey}.json`);

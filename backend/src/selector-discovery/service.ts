@@ -432,6 +432,18 @@ export class SelectorDiscoveryService {
     return this.storage.read<SelectorDiscoveryJob>(`${JOB_PREFIX}${id}`);
   }
 
+  async deleteJob(id: string): Promise<boolean> {
+    const existing = await this.get(id);
+    if (!existing) return false;
+    const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
+    await this.storage.write(INDEX_KEY, ids.filter((entry) => entry !== id));
+    await this.storage.delete(`${JOB_PREFIX}${id}`);
+    await this.storage.delete(`selector-discovery-implementation-${id}`);
+    await this.storage.delete(`selector-discovery-manifest-${id}`);
+    await this.storage.delete(`${SHADOW_PROMOTION_PREFIX}${id}`);
+    return true;
+  }
+
   async list(): Promise<SelectorDiscoveryJob[]> {
     const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
     const jobs = await Promise.all(ids.map((id) => this.get(id)));

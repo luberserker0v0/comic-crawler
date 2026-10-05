@@ -6,6 +6,7 @@ import type { CrawlerEngine } from '../crawler/engine';
 import type { AgentAdminService } from '../agent/admin-service';
 import type { AdapterBase } from '../adapter/base';
 import type { SelectorDiscoveryService } from '../selector-discovery';
+import type { MaintenanceService } from '../maintenance/service';
 import { SelectorDiscoveryBundleManager } from '../selector-discovery';
 import { evaluateSelectorDiscoveryEvalPolicy, loadSelectorDiscoveryEvalCases, type SelectorDiscoveryEvalCase, type SelectorDiscoveryEvalPolicyResult } from '../selector-discovery/eval-suite';
 import { assertModelExists, fingerprintProviderDocument, validateProviderDocument } from '../selector-discovery/provider-config';
@@ -29,6 +30,7 @@ export interface CliOptions {
   crawlerEngine: CrawlerEngine;
   agentAdminService: AgentAdminService;
   selectorDiscoveryService?: SelectorDiscoveryService;
+  maintenanceService?: MaintenanceService;
 }
 
 class BundleEvalPolicyError extends Error {
@@ -76,6 +78,7 @@ export class ComicCrawlerCli {
     this.setupSearchCommand();
     this.setupDiscoverCommand();
     this.setupAgentCommand();
+    this.setupMaintenanceCommand();
   }
 
   private setupDownloadCommand(): void {
@@ -616,6 +619,52 @@ export class ComicCrawlerCli {
 
   parse(args: string[]): Command {
     return this.program.parse(args);
+  }
+
+  private setupMaintenanceCommand(): void {
+    this.program
+      .command('cleanup')
+      .description('Delete expired tasks, discovery jobs, browser profiles and downloaded files')
+      .option('--dry-run', 'Preview without deleting')
+      .option('--tasks-retain-days <n>', 'Override task retention days')
+      .option('--jobs-retain-days <n>', 'Override discovery job retention days')
+      .option('--profiles-retain-days <n>', 'Override browser profile retention days')
+      .option('--no-delete-files', 'Keep downloaded files')
+      .action(async (options: { dryRun?: boolean; tasksRetainDays?: string; jobsRetainDays?: string; profilesRetainDays?: string; deleteFiles?: boolean }) => {
+        try {
+          if (!this.options.maintenanceService) {
+            this.ui.renderError('Maintenance service is not available.');
+            process.exit(1);
+          }
+          const toNumber = (value?: string): number | undefined => {
+            if (value === undefined) return undefined;
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : undefined;
+          };
+          const overrides = {
+            ...(toNumber(options.tasksRetainDays) !== undefined ? { tasksRetainDays: toNumber(options.tasksRetainDays) } : {}),
+            ...(toNumber(options.jobsRetainDays) !== undefined ? { discoveryJobsRetainDays: toNumber(options.jobsRetainDays) } : {}),
+            ...(toNumber(options.profilesRetainDays) !== undefined ? { browserProfilesRetainDays: toNumber(options.profilesRetainDays) } : {}),
+            ...(options.deleteFiles === false ? { deleteFiles: false } : {}),
+          };
+          const result = await this.options.maintenanceService.run(overrides, { dryRun: options.dryRun ?? false });
+          this.ui.renderSuccess(options.dryRun ? 'Cleanup preview completed.' : 'Cleanup completed.');
+          this.ui.renderStatus('tasks deleted', result.tasks.deleted.join(', ') || '-');
+          this.ui.renderStatus('discovery jobs deleted', result.discoveryJobs.deleted.join(', ') || '-');
+          this.ui.renderStatus('browser profiles deleted', result.browserProfiles.deleted.join(', ') || '-');
+          this.ui.renderStatus('fixtures deleted', result.fixtures.deleted.join(', ') || '-');
+          this.ui.renderStatus('agent sessions deleted', result.agentSessions.deleted.join(', ') || '-');
+          this.ui.renderStatus('bytes freed', String(result.browserProfiles.bytesFreed + result.fixtures.bytesFreed));
+          if (result.tasks.errors.length > 0 || result.discoveryJobs.errors.length > 0 || result.browserProfiles.errors.length > 0 || result.fixtures.errors.length > 0 || result.agentSessions.errors.length > 0) {
+            this.ui.renderError(`Errors: ${JSON.stringify([...result.tasks.errors, ...result.discoveryJobs.errors, ...result.browserProfiles.errors, ...result.fixtures.errors, ...result.agentSessions.errors])}`);
+            process.exit(1);
+          }
+        } catch (error) {
+          logger.error({ error: formatError(error) }, 'Cleanup failed');
+          this.ui.renderError(formatError(error));
+          process.exit(1);
+        }
+      });
   }
 
   getProgram(): Command {

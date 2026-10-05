@@ -11,6 +11,7 @@ import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '.
 import type { ChallengeDiscoveryService } from '../challenge';
 import type { AdapterDraftService } from '../adapter-drafts/service';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
+import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
@@ -21,6 +22,7 @@ import { setupSelectorDiscoveryRoutes } from './routes/selector-discovery';
 import { setupChallengeDiscoveryRoutes } from './routes/challenge-discovery';
 import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
+import { setupMaintenanceRoutes } from './routes/maintenance';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { logger } from '../utils/logger';
@@ -39,6 +41,7 @@ export interface ServerOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
   adapterDraftService?: AdapterDraftService;
   fixtureCaptureService?: FixtureCaptureService;
+  maintenanceService?: MaintenanceService;
   storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
@@ -108,7 +111,10 @@ export class ComicCrawlerServer {
       this.options.taskManager,
       this.options.adapterRegistry,
       this.options.selectorDiscoveryService,
-      this.options.challengeDiscoveryService
+      this.options.challengeDiscoveryService,
+      {
+        downloadDir: async () => (await this.options.configManager.get()).download.directory,
+      }
     );
     setupConfigRoutes(this.app, this.options.configManager);
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
@@ -143,6 +149,9 @@ export class ComicCrawlerServer {
     }
     if (this.options.agentAdminService) {
       setupAgentRoutes(this.app, this.options.agentAdminService, this.options.adapterRegistry);
+    }
+    if (this.options.maintenanceService) {
+      setupMaintenanceRoutes(this.app, this.options.maintenanceService);
     }
   }
 

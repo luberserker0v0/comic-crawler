@@ -65,6 +65,17 @@ export const I18nConfigSchema = z.object({
   fallback: z.string().default('en'),
 });
 
+export const MaintenanceConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  intervalHours: z.number().min(0).default(24),
+  tasksRetainDays: z.number().min(0).default(30),
+  discoveryJobsRetainDays: z.number().min(0).default(14),
+  browserProfilesRetainDays: z.number().min(0).default(14),
+  deleteFiles: z.boolean().default(true),
+  deleteOrphanProfiles: z.boolean().default(true),
+  batchLimit: z.number().min(1).max(1000).default(100),
+});
+
 export const GlobalConfigSchema = z.object({
   download: DownloadConfigSchema,
   concurrency: ConcurrencyConfigSchema,
@@ -73,6 +84,7 @@ export const GlobalConfigSchema = z.object({
   server: ServerConfigSchema,
   log: LogConfigSchema,
   i18n: I18nConfigSchema,
+  maintenance: MaintenanceConfigSchema.default({}),
 });
 
 export const SiteConfigSchema = z.object({

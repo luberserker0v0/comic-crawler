@@ -134,7 +134,8 @@ export function setupTasksRoutes(
   taskManager: TaskManager,
   adapterRegistry: AdapterRegistry,
   discoveryService?: SelectorDiscoveryService,
-  challengeDiscoveryService?: ChallengeDiscoveryService
+  challengeDiscoveryService?: ChallengeDiscoveryService,
+  options?: { downloadDir?: string | (() => string | Promise<string>) }
 ): void {
   app.get('/api/tasks', async (_request: FastifyRequest, reply: FastifyReply) => {
     const tasks = taskManager.getAllTasks();
@@ -496,14 +497,17 @@ export function setupTasksRoutes(
 
   app.delete('/api/tasks/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
-    const success = await taskManager.deleteTask(id);
+    const query = request.query as { deleteFiles?: string | boolean };
+    const deleteFiles = query.deleteFiles === true || query.deleteFiles === 'true' || query.deleteFiles === '1';
+    const downloadDir = typeof options?.downloadDir === 'function' ? await options.downloadDir() : options?.downloadDir;
+    const outcome = await taskManager.deleteTaskWithFiles(id, deleteFiles ? { deleteFiles: true, downloadDir } : undefined);
 
-    if (!success) {
+    if (!outcome.deleted) {
       reply.code(400).send({ error: 'Failed to delete task' });
       return;
     }
 
-    reply.send({ data: { message: 'Task deleted' } });
+    reply.send({ data: { message: 'Task deleted', filesDeleted: outcome.filesDeleted, filesSkipped: outcome.filesSkipped } });
   });
 }
 

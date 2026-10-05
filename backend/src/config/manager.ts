@@ -21,9 +21,9 @@ export class ConfigManager {
   async load(): Promise<GlobalConfig> {
     const stored = await this.storage.read<GlobalConfig>(CONFIG_KEY);
     if (stored) {
-      this.cache = applyBrowserEnvOverrides(validateGlobalConfig(stored));
+      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(validateGlobalConfig(stored)));
     } else {
-      this.cache = applyBrowserEnvOverrides(this.getDefaultConfig());
+      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(this.getDefaultConfig()));
       await this.save(this.cache);
     }
     return this.cache;
@@ -133,6 +133,16 @@ export class ConfigManager {
         language: DEFAULTS.i18n.language,
         fallback: DEFAULTS.i18n.fallback,
       },
+      maintenance: {
+        enabled: true,
+        intervalHours: 24,
+        tasksRetainDays: 30,
+        discoveryJobsRetainDays: 14,
+        browserProfilesRetainDays: 14,
+        deleteFiles: true,
+        deleteOrphanProfiles: true,
+        batchLimit: 100,
+      },
     };
   }
 }
@@ -176,6 +186,61 @@ function applyBrowserEnvOverrides(config: GlobalConfig): GlobalConfig {
     browser: {
       ...config.browser,
       ...browserOverrides,
+    },
+  };
+}
+
+function parseEnvBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function parseEnvNumber(value: string | undefined): number | undefined {
+  if (value === undefined || !value.trim()) return undefined;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function applyMaintenanceEnvOverrides(config: GlobalConfig): GlobalConfig {
+  const base = config.maintenance ?? {
+    enabled: true,
+    intervalHours: 24,
+    tasksRetainDays: 30,
+    discoveryJobsRetainDays: 14,
+    browserProfilesRetainDays: 14,
+    deleteFiles: true,
+    deleteOrphanProfiles: true,
+    batchLimit: 100,
+  };
+  const enabled = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_ENABLED);
+  const intervalHours = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS);
+  const tasksRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS);
+  const jobsRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS);
+  const profilesRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_PROFILES_RETAIN_DAYS);
+  const deleteFiles = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_DELETE_FILES);
+  if (
+    enabled === undefined &&
+    intervalHours === undefined &&
+    tasksRetainDays === undefined &&
+    jobsRetainDays === undefined &&
+    profilesRetainDays === undefined &&
+    deleteFiles === undefined
+  ) {
+    return { ...config, maintenance: base };
+  }
+  return {
+    ...config,
+    maintenance: {
+      ...base,
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(intervalHours !== undefined ? { intervalHours } : {}),
+      ...(tasksRetainDays !== undefined ? { tasksRetainDays } : {}),
+      ...(jobsRetainDays !== undefined ? { discoveryJobsRetainDays: jobsRetainDays } : {}),
+      ...(profilesRetainDays !== undefined ? { browserProfilesRetainDays: profilesRetainDays } : {}),
+      ...(deleteFiles !== undefined ? { deleteFiles } : {}),
     },
   };
 }

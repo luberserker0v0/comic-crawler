@@ -79,4 +79,14 @@ export const DEFAULTS = {
     imageFormat: 'original' as const,
     imageQuality: 100,
   },
+  maintenance: {
+    enabled: true,
+    intervalHours: 24,
+    tasksRetainDays: 30,
+    discoveryJobsRetainDays: 14,
+    browserProfilesRetainDays: 14,
+    deleteFiles: true,
+    deleteOrphanProfiles: true,
+    batchLimit: 100,
+  },
 } as const;

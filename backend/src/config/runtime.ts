@@ -27,6 +27,12 @@ export const ENV_KEYS = {
   dataPath: ['COMICCRAWLER_DATA_PATH', 'DATA_PATH'],
   agentWorkspacePath: ['AGENT_WORKSPACE_PATH'],
   staticDir: ['STATIC_DIR'],
+  maintenanceEnabled: ['COMICCRAWLER_MAINTENANCE_ENABLED'],
+  maintenanceIntervalHours: ['COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS'],
+  maintenanceTasksRetainDays: ['COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS'],
+  maintenanceJobsRetainDays: ['COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS'],
+  maintenanceProfilesRetainDays: ['COMICCRAWLER_MAINTENANCE_PROFILES_RETAIN_DAYS'],
+  maintenanceDeleteFiles: ['COMICCRAWLER_MAINTENANCE_DELETE_FILES'],
 } as const;
 
 export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): RuntimeConfig {

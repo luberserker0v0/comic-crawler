@@ -401,6 +401,15 @@ export class ChallengeDiscoveryService {
     return this.storage.read<ChallengeDiscoveryJob>(`${JOB_PREFIX}${id}`);
   }
 
+  async deleteJob(id: string): Promise<boolean> {
+    const existing = await this.get(id);
+    if (!existing) return false;
+    const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
+    await this.storage.write(INDEX_KEY, ids.filter((entry) => entry !== id));
+    await this.storage.delete(`${JOB_PREFIX}${id}`);
+    return true;
+  }
+
   async list(): Promise<ChallengeDiscoveryJob[]> {
     const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
     const jobs = await Promise.all(ids.map((id) => this.get(id)));

@@ -11,6 +11,8 @@ import { AgentAdminService } from './agent/admin-service';
 import { AgentNotifier } from './agent/notifier';
 import { AgentTriggerMonitor } from './agent/trigger-monitor';
 import { SelectorDiscoveryService } from './selector-discovery';
+import { ChallengeDiscoveryService } from './challenge';
+import { MaintenanceService } from './maintenance/service';
 import { ComicCrawlerCli } from './cli';
 import { ComicError, ErrorType, errorToLogObject } from './error/types';
 import { logger } from './utils/logger';
@@ -73,6 +75,31 @@ async function main(): Promise<void> {
     });
     await selectorDiscoveryService.loadActiveDynamicAdapters();
 
+    const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
+      workspaceRoot: runtime.agentWorkspacePath,
+      getBrowserConfig: async () => (await configManager.get()).browser,
+      getNetworkConfig: async () => (await configManager.get()).network,
+    });
+
+    const maintenanceService = new MaintenanceService({
+      storage,
+      taskManager,
+      selectorDiscoveryService,
+      challengeDiscoveryService,
+      workspaceRoot: runtime.agentWorkspacePath,
+      downloadDir: async () => (await configManager.get()).download.directory,
+      getPolicy: async () => (await configManager.get()).maintenance ?? {
+        enabled: true,
+        intervalHours: 24,
+        tasksRetainDays: 30,
+        discoveryJobsRetainDays: 14,
+        browserProfilesRetainDays: 14,
+        deleteFiles: true,
+        deleteOrphanProfiles: true,
+        batchLimit: 100,
+      },
+    });
+
     const cli = new ComicCrawlerCli({
       configManager,
       taskManager,
@@ -80,6 +107,7 @@ async function main(): Promise<void> {
       crawlerEngine,
       agentAdminService,
       selectorDiscoveryService,
+      maintenanceService,
     });
 
     await cli.parse(process.argv);

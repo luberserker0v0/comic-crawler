@@ -3,12 +3,25 @@ import type { TaskProgress } from './progress';
 import type { CrawlCheckpoint } from './checkpoint';
 import type { EventBus } from '../events/bus';
 import type { IStorage } from '../storage/types';
+import { promises as fs } from 'node:fs';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { TaskQueue } from './queue';
 import { ProgressTracker } from './progress';
 import { ComicError, errorToLogObject } from '../error/types';
 
 const TASK_INDEX_KEY = 'tasks/index';
 const TASK_PRIORITY_ORDER_KEY = 'tasks/priority-order';
+
+export interface DeleteTaskOptions {
+  deleteFiles?: boolean;
+  downloadDir?: string;
+}
+
+export interface DeleteTaskResult {
+  deleted: boolean;
+  filesDeleted: boolean;
+  filesSkipped?: string;
+}
 
 export interface TaskDefinition {
   id: string;
@@ -247,15 +260,28 @@ export class TaskManager {
     return cancelled;
   }
 
-  async deleteTask(taskId: string): Promise<boolean> {
+  async deleteTask(taskId: string, options?: DeleteTaskOptions): Promise<boolean> {
+    const result = await this.deleteTaskWithFiles(taskId, options);
+    return result.deleted;
+  }
+
+  async deleteTaskWithFiles(taskId: string, options?: DeleteTaskOptions): Promise<DeleteTaskResult> {
     const record = this.records.get(taskId);
     if (!record) {
-      return false;
+      return { deleted: false, filesDeleted: false };
     }
 
     const activeStatuses: TaskStatus[] = ['pending', 'running', 'paused'];
     if (activeStatuses.includes(record.task.status)) {
-      return false;
+      return { deleted: false, filesDeleted: false };
+    }
+
+    let filesDeleted = false;
+    let filesSkipped: string | undefined;
+    if (options?.deleteFiles && record.result.outputPath) {
+      const outcome = await deleteTaskOutputDir(record.result.outputPath, options.downloadDir);
+      filesDeleted = outcome.deleted;
+      filesSkipped = outcome.skipped;
     }
 
     this.queue.remove(taskId);
@@ -273,7 +299,7 @@ export class TaskManager {
       await this.storage.delete(this.getTaskKey(taskId));
     }
 
-    return true;
+    return { deleted: true, filesDeleted, ...(filesSkipped ? { filesSkipped } : {}) };
   }
 
   getTask(taskId: string): TaskItem<TaskDefinition> | undefined {
@@ -554,4 +580,35 @@ function hasWaitingVerificationContext(value: unknown): boolean {
     typeof context.challengeDiscoveryId === 'string'
   ) return true;
   return Object.values(context).some((entry) => hasWaitingVerificationContext(entry));
+}
+
+function isPathInsideDir(candidate: string, dir: string): boolean {
+  const resolvedDir = resolve(dir);
+  const resolvedCandidate = resolve(candidate);
+  if (resolvedCandidate === resolvedDir) return true;
+  const rel = relative(resolvedDir, resolvedCandidate);
+  return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+async function deleteTaskOutputDir(
+  outputPath: string,
+  downloadDir?: string
+): Promise<{ deleted: boolean; skipped?: string }> {
+  const base = downloadDir ?? './downloads';
+  const candidate = isAbsolute(outputPath) ? outputPath : resolve(process.cwd(), outputPath);
+  if (!isPathInsideDir(candidate, resolve(process.cwd(), base)) && !isPathInsideDir(candidate, base)) {
+    return { deleted: false, skipped: `outputPath outside download directory: ${outputPath}` };
+  }
+  try {
+    const stats = await fs.stat(candidate);
+    if (!stats.isDirectory()) return { deleted: false, skipped: `outputPath is not a directory: ${outputPath}` };
+  } catch {
+    return { deleted: false, skipped: `outputPath not found: ${outputPath}` };
+  }
+  try {
+    await fs.rm(candidate, { recursive: true, force: true });
+    return { deleted: true };
+  } catch (error) {
+    return { deleted: false, skipped: error instanceof Error ? error.message : String(error) };
+  }
 }

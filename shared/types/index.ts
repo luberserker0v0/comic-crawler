@@ -31,6 +31,7 @@ export type {
   ServerConfig,
   LogConfig,
   I18nConfig,
+  MaintenanceConfig,
   SiteConfig,
   BlacklistRule,
 } from './config';

@@ -20,6 +20,7 @@ import { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from './sele
 import { ChallengeDiscoveryService } from './challenge';
 import { AdapterDraftService } from './adapter-drafts/service';
 import { FixtureCaptureService } from './fixtures/fixture-capture-service';
+import { MaintenanceService } from './maintenance/service';
 import { logger } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -125,6 +126,24 @@ async function main(): Promise<void> {
     timing.mark('challenge strategy load');
     await challengeDiscoveryService.loadVerifiedBrowserSessions();
     timing.mark('verified browser session load');
+    const maintenanceService = new MaintenanceService({
+      storage,
+      taskManager,
+      selectorDiscoveryService,
+      challengeDiscoveryService,
+      workspaceRoot: runtime.agentWorkspacePath,
+      downloadDir: async () => (await configManager.get()).download.directory,
+      getPolicy: async () => (await configManager.get()).maintenance ?? {
+        enabled: true,
+        intervalHours: 24,
+        tasksRetainDays: 30,
+        discoveryJobsRetainDays: 14,
+        browserProfilesRetainDays: 14,
+        deleteFiles: true,
+        deleteOrphanProfiles: true,
+        batchLimit: 100,
+      },
+    });
     const server = new ComicCrawlerServer({
       port: runtime.port,
       host: runtime.host,
@@ -139,6 +158,7 @@ async function main(): Promise<void> {
       challengeDiscoveryService,
       adapterDraftService,
       fixtureCaptureService,
+      maintenanceService,
       storage,
       staticDir: runtime.staticDir,
     });
@@ -146,6 +166,7 @@ async function main(): Promise<void> {
     await server.start();
     timing.mark('server listen');
     timing.log();
+    startMaintenanceScheduler(maintenanceService, configManager);
     createGracefulShutdownManager({ server, storage, logger }).register();
   } catch (error) {
     logger.fatal({ error: errorToLogObject(error) }, 'Failed to start server');
@@ -238,6 +259,29 @@ async function importLegacyRuntimeState(dataPath: string): Promise<void> {
       // Legacy file does not exist or is unreadable; leave target absent.
     }
   }
+}
+
+function startMaintenanceScheduler(maintenanceService: MaintenanceService, configManager: ConfigManager): void {
+  void (async () => {
+    let policy;
+    try {
+      policy = await configManager.get().then((config) => config.maintenance);
+    } catch {
+      return;
+    }
+    if (!policy?.enabled || !policy.intervalHours || policy.intervalHours <= 0) return;
+    const intervalMs = policy.intervalHours * 60 * 60 * 1000;
+    const runOnce = () => {
+      maintenanceService.run().catch((error) => {
+        logger.warn({ error: errorToLogObject(error) }, 'Scheduled maintenance cleanup failed');
+      });
+    };
+    // Delay the first run to avoid competing with startup work.
+    const initialTimer = setTimeout(runOnce, 5 * 60 * 1000);
+    initialTimer.unref?.();
+    const timer = setInterval(runOnce, intervalMs);
+    timer.unref?.();
+  })();
 }
 
 function isHumanVerificationRequiredError(error: unknown): boolean {

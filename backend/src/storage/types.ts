@@ -4,6 +4,7 @@ export interface IStorage {
   delete(key: string): Promise<void>;
   list(): Promise<string[]>;
   exists(key: string): Promise<boolean>;
+  stat?(key: string): Promise<{ mtimeMs: number } | null>;
 }
 
 export interface WriteOperation {

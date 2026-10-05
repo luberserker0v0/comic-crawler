@@ -8,6 +8,7 @@ export interface GlobalConfig {
   server: ServerConfig;
   log: LogConfig;
   i18n: I18nConfig;
+  maintenance?: MaintenanceConfig;
 }
 
 export interface DownloadConfig {
@@ -71,6 +72,17 @@ export interface LogConfig {
 export interface I18nConfig {
   language: string;
   fallback: string;
+}
+
+export interface MaintenanceConfig {
+  enabled: boolean;
+  intervalHours: number;
+  tasksRetainDays: number;
+  discoveryJobsRetainDays: number;
+  browserProfilesRetainDays: number;
+  deleteFiles: boolean;
+  deleteOrphanProfiles: boolean;
+  batchLimit: number;
 }
 
 export interface SiteConfig {
