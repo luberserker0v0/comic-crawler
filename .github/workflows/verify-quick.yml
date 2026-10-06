@@ -35,6 +35,13 @@ jobs:
       - name: Run lint (backend + shared)
         run: npm run lint --workspace backend --workspace shared
 
+      # Full backend unit suite (60 suites). verify:quick only runs the core
+      # subset via test:core; this step covers the rest. scripts/
+      # verify-core-tests.mjs fails closed on untracked test files so new
+      # tests cannot silently fall outside both gates.
+      - name: Run full backend unit tests
+        run: npm run -w backend test -- --runInBand
+
       - name: Upload diagnostic artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

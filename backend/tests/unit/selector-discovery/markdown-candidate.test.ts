@@ -14,31 +14,42 @@ describe('Markdown candidate parser', () => {
 - Domains: example.com, www.example.com
 - Patterns: https://example.com/manga/*
 
-## Metadata Selectors
+## Title Extraction
 
-- Title: h1
-- Author: main p
-- Cover: img[itemprop="image"]
-- Status: .status
-- Tags: a[href*="genre="]
-- Description: .description
+- Selector: h1
 
-## Chapter Selectors
+## Author Extraction
+
+- Selector: main p
+
+## Description Extraction
+
+- Selector: .description
+
+## Cover URL Extraction
+
+- Selector: img[itemprop="image"]
+
+## Tags Extraction
+
+- Selector: a[href*="genre="]
+
+## Status Extraction
+
+- Selector: .status
+
+## Chapter List Extraction
 
 - List: .chapter-list
 - Item: a
 - Title: a
 - URL: a
 
-## Image Selectors
+## Chapter Image URL Extraction
 
 - Container: .reader
 - Item: img[data-original]
 - Source Attribute: data-original
-
-## Sample Extraction
-
-Looks plausible.
 
 ## Evidence
 
@@ -47,10 +58,6 @@ Selectors match repeated nodes.
 ## Confidence
 
 high
-
-## Known Risks
-
-none
 
 ## Reviewer Checklist
 
@@ -176,8 +183,8 @@ none
     const result = validateMarkdownCandidate(report, { target: 'full' });
 
     expect(result.valid).toBe(false);
-    expect(result.missingHeadings).toContain('Metadata Selectors');
-    expect(result.missingHeadings).toContain('Chapter Selectors');
+    expect(result.missingHeadings).toContain('Title Extraction');
+    expect(result.missingHeadings).toContain('Chapter List Extraction');
   });
 
   it('extracts selectors when the model emits each field as its own heading', () => {
