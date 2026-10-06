@@ -53,7 +53,14 @@ outputs/adapter-implementation.ts
 outputs/review-notes.md
 ```
 
-The TypeScript file must export one class that extends `AdapterBase`. It must
+> **Scope**: the full-shell file below is the **system-assembled artifact**:
+> ComicCrawler composes it from reviewed per-stage capability drafts
+> (see `agent/ao/selector-discovery/draft/contracts/capability-pipeline.md`
+> "System compose"). AO/agents write capability subclasses only and must NOT
+> export the `AdapterBase` shell in stage drafts; the validator rejects shells
+> in stage output (`backend/src/selector-discovery/adapter-implementation.ts`).
+
+The assembled TypeScript file must export one class that extends `AdapterBase`. It must
 declare:
 
 - `id`

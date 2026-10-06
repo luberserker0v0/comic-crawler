@@ -12,19 +12,38 @@ async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function rmRetry(target: string, attempts = 5): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === attempts - 1) throw error;
+      // Windows often reports ENOTEMPTY/EPERM while a just-closed handle
+      // drains; a short backoff is cheaper than a flaky suite.
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+    }
+  }
+}
+
 async function waitForPersistedRecord(
   storage: JsonFileStore,
   taskId: string,
   predicate: (record: any) => boolean,
-  attempts = 20
+  attempts = 100
 ): Promise<any> {
+  // Generous window on purpose: the persisted state is produced by
+  // fire-and-forget EventBus handlers (read index + queued write + timer +
+  // flush), and on Windows a flush can stall tens of ms behind AV scanning
+  // or a busy disk. A tight (20 x setTimeout 0) window turns scheduling
+  // jitter into suite flakes; ~1s worst case only delays genuine failures.
   for (let index = 0; index < attempts; index++) {
     const record = await storage.read<any>(`tasks/${taskId}`);
     if (record && predicate(record)) {
       return record;
     }
 
-    await flushAsyncWork();
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
   return storage.read<any>(`tasks/${taskId}`);
@@ -37,7 +56,7 @@ describe('TaskManager persistence', () => {
   const extraStores: JsonFileStore[] = [];
 
   beforeEach(async () => {
-    await fs.rm(TEST_ROOT, { recursive: true, force: true });
+    await rmRetry(TEST_ROOT);
     await fs.mkdir(TEST_ROOT, { recursive: true });
     eventBus = new EventBus();
     storage = new JsonFileStore({ basePath: join(TEST_ROOT, 'data'), flushInterval: 0 });
@@ -45,10 +64,18 @@ describe('TaskManager persistence', () => {
   });
 
   afterEach(async () => {
-    await Promise.all(managers.splice(0).map((manager) => manager.dispose().catch(() => undefined)));
-    await Promise.all(extraStores.splice(0).map((store) => store.dispose().catch(() => undefined)));
+    // Sequential dispose: managers may still persist via their store while
+    // shutting down, so the stores must outlive them. Concurrent dispose
+    // lets a late write land after the data dir was removed, flaking the
+    // next test (ENOTEMPTY / ghost files on Windows).
+    for (const manager of managers.splice(0)) {
+      await manager.dispose().catch(() => undefined);
+    }
+    for (const store of extraStores.splice(0)) {
+      await store.dispose().catch(() => undefined);
+    }
     await storage.dispose().catch(() => undefined);
-    await fs.rm(TEST_ROOT, { recursive: true, force: true });
+    await rmRetry(TEST_ROOT);
   });
 
   it('should persist created task records', async () => {
@@ -127,7 +154,15 @@ describe('TaskManager persistence', () => {
   });
 
   it('should convert unfinished tasks to interrupted on restart', async () => {
-    const firstManager = new TaskManager(async () => {}, { eventBus, storage });
+    // Block the executor so the task stays 'running' (unfinished) long
+    // enough for the intermediate state to reach disk. With an immediately
+    // resolving executor the task races to its terminal state and the poll
+    // below may only ever observe the final record.
+    let releaseExecutor!: () => void;
+    const executorBlocked = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    const firstManager = new TaskManager(async () => executorBlocked, { eventBus, storage });
     managers.push(firstManager);
     await firstManager.initialize();
 
@@ -139,20 +174,25 @@ describe('TaskManager persistence', () => {
 
     eventBus.emit('task:started', { taskId: 'task-3' });
     await flushAsyncWork();
-    const persistedBeforeRestart = await waitForPersistedRecord(storage, 'task-3', (record) =>
-      record?.task?.status === 'running'
-    );
-    expect(persistedBeforeRestart?.task?.status).toBe('running');
+    let persistedBeforeRestart: any;
+    try {
+      persistedBeforeRestart = await waitForPersistedRecord(storage, 'task-3', (record) =>
+        record?.task?.status === 'running'
+      );
+      expect(persistedBeforeRestart?.task?.status).toBe('running');
 
-    const reloadedStorage = new JsonFileStore({ basePath: join(TEST_ROOT, 'data'), flushInterval: 0 });
-    extraStores.push(reloadedStorage);
-    await reloadedStorage.initialize();
-    const secondManager = new TaskManager(async () => {}, { eventBus: new EventBus(), storage: reloadedStorage });
-    managers.push(secondManager);
-    await secondManager.initialize();
+      const reloadedStorage = new JsonFileStore({ basePath: join(TEST_ROOT, 'data'), flushInterval: 0 });
+      extraStores.push(reloadedStorage);
+      await reloadedStorage.initialize();
+      const secondManager = new TaskManager(async () => {}, { eventBus: new EventBus(), storage: reloadedStorage });
+      managers.push(secondManager);
+      await secondManager.initialize();
 
-    expect(secondManager.getTask('task-3')?.status).toBe('interrupted');
-    expect(secondManager.getTaskResult('task-3')?.status).toBe('interrupted');
+      expect(secondManager.getTask('task-3')?.status).toBe('interrupted');
+      expect(secondManager.getTaskResult('task-3')?.status).toBe('interrupted');
+    } finally {
+      releaseExecutor();
+    }
   });
 
   it('should requeue unfinished resumable tasks from checkpoint on restart', async () => {

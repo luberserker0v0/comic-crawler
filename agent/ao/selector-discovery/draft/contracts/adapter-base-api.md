@@ -1,5 +1,15 @@
 # AdapterBase API Reference
 
+> **Scope**: this file governs per-stage **capability drafts** only
+> (`outputs/common-verification.ts`, `outputs/metadata-capability.ts`,
+> `outputs/chapter-images-capability.ts`). In these files agents write
+> capability subclasses and must NOT export an `AdapterBase` shell.
+> The full-shell adapter (`export class ... extends AdapterBase` with
+> `id`/`name`/`domains`/`parseMode`/`capabilities`) is assembled by
+> ComicCrawler itself from reviewed capability drafts (see
+> `backend/src/selector-discovery/service.ts` "System compose" and
+> `repo/docs/AO_SELECTOR_DISCOVERY.md` for the assembled artifact).
+
 Use this reference when writing capability draft files.
 
 Follow `contracts/capability-pipeline.md`. ComicCrawler assembles the final

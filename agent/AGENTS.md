@@ -4,7 +4,12 @@
 
 你是 ComicCrawler 的配接器自動維護 Agent。
 
-**目的**：當配接器的提取程式碼（selectors.ts / parser.ts）因網站改版而失敗時，自動分析錯誤並修復程式碼。
+**目的**：當配接器的提取程式碼（`selectors.ts` / 站點 `adapter.ts` 內的
+extract* 方法）因網站改版而失敗時，自動分析錯誤並修復程式碼。
+
+> **注意**：本站點目錄實際包含 `adapter.ts` / `index.ts` / `manifest.ts` /
+> `selectors.ts`，沒有 `parser.ts` / `interfaces.ts` / `types.ts` /
+> `validation.ts`。提到這些檔名的舊指示以下方 Scope 清單為準。
 
 **觸發條件**：外部測試模組偵測到配接器測試失敗時，會呼叫你進行修復。
 
@@ -14,20 +19,19 @@
 
 ### 可修改檔案
 
-你**只能**修改以下檔案：
+你**只能**修改以下檔案（站點目錄實際存在的檔案）：
 
 - `repo/backend/src/adapter/sites/<adapter-id>/selectors.ts`
-- `repo/backend/src/adapter/sites/<adapter-id>/parser.ts`
+- `repo/backend/src/adapter/sites/<adapter-id>/adapter.ts`（僅 extract* 方法內的
+  selector/解析邏輯；不得改動類別結構、介面簽名與能力宣告）
 
 ### 唯讀檔案
 
 你可以**讀取**但**不能修改**以下檔案：
 
-- `repo/backend/src/adapter/sites/<adapter-id>/interfaces.ts`
-- `repo/backend/src/adapter/sites/<adapter-id>/types.ts`
-- `repo/backend/src/adapter/sites/<adapter-id>/validation.ts`
-- `repo/backend/src/adapter/sites/<adapter-id>/adapter.ts`
+- `repo/backend/src/adapter/sites/<adapter-id>/manifest.ts`
 - `repo/backend/src/adapter/sites/<adapter-id>/index.ts`
+- `repo/backend/src/adapter/base.ts`
 - `repo/backend/tests/**/*`
 
 ### 禁止操作
@@ -51,15 +55,16 @@
 1. **接收錯誤上下文**
    - 錯誤日誌（哪個測試失敗、哪個 Selector 回傳 null）
    - HTML 樣本（網站目前的實際 HTML 結構）
-   - 當前程式碼（selectors.ts / parser.ts 的內容）
+   - 當前程式碼（`selectors.ts` / 站點 `adapter.ts` 內 extract* 方法的內容）
 
 2. **分析問題**
    - 比對 HTML 結構與當前 Selector
    - 找出網站改版導致的結構變化
-   - 決定需要修改哪些 Selector 或 Parser 邏輯
+   - 決定需要修改哪些 Selector 或 extract* 解析邏輯
 
 3. **修改程式碼**
-   - 只修改 `selectors.ts` 或 `parser.ts`
+   - 只修改 `selectors.ts`，或 `adapter.ts` 內 extract* 方法的
+     selector/解析邏輯（不得改類別結構、簽名、能力宣告）
    - 保持介面簽名不變
    - 保持型別定義不變
 
@@ -75,11 +80,13 @@
 1. **NEVER** 執行 shell 命令
 2. **NEVER** 修改測試檔案
 3. **NEVER** 修改介面或型別定義
-4. **NEVER** 修改配接器主體（adapter.ts）
+4. **NEVER** 修改配接器主體結構（`adapter.ts` 的類別結構、簽名、能力宣告；
+   僅 extract* 方法內的 selector/解析邏輯可改）
 5. **NEVER** 建立或刪除檔案
 6. **ALWAYS** 保持函式簽名不變
 7. **ALWAYS** 保持回傳型別不變
-8. **ONLY** 修改 selectors.ts 和 parser.ts
+8. **ONLY** 修改 `selectors.ts`，以及 `adapter.ts` 內 extract* 方法的
+   selector/解析邏輯
 
 ---
 

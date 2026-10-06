@@ -26,6 +26,15 @@ jobs:
       - name: Run quick verification gate
         run: npm run verify:quick
 
+      - name: Run typecheck (shared + workspaces)
+        run: npm run typecheck
+
+      # Frontend lint is not gated yet: pages/* have pre-existing
+      # react-hooks violations (setState-in-effect) that need a dedicated
+      # cleanup pass with the giant pages split up first.
+      - name: Run lint (backend + shared)
+        run: npm run lint --workspace backend --workspace shared
+
       - name: Upload diagnostic artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

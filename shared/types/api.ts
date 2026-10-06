@@ -172,7 +172,7 @@ export interface AdapterDraftListResponse {
   drafts: AdapterDraftSummary[];
 }
 
-export interface CreateAdapterDraftResponse extends AdapterDraftDetailResponse {}
+export type CreateAdapterDraftResponse = AdapterDraftDetailResponse;
 
 export interface SaveAdapterDraftContentRequest {
   content: string;

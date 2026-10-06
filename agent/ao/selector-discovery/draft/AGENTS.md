@@ -6,7 +6,10 @@ Hard rules:
 
 - Read and write Markdown only for task-facing artifacts.
 - Do not create JSON contracts, JSON schema, or JSON draft output.
-- Final implementation drafts are TypeScript files that must extend ComicCrawler `AdapterBase`.
+- Final assembled adapters are TypeScript files that extend ComicCrawler `AdapterBase`,
+  but that shell is composed by ComicCrawler from reviewed capability drafts, not
+  written by agents. Per-stage drafts must contain only capability subclasses
+  (see `contracts/adapter-base-api.md` and `contracts/capability-pipeline.md`).
 - Read `contracts/adapter-base-api.md` before writing adapter TypeScript.
 - Read `contracts/capability-pipeline.md` before writing adapter TypeScript.
 - Generate adapter behavior in capability stages. Every adapter starts with

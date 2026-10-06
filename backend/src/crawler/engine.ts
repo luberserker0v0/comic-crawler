@@ -584,6 +584,7 @@ export class CrawlerEngine {
   }
 
   private safePathSegment(value: string): string {
+    // eslint-disable-next-line no-control-regex -- intentionally strips control chars from path segments
     return value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-').replace(/\s+/g, ' ').replace(/^-+|-+$/g, '') || 'unknown';
   }
 
