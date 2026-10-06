@@ -337,6 +337,7 @@ export const TaskManagerPage: React.FC = () => {
 
   const challengeDiscoveryId = detail?.result?.challengeDiscoveryId;
 
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): challenge-status fetch with sync reset; remodel to render-time derivation */
   useEffect(() => {
     if (!challengeDiscoveryId) {
       setChallengeJob(null);
@@ -363,7 +364,9 @@ export const TaskManagerPage: React.FC = () => {
       cancelled = true;
     };
   }, [challengeDiscoveryId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): browser-options fetch with sync reset; remodel to render-time derivation */
   useEffect(() => {
     if (!challengeDiscoveryId) {
       setBrowserOptions([]);
@@ -392,6 +395,7 @@ export const TaskManagerPage: React.FC = () => {
       cancelled = true;
     };
   }, [challengeDiscoveryId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const shouldReopenVerificationBrowser = Boolean(challengeJob?.status === 'challenge_required' && challengeJob?.browserExecutablePath);
   const isVerificationBrowserOpening =

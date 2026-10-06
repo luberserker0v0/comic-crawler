@@ -216,6 +216,7 @@ export const AdapterLabPage: React.FC = () => {
     || challengeJob?.status === 'external_browser_opening'
     || challengeJob?.status === 'ready';
 
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): challenge-status fetch with sync reset; remodel to render-time derivation */
   useEffect(() => {
     if (!challengeDiscoveryId) {
       setChallengeJob(null);
@@ -243,6 +244,7 @@ export const AdapterLabPage: React.FC = () => {
       cancelled = true;
     };
   }, [challengeDiscoveryId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function resolveUrl() {
     setError(null);

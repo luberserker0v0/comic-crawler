@@ -479,7 +479,7 @@ export const AgentPage: React.FC = () => {
     } finally {
       setReviewLoading(null);
     }
-  }, [functionRevisionInstruction, reviewJob, selectedReviewFunctionId, text.agent.functionRevisionCreated]);
+  }, [functionRevisionInstruction, reviewDraft, reviewDraftContent, reviewImplementation, reviewJob, selectedReviewFunctionId, text.agent.functionRevisionCreated]);
 
   const retryFunctionRevision = useCallback(async (revisionTaskId: string) => {
     if (!reviewJob) return;
@@ -575,6 +575,7 @@ export const AgentPage: React.FC = () => {
     }
   }, [fetchAdapters, fetchDeletedAdapters, fetchSiteAdapters]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch via store actions; move to route loader or data-fetching hook */
   useEffect(() => {
     void fetchBuildJobs();
   }, [fetchBuildJobs]);
@@ -586,6 +587,7 @@ export const AgentPage: React.FC = () => {
   useEffect(() => {
     void fetchDeletedAdapters();
   }, [fetchDeletedAdapters]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (siteAdapters.length === 0) {

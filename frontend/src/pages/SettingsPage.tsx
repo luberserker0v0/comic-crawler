@@ -55,22 +55,6 @@ export const SettingsPage: React.FC = () => {
   const { text } = useI18n();
   const form = formDraft ?? config ?? {};
 
-  React.useEffect(() => {
-    fetchConfig();
-    api.getSelectorDiscoveryConfig().then((response) => {
-      setSelectorDiscoveryConfig(response.data);
-      setAoBaseUrl(response.data.aoBaseUrl ?? '');
-      setModel(response.data.model ?? '');
-      if (response.data.configured) {
-        setProviderJson('');
-      } else {
-        setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-      }
-    }).catch(() => undefined);
-    refreshSelectorDiscoveryBundleStatus();
-    refreshSelectorDiscoveryBundleEvaluations();
-  }, [fetchConfig]);
-
   const refreshSelectorDiscoveryBundleStatus = async () => {
     try {
       const response = await api.getSelectorDiscoveryBundleStatus();
@@ -91,6 +75,24 @@ export const SettingsPage: React.FC = () => {
       setSelectorDiscoveryBundleEvaluations([]);
     }
   };
+
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch populating several states; move to route loader or data-fetching hook */
+  React.useEffect(() => {
+    fetchConfig();
+    api.getSelectorDiscoveryConfig().then((response) => {
+      setSelectorDiscoveryConfig(response.data);
+      setAoBaseUrl(response.data.aoBaseUrl ?? '');
+      setModel(response.data.model ?? '');
+      if (response.data.configured) {
+        setProviderJson('');
+      } else {
+        setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
+      }
+    }).catch(() => undefined);
+    refreshSelectorDiscoveryBundleStatus();
+    refreshSelectorDiscoveryBundleEvaluations();
+  }, [fetchConfig]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleChange = (section: string, key: string, value: any) => {
     setForm((previousDraft) => {

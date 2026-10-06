@@ -71,6 +71,7 @@ export const NewTaskForm: React.FC = () => {
   const { text } = useI18n();
 
   const normalizedChapterUrls = chapterUrls.map((chapterUrl) => chapterUrl.trim()).filter(Boolean);
+  const firstChapterUrl = normalizedChapterUrls[0] ?? '';
   const canSubmit = mode === 'all'
     ? mangaUrl.trim().length > 0
     : mode === 'chapters' && normalizedChapterUrls.length > 0;
@@ -93,8 +94,9 @@ export const NewTaskForm: React.FC = () => {
     setSubmitError(null);
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): debounced live-preview fetch with sync reset; remodel to render-time derivation */
   React.useEffect(() => {
-    const previewUrl = mode === 'all' ? mangaUrl.trim() : normalizedChapterUrls[0] ?? '';
+    const previewUrl = mode === 'all' ? mangaUrl.trim() : firstChapterUrl;
     if (!mode || !previewUrl) {
       setAdapterPreview(null);
       setAdapterPreviewError(null);
@@ -124,7 +126,8 @@ export const NewTaskForm: React.FC = () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [mode, mangaUrl, normalizedChapterUrls[0]]);
+  }, [mode, mangaUrl, firstChapterUrl]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateChapterUrl = (index: number, value: string) => {
     setChapterUrls(chapterUrls.map((chapterUrl, currentIndex) => (currentIndex === index ? value : chapterUrl)));

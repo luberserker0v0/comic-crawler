@@ -29,11 +29,8 @@ jobs:
       - name: Run typecheck (shared + workspaces)
         run: npm run typecheck
 
-      # Frontend lint is not gated yet: pages/* have pre-existing
-      # react-hooks violations (setState-in-effect) that need a dedicated
-      # cleanup pass with the giant pages split up first.
-      - name: Run lint (backend + shared)
-        run: npm run lint --workspace backend --workspace shared
+      - name: Run lint (all workspaces)
+        run: npm run lint
 
       # Full backend unit suite (60 suites). verify:quick only runs the core
       # subset via test:core; this step covers the rest. scripts/
