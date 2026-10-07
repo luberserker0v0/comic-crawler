@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { TaskManager } from '../../task/manager';
 import { summarizeCheckpoint } from '../../task/checkpoint';
@@ -8,15 +8,8 @@ import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
-
-interface LocalTaskPreviewFile {
-  name: string;
-  relativePath: string;
-  size: number;
-  modifiedAt: Date;
-  isImage: boolean;
-  url?: string;
-}
+import { adapterSupports, isMissingChallengeJobError, recreateChallengeJobForTask } from './tasks-challenge';
+import { buildTaskDownloadPreview, contentTypeForImage, isPreviewImage, resolvePreviewRoot } from './tasks-preview';
 
 function isValidUrl(value: string): boolean {
   try {
@@ -24,108 +17,6 @@ function isValidUrl(value: string): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-async function collectPreviewFiles(rootDir: string, limit = 24): Promise<LocalTaskPreviewFile[]> {
-  const previewFiles: LocalTaskPreviewFile[] = [];
-
-  async function walk(currentDir: string): Promise<void> {
-    if (previewFiles.length >= limit) {
-      return;
-    }
-
-    const entries = await fs.readdir(currentDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (previewFiles.length >= limit) {
-        return;
-      }
-
-      const absolutePath = join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-
-      const stats = await fs.stat(absolutePath);
-      previewFiles.push({
-        name: entry.name,
-        relativePath: relative(rootDir, absolutePath),
-        size: stats.size,
-        modifiedAt: stats.mtime,
-        isImage: isPreviewImage(absolutePath),
-      });
-    }
-  }
-
-  await walk(rootDir);
-  return previewFiles;
-}
-
-async function buildTaskDownloadPreview(
-  taskId: string,
-  result?: { outputPath?: string; metadata?: Record<string, unknown> | undefined }
-) {
-  if (!result?.outputPath) {
-    return null;
-  }
-
-  const rootDir = await resolvePreviewRoot({
-    outputPath: result.outputPath,
-    metadata: result.metadata,
-  });
-
-  try {
-    const stats = await fs.stat(rootDir);
-    if (!stats.isDirectory()) {
-      return null;
-    }
-
-    const files = (await collectPreviewFiles(rootDir)).map((file) => ({
-      ...file,
-      url: file.isImage ? `/api/tasks/${encodeURIComponent(taskId)}/preview-file?path=${encodeURIComponent(file.relativePath)}` : undefined,
-    }));
-    return {
-      rootDir,
-      files,
-      totalFiles: files.length,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function resolvePreviewRoot(result: { outputPath: string; metadata?: Record<string, unknown> | undefined }): Promise<string> {
-  const directRoot = isAbsolute(result.outputPath) ? result.outputPath : join(process.cwd(), result.outputPath);
-  try {
-    const stats = await fs.stat(directRoot);
-    if (stats.isDirectory()) return directRoot;
-  } catch {
-    // Fall back to the legacy layout below.
-  }
-
-  const title = typeof result.metadata?.title === 'string' ? result.metadata.title : null;
-  return title ? join(directRoot, title) : directRoot;
-}
-
-function isPreviewImage(path: string): boolean {
-  return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extname(path).toLowerCase());
-}
-
-function contentTypeForImage(path: string): string {
-  switch (extname(path).toLowerCase()) {
-    case '.png':
-      return 'image/png';
-    case '.webp':
-      return 'image/webp';
-    case '.gif':
-      return 'image/gif';
-    case '.bmp':
-      return 'image/bmp';
-    case '.avif':
-      return 'image/avif';
-    default:
-      return 'image/jpeg';
   }
 }
 
@@ -509,39 +400,4 @@ export function setupTasksRoutes(
 
     reply.send({ data: { message: 'Task deleted', filesDeleted: outcome.filesDeleted, filesSkipped: outcome.filesSkipped } });
   });
-}
-
-function adapterSupports(
-  capabilities: { verification?: boolean; metadata: boolean; chapterImages: boolean },
-  required: Partial<{ metadata: boolean; chapterImages: boolean }>
-): boolean {
-  return Object.entries(required).every(([key, value]) =>
-    value === undefined || capabilities[key as keyof typeof capabilities] === value
-  );
-}
-
-async function recreateChallengeJobForTask(
-  taskManager: TaskManager,
-  challengeDiscoveryService: ChallengeDiscoveryService,
-  taskId: string
-) {
-  const task = taskManager.getTask(taskId);
-  if (!task) {
-    throw new Error(`Task "${taskId}" was not found.`);
-  }
-  const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
-  const challengeJob = await challengeDiscoveryService.create({ url: verificationUrl });
-  const message = `Verification handoff expired or was removed. New challenge discovery job: ${challengeJob.id}`;
-  await taskManager.updateResult(taskId, {
-    challengeDiscoveryId: challengeJob.id,
-    challengeStatus: challengeJob.status,
-    error: message,
-  });
-  await taskManager.updateTaskError(taskId, message);
-  return challengeJob;
-}
-
-function isMissingChallengeJobError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /challenge discovery job .*not found|challenge discovery job .*was not found/i.test(message);
 }
