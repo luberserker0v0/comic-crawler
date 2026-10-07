@@ -4,55 +4,16 @@ import { api, getApiErrorMessage } from '../api/client';
 import { useTaskStore } from '../store';
 import { useLocalStorage } from '../hooks';
 import { useI18n } from '../text/i18n';
-
-type TaskMode = 'all' | 'chapters';
-
-const MANGA_URL_PLACEHOLDER = 'https://example.com/manga/{manga_name}/';
-const CHAPTER_URL_PLACEHOLDER = 'https://example.com/manga/{manga_name}/{manga_chapter}';
-
-interface AdapterBuildTaskResult {
-  discoveryId: string;
-  status: string;
-  normalizedUrl: string;
-  target?: 'full' | 'chapter-only';
-  reason?: string;
-  adapterId?: string;
-  adapterName?: string;
-  capabilities?: { verification?: boolean; metadata: boolean; chapterImages: boolean };
-  requiredCapabilities?: { metadata?: boolean; chapterImages?: boolean };
-  error?: string;
-}
-
-interface ChallengeBuildTaskResult {
-  challengeDiscoveryId: string;
-  status: string;
-  normalizedUrl: string;
-  reason?: string;
-  error?: string;
-  strategyId?: string;
-  validation?: { valid: boolean; errors?: string[]; warnings?: string[] };
-}
-
-interface AdapterResolutionPreview {
-  status: 'matched' | 'capability_mismatch' | 'not_found';
-  url: string;
-  hostname: string;
-  mode: TaskMode;
-  adapter?: {
-    id: string;
-    name: string;
-    parseMode: string;
-    capabilities: { verification?: boolean; metadata: boolean; chapterImages: boolean };
-  };
-  matchedAdapter?: {
-    id: string;
-    name: string;
-    parseMode: string;
-    capabilities: { verification?: boolean; metadata: boolean; chapterImages: boolean };
-  };
-  requiredCapabilities: { metadata?: boolean; chapterImages?: boolean };
-  discoveryTarget: 'full' | 'chapter-only';
-}
+import {
+  AdapterPreviewPanel,
+  CHAPTER_URL_PLACEHOLDER,
+  MANGA_URL_PLACEHOLDER,
+  getChallengeStatusMessage,
+  type AdapterBuildTaskResult,
+  type ChallengeBuildTaskResult,
+  type TaskMode,
+} from './task-form/widgets';
+import { useAdapterPreview } from './task-form/useAdapterPreview';
 
 export const NewTaskForm: React.FC = () => {
   const [mode, setMode] = React.useState<TaskMode | null>(null);
@@ -63,15 +24,18 @@ export const NewTaskForm: React.FC = () => {
   const [createdTaskId, setCreatedTaskId] = React.useState<string | null>(null);
   const [adapterBuildTask, setAdapterBuildTask] = React.useState<AdapterBuildTaskResult | null>(null);
   const [challengeBuildTask, setChallengeBuildTask] = React.useState<ChallengeBuildTaskResult | null>(null);
-  const [adapterPreview, setAdapterPreview] = React.useState<AdapterResolutionPreview | null>(null);
-  const [adapterPreviewError, setAdapterPreviewError] = React.useState<string | null>(null);
-  const [adapterPreviewLoading, setAdapterPreviewLoading] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const { createTask, loading, error } = useTaskStore();
   const { text } = useI18n();
 
   const normalizedChapterUrls = chapterUrls.map((chapterUrl) => chapterUrl.trim()).filter(Boolean);
   const firstChapterUrl = normalizedChapterUrls[0] ?? '';
+  const {
+    adapterPreview,
+    adapterPreviewError,
+    adapterPreviewLoading,
+    resetAdapterPreview,
+  } = useAdapterPreview(mode, mangaUrl, firstChapterUrl);
   const canSubmit = mode === 'all'
     ? mangaUrl.trim().length > 0
     : mode === 'chapters' && normalizedChapterUrls.length > 0;
@@ -89,45 +53,9 @@ export const NewTaskForm: React.FC = () => {
     setCreatedTaskId(null);
     setAdapterBuildTask(null);
     setChallengeBuildTask(null);
-    setAdapterPreview(null);
-    setAdapterPreviewError(null);
+    resetAdapterPreview();
     setSubmitError(null);
   };
-
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): debounced live-preview fetch with sync reset; remodel to render-time derivation */
-  React.useEffect(() => {
-    const previewUrl = mode === 'all' ? mangaUrl.trim() : firstChapterUrl;
-    if (!mode || !previewUrl) {
-      setAdapterPreview(null);
-      setAdapterPreviewError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setAdapterPreviewLoading(true);
-    const timer = window.setTimeout(() => {
-      api.resolveAdapter({ url: previewUrl, mode })
-        .then((response) => {
-          if (cancelled) return;
-          setAdapterPreview(response.data);
-          setAdapterPreviewError(null);
-        })
-        .catch((err: any) => {
-          if (cancelled) return;
-          setAdapterPreview(null);
-          setAdapterPreviewError(getApiErrorMessage(err));
-        })
-        .finally(() => {
-          if (!cancelled) setAdapterPreviewLoading(false);
-        });
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [mode, mangaUrl, firstChapterUrl]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const updateChapterUrl = (index: number, value: string) => {
     setChapterUrls(chapterUrls.map((chapterUrl, currentIndex) => (currentIndex === index ? value : chapterUrl)));
@@ -461,91 +389,3 @@ export const NewTaskForm: React.FC = () => {
   );
 };
 
-function getChallengeStatusMessage(status: string): string {
-  switch (status) {
-    case 'strategy_awaiting_review':
-      return 'Legacy diagnostic strategy review status. The normal crawl path uses human verification handoff from Task Details.';
-    case 'strategy_promoted':
-      return 'Challenge handling is available. If a crawl task later needs human verification, continue from that task detail page.';
-    case 'browser_open':
-      return 'A verification browser was opened for a task. Continue from the task detail page.';
-    case 'external_browser_open':
-      return 'A verification browser was opened for a task. Continue from the task detail page.';
-    case 'challenge_required':
-      return 'Human verification is still required. Open the affected task detail page to perform the handoff.';
-    case 'access_blocked':
-      return 'The site explicitly blocked this browser/session. ComicCrawler stopped before selector discovery so blocked HTML will not become an adapter.';
-    case 'ready':
-      return 'Human verification succeeded. ComicCrawler saved this browser profile for the site, and later renders can reuse it.';
-    default:
-      return 'ComicCrawler detected a browser challenge before adapter discovery. Create Task only reports this status; verification runs from Task Details.';
-  }
-}
-
-function AdapterPreviewPanel(props: {
-  preview: AdapterResolutionPreview | null;
-  loading: boolean;
-  error: string | null;
-}) {
-  const { preview, loading, error } = props;
-
-  if (loading) {
-    return (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600" data-testid="adapter-resolution-preview">
-        Resolving adapter for this URL...
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" data-testid="adapter-resolution-preview">
-        Adapter resolution failed: {error}
-      </div>
-    );
-  }
-
-  if (!preview) return null;
-
-  const adapter = preview.adapter ?? preview.matchedAdapter;
-  const canUse = preview.status === 'matched';
-
-  return (
-    <div
-      className={`rounded-md border p-3 text-sm ${
-        canUse
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-          : 'border-amber-200 bg-amber-50 text-amber-900'
-      }`}
-      data-testid="adapter-resolution-preview"
-    >
-      <div className="font-medium">
-        {canUse
-          ? 'This URL will use the following adapter.'
-          : preview.status === 'capability_mismatch'
-            ? 'A domain adapter exists, but it cannot cover this task mode.'
-            : 'No adapter matches this URL yet.'}
-      </div>
-      <div className="mt-2 grid gap-2 md:grid-cols-2">
-        <div className="break-all">URL: {preview.url}</div>
-        <div>Domain: {preview.hostname}</div>
-        <div>Task mode: {preview.mode === 'chapters' ? 'Specific chapters' : 'All chapters'}</div>
-        <div>Discovery target if needed: {preview.discoveryTarget}</div>
-      </div>
-      {adapter && (
-        <div className="mt-2 rounded border border-white/70 bg-white p-2">
-          <div className="font-medium">{adapter.name} <span className="font-mono text-xs">({adapter.id})</span></div>
-          <div className="mt-1 text-xs">Parse mode: {adapter.parseMode}</div>
-          <div className="mt-1 text-xs">
-            Capabilities: Verification {adapter.capabilities.verification ? 'O' : 'X'} / Metadata {adapter.capabilities.metadata ? 'O' : 'X'} / Images {adapter.capabilities.chapterImages ? 'O' : 'X'}
-          </div>
-        </div>
-      )}
-      {!canUse && (
-        <div className="mt-2">
-          ComicCrawler will create an adapter build task to {preview.status === 'capability_mismatch' ? '補足缺少的功能' : '新增 adapter'}.
-        </div>
-      )}
-    </div>
-  );
-}
