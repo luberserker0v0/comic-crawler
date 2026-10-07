@@ -1,0 +1,33 @@
+const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT = {
+  provider: {
+    opencode: {
+      name: 'OpenCode',
+      models: {
+        'big-pickle': {
+          name: 'big-pickle',
+        },
+        'mimo-v2.5-free': {
+          name: 'mimo-v2.5-free',
+        },
+      },
+    },
+    my_local_lmstudio: {
+      name: 'my local lmstudio',
+      npm: '@ai-sdk/openai-compatible',
+      options: {
+        baseURL: 'http://host.docker.internal:25555/v1',
+        apiKey: 'nopassword',
+      },
+      models: {
+        'gemma-4-e4b-uncensored-hauhaucs-aggressive': {
+          name: 'gemma-4-e4b-uncensored-hauhaucs-aggressive',
+        },
+        'qwen3.5-9b-uncensored-hauhaucs-aggressive': {
+          name: 'qwen3.5-9b-uncensored-hauhaucs-aggressive',
+        },
+      },
+    },
+  },
+};
+
+export const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON = JSON.stringify(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT, null, 2);

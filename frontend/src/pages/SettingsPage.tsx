@@ -1,209 +1,39 @@
 import React from 'react';
-import { useConfigStore, type GlobalConfig } from '../store';
+import { useConfigStore } from '../store';
 import { SUPPORTED_LOCALES, type LocaleCode, useI18n } from '../text/i18n';
 import { api } from '../api/client';
-import type { SelectorDiscoveryAoModelsResponse } from '@comiccrawler/shared';
-
-const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT = {
-  provider: {
-    opencode: {
-      name: 'OpenCode',
-      models: {
-        'big-pickle': {
-          name: 'big-pickle',
-        },
-        'mimo-v2.5-free': {
-          name: 'mimo-v2.5-free',
-        },
-      },
-    },
-    my_local_lmstudio: {
-      name: 'my local lmstudio',
-      npm: '@ai-sdk/openai-compatible',
-      options: {
-        baseURL: 'http://host.docker.internal:25555/v1',
-        apiKey: 'nopassword',
-      },
-      models: {
-        'gemma-4-e4b-uncensored-hauhaucs-aggressive': {
-          name: 'gemma-4-e4b-uncensored-hauhaucs-aggressive',
-        },
-        'qwen3.5-9b-uncensored-hauhaucs-aggressive': {
-          name: 'qwen3.5-9b-uncensored-hauhaucs-aggressive',
-        },
-      },
-    },
-  },
-};
-const DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON = JSON.stringify(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_DOCUMENT, null, 2);
+import { useConfigForm } from './settings/useConfigForm';
+import { useSelectorDiscoverySettings } from './settings/useSelectorDiscoverySettings';
+import { DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON } from './settings/provider-template';
 
 export const SettingsPage: React.FC = () => {
   const { config, loading, error, fetchConfig, updateConfig, resetConfig, clearError } = useConfigStore();
-  const [formDraft, setForm] = React.useState<Partial<GlobalConfig> | null>(null);
-  const [selectorDiscoveryConfig, setSelectorDiscoveryConfig] = React.useState<any | null>(null);
-  const [selectorDiscoveryBundleStatus, setSelectorDiscoveryBundleStatus] = React.useState<any | null>(null);
-  const [selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations] = React.useState<any[]>([]);
-  const [selectorDiscoveryAoModels, setSelectorDiscoveryAoModels] = React.useState<SelectorDiscoveryAoModelsResponse | null>(null);
-  const [selectorDiscoveryAoModelsLoading, setSelectorDiscoveryAoModelsLoading] = React.useState(false);
-  const [aoBaseUrl, setAoBaseUrl] = React.useState('');
-  const [model, setModel] = React.useState('');
-  const [providerJson, setProviderJson] = React.useState(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-  const [selectorDiscoveryMessage, setSelectorDiscoveryMessage] = React.useState<string | null>(null);
-  const [selectorDiscoveryPreflight, setSelectorDiscoveryPreflight] = React.useState<any | null>(null);
+  const { form, handleChange, handleNestedChange, handleSave, handleReset } = useConfigForm({ config, updateConfig, resetConfig });
+  const {
+    selectorDiscoveryConfig,
+    selectorDiscoveryBundleStatus,
+    selectorDiscoveryBundleEvaluations,
+    selectorDiscoveryAoModels,
+    selectorDiscoveryAoModelsLoading,
+    aoBaseUrl,
+    setAoBaseUrl,
+    model,
+    setModel,
+    providerJson,
+    setProviderJson,
+    selectorDiscoveryMessage,
+    selectorDiscoveryPreflight,
+    refreshSelectorDiscoveryBundleStatus,
+    refreshSelectorDiscoveryBundleEvaluations,
+    handleSelectorDiscoverySave,
+    handleLoadDefaultSelectorDiscoveryProvider,
+    handleSelectorDiscoveryClear,
+    handleSelectorDiscoveryTest,
+    handleRefreshSelectorDiscoveryAoModels,
+  } = useSelectorDiscoverySettings({ fetchConfig });
   const [cdpTestMessage, setCdpTestMessage] = React.useState<string | null>(null);
   const [downloadDirectoryMessage, setDownloadDirectoryMessage] = React.useState<string | null>(null);
   const { text } = useI18n();
-  const form = formDraft ?? config ?? {};
-
-  const refreshSelectorDiscoveryBundleStatus = async () => {
-    try {
-      const response = await api.getSelectorDiscoveryBundleStatus();
-      setSelectorDiscoveryBundleStatus(response.data);
-    } catch (err: any) {
-      setSelectorDiscoveryBundleStatus({
-        verified: false,
-        error: err.response?.data?.error ?? err.message,
-      });
-    }
-  };
-
-  const refreshSelectorDiscoveryBundleEvaluations = async () => {
-    try {
-      const response = await api.getSelectorDiscoveryBundleEvaluations();
-      setSelectorDiscoveryBundleEvaluations(response.data.evaluations ?? []);
-    } catch {
-      setSelectorDiscoveryBundleEvaluations([]);
-    }
-  };
-
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch populating several states; move to route loader or data-fetching hook */
-  React.useEffect(() => {
-    fetchConfig();
-    api.getSelectorDiscoveryConfig().then((response) => {
-      setSelectorDiscoveryConfig(response.data);
-      setAoBaseUrl(response.data.aoBaseUrl ?? '');
-      setModel(response.data.model ?? '');
-      if (response.data.configured) {
-        setProviderJson('');
-      } else {
-        setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-      }
-    }).catch(() => undefined);
-    refreshSelectorDiscoveryBundleStatus();
-    refreshSelectorDiscoveryBundleEvaluations();
-  }, [fetchConfig]);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  const handleChange = (section: string, key: string, value: any) => {
-    setForm((previousDraft) => {
-      const previous = previousDraft ?? config ?? {};
-      return {
-      ...previous,
-      [section]: {
-        ...(previous as any)[section],
-        [key]: value,
-      },
-    };
-    });
-  };
-
-  const handleNestedChange = (section: string, nested: string, key: string, value: any) => {
-    setForm((previousDraft) => {
-      const previous = previousDraft ?? config ?? {};
-      const sectionValue = (previous as any)[section] ?? {};
-      return {
-        ...previous,
-        [section]: {
-          ...sectionValue,
-          [nested]: {
-            ...(sectionValue as any)[nested],
-            [key]: value,
-          },
-        },
-      };
-    });
-  };
-
-  const handleSave = async () => {
-    await updateConfig(form);
-    setForm(null);
-  };
-
-  const handleReset = async () => {
-    await resetConfig();
-    setForm(null);
-  };
-
-  const handleSelectorDiscoverySave = async () => {
-    setSelectorDiscoveryMessage(null);
-    setSelectorDiscoveryPreflight(null);
-    try {
-      const trimmedProviderJson = providerJson.trim();
-      const response = await api.updateSelectorDiscoveryConfig({
-        aoBaseUrl,
-        model,
-        ...(trimmedProviderJson ? { providerDocument: JSON.parse(trimmedProviderJson) } : {}),
-      });
-      setSelectorDiscoveryConfig(response.data);
-      setSelectorDiscoveryMessage('Selector discovery settings saved.');
-      setProviderJson('');
-    } catch (err: any) {
-      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
-    }
-  };
-
-  const handleLoadDefaultSelectorDiscoveryProvider = () => {
-    setModel('');
-    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-    setSelectorDiscoveryMessage('Loaded the OpenCode provider template. Pick a model returned by AO, then save selector-discovery.');
-  };
-
-  const handleSelectorDiscoveryClear = async () => {
-    const response = await api.clearSelectorDiscoveryProvider();
-    setSelectorDiscoveryConfig(response.data);
-    setModel('');
-    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-    setSelectorDiscoveryMessage('Selector discovery provider cleared.');
-  };
-
-  const handleSelectorDiscoveryTest = async () => {
-    setSelectorDiscoveryMessage(null);
-    setSelectorDiscoveryPreflight(null);
-    try {
-      const response = await api.testSelectorDiscoveryConfig();
-      setSelectorDiscoveryPreflight(response.data);
-      setSelectorDiscoveryAoModels({
-        conversationId: response.data.conversationId,
-        bundleHash: response.data.bundleHash,
-        providers: response.data.providers ?? [],
-        models: response.data.models ?? [],
-      });
-      setSelectorDiscoveryMessage(`AO smoke test passed. Bundle ${response.data.bundleHash?.slice(0, 12) ?? '-'} / ${response.data.model}`);
-    } catch (err: any) {
-      setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
-      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
-    }
-  };
-
-  const handleRefreshSelectorDiscoveryAoModels = async () => {
-    setSelectorDiscoveryMessage(null);
-    setSelectorDiscoveryPreflight(null);
-    setSelectorDiscoveryAoModelsLoading(true);
-    try {
-      const response = await api.getSelectorDiscoveryAoModels();
-      setSelectorDiscoveryAoModels(response.data);
-      const containsSelectedModel = response.data.models.some((item) => item.id === model);
-      setSelectorDiscoveryMessage(
-        `AO returned ${response.data.providers.length} providers and ${response.data.models.length} models.`
-        + (containsSelectedModel ? '' : ` Selected model "${model}" was not found in AO provider list.`)
-      );
-    } catch (err: any) {
-      setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
-      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
-    } finally {
-      setSelectorDiscoveryAoModelsLoading(false);
-    }
-  };
 
   const handleCdpTest = async () => {
     setCdpTestMessage(null);
