@@ -1,6 +1,5 @@
-import type { BrowserConfig, ChapterListSummary, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult, TaskPreviewFile } from '@comiccrawler/shared';
-import { promises as fs } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import type { BrowserConfig, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult } from '@comiccrawler/shared';
+import { join } from 'node:path';
 import type { AdapterBase } from '../adapter/base';
 import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import type { EventBus } from '../events/bus';
@@ -15,6 +14,16 @@ import { logger } from '../utils/logger';
 import { PlaywrightHtmlRenderer, type HtmlRenderer } from './html-renderer';
 import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
 import { createEmptyCheckpoint, type ChapterCheckpoint, type CrawlCheckpoint } from '../task/checkpoint';
+import {
+  createChapterListSummary,
+  createDirectChapterMetadata,
+  createPreviewFile,
+  ensureChapterCheckpoint,
+  getOutputRoot,
+  isHeadlessFallbackHttpStatus,
+  isHumanVerificationRequiredError,
+  recountCheckpoint,
+} from './crawl-helpers';
 
 export interface CrawlerEngineOptions {
   downloadDir: string;
@@ -99,10 +108,10 @@ export class CrawlerEngine {
       isDirectChapterTask ? 'building direct chapter task' : 'fetching manga metadata and chapter list'
     );
     const metadata = options?.chapterUrls && options.chapterUrls.length > 0
-      ? checkpoint.metadata ?? this.createDirectChapterMetadata(url, options.chapterUrls)
+      ? checkpoint.metadata ?? createDirectChapterMetadata(url, options.chapterUrls)
       : checkpoint.metadata ?? await this.composeMetadata(adapter, url);
-    const outputRoot = this.getOutputRoot(url, metadata.title);
-    const chapterListSummary = this.createChapterListSummary(metadata);
+    const outputRoot = getOutputRoot(this.downloadDir, url, metadata.title);
+    const chapterListSummary = createChapterListSummary(metadata);
     checkpoint.metadata = metadata;
     checkpoint.outputPath = outputRoot;
     checkpoint.resumable = true;
@@ -144,12 +153,12 @@ export class CrawlerEngine {
     }
 
     const preparedChapters: PreparedChapterDownload[] = [];
-    let totalImages = this.recountCheckpoint(checkpoint, chaptersToDownload).totalImages;
-    let downloadedImages = this.recountCheckpoint(checkpoint, chaptersToDownload).completedImages;
-    let failedImages = this.recountCheckpoint(checkpoint, chaptersToDownload).failedImages;
+    let totalImages = recountCheckpoint(checkpoint, chaptersToDownload).totalImages;
+    let downloadedImages = recountCheckpoint(checkpoint, chaptersToDownload).completedImages;
+    let failedImages = recountCheckpoint(checkpoint, chaptersToDownload).failedImages;
 
     for (const chapter of chaptersToDownload) {
-      const chapterCheckpoint = this.ensureChapterCheckpoint(checkpoint, chapter);
+      const chapterCheckpoint = ensureChapterCheckpoint(checkpoint, chapter);
       if (chapterCheckpoint.completed) {
         preparedChapters.push({ chapter, images: chapterCheckpoint.images ?? [], checkpoint: chapterCheckpoint });
         continue;
@@ -188,7 +197,7 @@ export class CrawlerEngine {
         chapterCheckpoint.lastError = undefined;
         checkpoint.currentChapterId = chapter.id;
         checkpoint.currentChapterTitle = chapter.title;
-        const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
+        const counts = recountCheckpoint(checkpoint, chaptersToDownload);
         totalImages = counts.totalImages;
         downloadedImages = counts.completedImages;
         failedImages = counts.failedImages;
@@ -219,7 +228,7 @@ export class CrawlerEngine {
         }
         chapterCheckpoint.lastError = errorToLogObject(error).message as string;
         checkpoint.lastError = chapterCheckpoint.lastError;
-        const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
+        const counts = recountCheckpoint(checkpoint, chaptersToDownload);
         totalImages = counts.totalImages;
         downloadedImages = counts.completedImages;
         failedImages = counts.failedImages + 1;
@@ -275,7 +284,7 @@ export class CrawlerEngine {
       const remainingImages = images.filter((image) => !completedSet.has(image.index));
       if (remainingImages.length === 0) {
         chapterCheckpoint.completed = images.length > 0;
-        const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
+        const counts = recountCheckpoint(checkpoint, chaptersToDownload);
         totalImages = counts.totalImages;
         downloadedImages = counts.completedImages;
         failedImages = counts.failedImages;
@@ -328,7 +337,7 @@ export class CrawlerEngine {
             chapterCheckpoint.completed = images.length > 0 && chapterCheckpoint.completedImageIndexes.length >= images.length;
             checkpoint.currentChapterId = chapter.id;
             checkpoint.currentChapterTitle = chapter.title;
-            const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
+            const counts = recountCheckpoint(checkpoint, chaptersToDownload);
             totalImages = counts.totalImages;
             downloadedImages = counts.completedImages;
             failedImages = counts.failedImages;
@@ -349,7 +358,7 @@ export class CrawlerEngine {
               },
             });
             if (result) {
-              const previewEventPromise = this.createPreviewFile(taskId, outputRoot, result.path).then((previewFile) => {
+              const previewEventPromise = createPreviewFile(taskId, outputRoot, result.path).then((previewFile) => {
                 this.eventBus?.emit('image:downloaded', {
                   taskId,
                   imageUrl: progressImage.url,
@@ -370,7 +379,7 @@ export class CrawlerEngine {
 
         await this.imageDownloader.downloadBatch(remainingImages, downloadOptions);
         await Promise.allSettled(previewEventPromises);
-        const counts = this.recountCheckpoint(checkpoint, chaptersToDownload);
+        const counts = recountCheckpoint(checkpoint, chaptersToDownload);
         totalImages = counts.totalImages;
         downloadedImages = counts.completedImages;
         failedImages = counts.failedImages;
@@ -458,134 +467,6 @@ export class CrawlerEngine {
       totalImages,
       outputPath: outputRoot,
     };
-  }
-
-  private createChapterListSummary(metadata: ComicMetadata): ChapterListSummary {
-    return {
-      totalChapters: metadata.chapters.length,
-      chapters: metadata.chapters.slice(0, 50).map((chapter) => ({
-        id: chapter.id,
-        title: chapter.title,
-        url: chapter.url,
-      })),
-    };
-  }
-
-  private async createPreviewFile(taskId: string, rootDir: string, filePath: string): Promise<TaskPreviewFile | undefined> {
-    try {
-      const stats = await fs.stat(filePath);
-      if (!stats.isFile()) {
-        return undefined;
-      }
-      const relativePath = relative(rootDir, filePath);
-      const isImage = this.isPreviewImage(filePath);
-      return {
-        name: filePath.split(/[\\/]/).pop() ?? relativePath,
-        relativePath,
-        size: stats.size,
-        modifiedAt: stats.mtime.toISOString(),
-        isImage,
-        url: isImage ? `/api/tasks/${encodeURIComponent(taskId)}/preview-file?path=${encodeURIComponent(relativePath)}` : undefined,
-      };
-    } catch {
-      return undefined;
-    }
-  }
-
-  private isPreviewImage(path: string): boolean {
-    return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif'].includes(extname(path).toLowerCase());
-  }
-
-  private ensureChapterCheckpoint(checkpoint: CrawlCheckpoint, chapter: ComicMetadata['chapters'][number]): ChapterCheckpoint {
-    const existing = checkpoint.chapters[chapter.id];
-    if (existing) {
-      return existing;
-    }
-
-    const created: ChapterCheckpoint = {
-      id: chapter.id,
-      title: chapter.title,
-      url: chapter.url,
-      completedImageIndexes: [],
-      failedImageIndexes: [],
-      completed: false,
-    };
-    checkpoint.chapters[chapter.id] = created;
-    return created;
-  }
-
-  private recountCheckpoint(
-    checkpoint: CrawlCheckpoint,
-    chapters: Array<ComicMetadata['chapters'][number]>
-  ): { totalImages: number; completedImages: number; failedImages: number } {
-    let totalImages = 0;
-    let completedImages = 0;
-    let failedImages = 0;
-
-    for (const chapter of chapters) {
-      const chapterCheckpoint = checkpoint.chapters[chapter.id];
-      if (!chapterCheckpoint) {
-        continue;
-      }
-
-      totalImages += chapterCheckpoint.images?.length ?? 0;
-      completedImages += new Set(chapterCheckpoint.completedImageIndexes).size;
-      const completedSet = new Set(chapterCheckpoint.completedImageIndexes);
-      failedImages += new Set(chapterCheckpoint.failedImageIndexes.filter((index) => !completedSet.has(index))).size;
-    }
-
-    return { totalImages, completedImages, failedImages };
-  }
-
-  private getOutputRoot(url: string, title: string): string {
-    const hostname = this.safePathSegment(new URL(url).hostname.replace(/^www\./i, ''));
-    return join(this.downloadDir, hostname, this.safePathSegment(title));
-  }
-
-  private createDirectChapterMetadata(url: string, chapterUrls: string[]): ComicMetadata {
-    const firstUrl = chapterUrls[0] ?? url;
-    const title = this.deriveComicTitle(url);
-
-    return {
-      id: this.safeSegment(title || 'direct-chapters'),
-      title: title || 'Direct Chapters',
-      status: 'unknown',
-      chapters: chapterUrls.map((chapterUrl, index) => ({
-        id: this.safeSegment(new URL(chapterUrl).pathname.split('/').filter(Boolean).at(-1) ?? `chapter-${index + 1}`),
-        title: this.deriveChapterTitle(chapterUrl, index),
-        url: chapterUrl,
-      })),
-      updatedAt: new Date(),
-    };
-  }
-
-  private deriveComicTitle(url: string): string {
-    try {
-      const segments = new URL(url).pathname.split('/').filter(Boolean);
-      const mangaIndex = segments.indexOf('manga');
-      const slug = mangaIndex >= 0 ? segments[mangaIndex + 1] : segments.at(-2) ?? segments.at(-1);
-      return slug ?? 'Direct Chapters';
-    } catch {
-      return 'Direct Chapters';
-    }
-  }
-
-  private deriveChapterTitle(chapterUrl: string, index: number): string {
-    try {
-      const segment = new URL(chapterUrl).pathname.split('/').filter(Boolean).at(-1);
-      return segment ?? `chapter-${index + 1}`;
-    } catch {
-      return `chapter-${index + 1}`;
-    }
-  }
-
-  private safeSegment(value: string): string {
-    return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'chapter';
-  }
-
-  private safePathSegment(value: string): string {
-    // eslint-disable-next-line no-control-regex -- intentionally strips control chars from path segments
-    return value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-').replace(/\s+/g, ' ').replace(/^-+|-+$/g, '') || 'unknown';
   }
 
   async search(adapter: AdapterBase, query: string, options?: SearchOptions): Promise<SearchResult[]> {
@@ -723,27 +604,4 @@ export class CrawlerEngine {
 
     return false;
   }
-}
-
-function isHeadlessFallbackHttpStatus(statusCode: unknown): boolean {
-  return statusCode === 401 || statusCode === 403 || statusCode === 429 || statusCode === 503;
-}
-
-function isHumanVerificationRequiredError(error: unknown): boolean {
-  if (error instanceof ComicError) {
-    return hasHumanVerificationContext(error.context);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return /anti-bot|human verification|challenge|cloudflare|sorry, you have been blocked|unable to access/i.test(message);
-}
-
-function hasHumanVerificationContext(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const context = value as Record<string, unknown>;
-  if (
-    context.antiBotChallenge === true ||
-    context.challengeType === 'access_blocked' ||
-    context.humanVerificationProfileUnavailable === true
-  ) return true;
-  return Object.values(context).some((entry) => hasHumanVerificationContext(entry));
 }
