@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { JsonFileStore } from '../../../src/storage/json-store';
 
-const TEST_DIR = join(__dirname, '__tmp__');
+const TEST_DIR = join(__dirname, '__tmp__', 'json-store');
 
 describe('JsonFileStore', () => {
   let store: JsonFileStore;

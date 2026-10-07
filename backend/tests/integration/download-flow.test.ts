@@ -14,7 +14,10 @@ import { ProgressTracker } from '../../src/task/progress';
 import { AdapterBase } from '../../src/adapter/base';
 import type { ComicMetadata } from '../../../shared/types';
 
-const TEST_DIR = join(__dirname, '__tmp__');
+// NOTE: keep this scoped to our own subdirectory. afterEach removes it,
+// and sibling integration tests run in parallel workers under the same
+// parent __tmp__ dir (wiping it once flaked rest-only-flow with ENOENT).
+const TEST_DIR = join(__dirname, '__tmp__', 'download-flow');
 
 class MockAdapter extends AdapterBase {
   readonly id = 'mock';

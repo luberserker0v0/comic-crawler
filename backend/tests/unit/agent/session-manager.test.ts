@@ -3,7 +3,7 @@ import { SessionManager } from '../../../src/agent/session-manager';
 import { join } from 'node:path';
 import { promises as fs } from 'node:fs';
 
-const TEST_WORKSPACE = join(__dirname, '__tmp__');
+const TEST_WORKSPACE = join(__dirname, '__tmp__', 'session-manager');
 
 describe('SessionManager', () => {
   let manager: SessionManager;
