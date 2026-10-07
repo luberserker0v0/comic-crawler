@@ -1,3 +1,5 @@
+name: comiccrawler
+
 services:
   app:
     image: luberserker/comiccrawler:latest
