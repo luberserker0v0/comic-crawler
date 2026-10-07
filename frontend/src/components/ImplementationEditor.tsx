@@ -8,7 +8,7 @@ const MonacoDiffEditor = React.lazy(async () => {
   return { default: module.DiffEditor };
 });
 
-type EditorLanguage = 'typescript' | 'json' | 'markdown';
+export type EditorLanguage = 'typescript' | 'json' | 'markdown';
 
 interface ImplementationEditorProps {
   content: string;
