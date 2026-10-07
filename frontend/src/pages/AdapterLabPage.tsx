@@ -1,165 +1,25 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import type {
   AdapterCapabilityDetailResponse,
-  AdapterDraftDetailResponse,
-  AdapterDraftSummary,
   AdapterFunctionCapability,
   AdapterImplementationResponse,
-  AdapterImplementationSymbol,
   AdapterFunctionTestResponse,
   AdapterResolveResponse,
   ChallengeHandoffJobSummary,
 } from '@comiccrawler/shared';
 import { api, getApiErrorMessage } from '../api/client';
 import { ImplementationDiffEditor, ImplementationEditor } from '../components/ImplementationEditor';
-
-const capabilityLabels: Record<AdapterFunctionCapability, string> = {
-  common: 'Common',
-  verification: 'Verification handoff',
-  metadata: 'Manga metadata',
-  chapterImages: 'Chapter images',
-};
-
-const capabilityOrder: AdapterFunctionCapability[] = ['common', 'verification', 'metadata', 'chapterImages'];
-
-type AdapterChoice = NonNullable<AdapterResolveResponse['adapter']>;
-type AdapterLabUrlKind = 'manga' | 'chapter' | 'unknown';
-
-function getUrlKind(value: string): AdapterLabUrlKind {
-  try {
-    const pathname = new URL(value).pathname;
-    if (/\/mangaread\//i.test(pathname)) return 'chapter';
-    if (/\/manga\//i.test(pathname)) return 'manga';
-  } catch {
-    // Treat unparseable input as unknown until resolve validates it.
-  }
-  return 'unknown';
-}
-
-function isCapabilityAllowedForUrlKind(capability: AdapterFunctionCapability, kind: AdapterLabUrlKind): boolean {
-  if (capability === 'common' || capability === 'verification') return true;
-  if (capability === 'metadata') return kind === 'manga';
-  if (capability === 'chapterImages') return kind === 'chapter';
-  return false;
-}
-
-function urlKindDescription(kind: AdapterLabUrlKind): string {
-  if (kind === 'manga') return 'This URL looks like a manga catalog page. Metadata functions are available; chapter image functions require a chapter URL.';
-  if (kind === 'chapter') return 'This URL looks like a chapter page. Chapter image functions are available; metadata functions require a manga catalog URL.';
-  return 'Enter a manga catalog URL or chapter URL to unlock matching adapter functions.';
-}
-
-function formatLineRange(symbol: AdapterImplementationSymbol): string {
-  if (!symbol.startLine) return '';
-  if (!symbol.endLine || symbol.endLine === symbol.startLine) return `L${symbol.startLine}`;
-  return `L${symbol.startLine}-L${symbol.endLine}`;
-}
-
-interface ChapterSummaryItem {
-  id?: string;
-  title?: string;
-  url?: string;
-  number?: number;
-}
-
-function isChapterSummaryItem(value: unknown): value is ChapterSummaryItem {
-  return typeof value === 'object' && value !== null && (
-    'title' in value || 'url' in value || 'id' in value || 'number' in value
-  );
-}
-
-function getChapterSummaryItems(summary: Record<string, unknown> | undefined): ChapterSummaryItem[] {
-  if (!summary || !Array.isArray(summary.chapters)) return [];
-  return summary.chapters.filter(isChapterSummaryItem);
-}
-
-function getImageUrls(summary: Record<string, unknown> | undefined): string[] {
-  if (!summary || !Array.isArray(summary.imageUrls)) return [];
-  return summary.imageUrls.filter((value): value is string => typeof value === 'string');
-}
-
-function renderChapterRows(chapters: ChapterSummaryItem[]) {
-  return chapters.map((chapter, index) => (
-    <li key={`${chapter.id ?? chapter.url ?? index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-medium text-gray-900">
-          {chapter.title || chapter.id || `Chapter ${index + 1}`}
-        </span>
-        {typeof chapter.number === 'number' && (
-          <span className="text-[11px] uppercase tracking-wide text-gray-500">#{chapter.number}</span>
-        )}
-      </div>
-      {chapter.url && (
-        <div className="mt-1 break-all text-xs text-gray-600">{chapter.url}</div>
-      )}
-    </li>
-  ));
-}
-
-const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, unknown> }> = ({ summary }) => {
-  const chapters = getChapterSummaryItems(summary);
-  const imageUrls = getImageUrls(summary);
-  if (chapters.length > 0) {
-    const chapterCount = typeof summary.chapterCount === 'number' ? summary.chapterCount : chapters.length;
-    return (
-      <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-sm font-semibold text-gray-900">Extracted chapters</div>
-            <div className="text-gray-600">{chapterCount} chapters returned by the adapter function.</div>
-          </div>
-        </div>
-        <ol className="mt-3 space-y-2">{renderChapterRows(chapters.slice(0, 5))}</ol>
-        {chapters.length > 5 && (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-blue-700">
-              Show all {chapters.length} chapters
-            </summary>
-            <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
-              {renderChapterRows(chapters)}
-            </ol>
-          </details>
-        )}
-        <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
-          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
-      </div>
-    );
-  }
-
-  if (imageUrls.length > 0) {
-    const imageUrlCount = typeof summary.imageUrlCount === 'number' ? summary.imageUrlCount : imageUrls.length;
-    return (
-      <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
-        <div className="text-sm font-semibold text-gray-900">Extracted image URLs</div>
-        <div className="text-gray-600">{imageUrlCount} image URLs returned by the adapter function.</div>
-        <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
-          {imageUrls.map((url, index) => (
-            <li key={`${url}-${index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">#{index + 1}</div>
-              <div className="mt-1 break-all text-xs text-gray-700">{url}</div>
-            </li>
-          ))}
-        </ol>
-        <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
-          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
-      </div>
-    );
-  }
-
-  return (
-    <pre className="mt-3 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-white p-3 text-xs text-gray-800">
-      {JSON.stringify(summary, null, 2)}
-    </pre>
-  );
-};
+import {
+  AdapterFunctionResultSummary,
+  capabilityLabels,
+  capabilityOrder,
+  formatLineRange,
+  getUrlKind,
+  isCapabilityAllowedForUrlKind,
+  urlKindDescription,
+  type AdapterChoice,
+} from './lab/widgets';
+import { useDraftFlow } from './lab/useDraftFlow';
 
 export const AdapterLabPage: React.FC = () => {
   const [url, setUrl] = useState('');
@@ -170,12 +30,7 @@ export const AdapterLabPage: React.FC = () => {
   const [selectedCapability, setSelectedCapability] = useState<AdapterFunctionCapability>('common');
   const [selectedFunctionId, setSelectedFunctionId] = useState('');
   const [implementation, setImplementation] = useState<AdapterImplementationResponse | null>(null);
-  const [drafts, setDrafts] = useState<AdapterDraftSummary[]>([]);
-  const [draft, setDraft] = useState<AdapterDraftDetailResponse | null>(null);
-  const [draftContent, setDraftContent] = useState('');
-  const [savedDraftContent, setSavedDraftContent] = useState('');
   const [testResult, setTestResult] = useState<AdapterFunctionTestResponse | null>(null);
-  const [draftViewMode, setDraftViewMode] = useState<'edit' | 'diff'>('edit');
   const [challengeJob, setChallengeJob] = useState<ChallengeHandoffJobSummary | null>(null);
   const [verifiedChallengeId, setVerifiedChallengeId] = useState<string | null>(null);
   const [browserExecutablePath, setBrowserExecutablePath] = useState('');
@@ -183,6 +38,27 @@ export const AdapterLabPage: React.FC = () => {
   const [loading, setLoading] = useState<string | null>(null);
   const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const {
+    setDrafts,
+    draft,
+    setDraft,
+    draftContent,
+    setDraftContent,
+    setSavedDraftContent,
+    draftViewMode,
+    setDraftViewMode,
+    draftsForSelectedAdapter,
+    isDraftMode,
+    hasUnsavedDraftChanges,
+    canExecuteDraft,
+    clearDraftState,
+    createDraft,
+    openDraft,
+    saveDraft,
+    reloadSavedDraft,
+    resetDraft,
+    discardDraft,
+  } = useDraftFlow({ selectedAdapterId, setLoading, setError });
   const urlKind = useMemo(() => getUrlKind(url), [url]);
   const selectedCapabilityAllowed = isCapabilityAllowedForUrlKind(selectedCapability, urlKind);
 
@@ -202,14 +78,8 @@ export const AdapterLabPage: React.FC = () => {
     return implementation?.outline.find((item) => item.id === selectedFunctionId);
   }, [implementation, selectedFunctionId]);
 
-  const isDraftMode = Boolean(draft);
-  const hasUnsavedDraftChanges = Boolean(draft && draftContent !== savedDraftContent);
-  const canExecuteDraft = draft?.draft.sourceKind === 'dynamic-manifest';
   const editorContent = draft ? draftContent : implementation?.content ?? '';
   const editorLanguage = draft?.language ?? implementation?.language ?? 'markdown';
-  const draftsForSelectedAdapter = useMemo(() => (
-    drafts.filter((item) => item.baseAdapterId === selectedAdapterId)
-  ), [drafts, selectedAdapterId]);
 
   const challengeDiscoveryId = testResult?.challengeDiscoveryId;
   const browserAlreadyOpen = challengeJob?.status === 'external_browser_open'
@@ -298,98 +168,6 @@ export const AdapterLabPage: React.FC = () => {
       const firstFunction = response.data.functions.find((fn) => fn.capability === firstCapability && fn.implemented);
       setSelectedCapability(firstCapability);
       setSelectedFunctionId(firstFunction?.id ?? '');
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  function clearDraftState() {
-    setDraft(null);
-    setDraftContent('');
-    setSavedDraftContent('');
-    setDraftViewMode('edit');
-  }
-
-  async function createDraft() {
-    if (!selectedAdapterId) return;
-    setError(null);
-    setLoading('draft');
-    try {
-      const response = await api.createAdapterDraft(selectedAdapterId);
-      setDraft(response.data);
-      setDraftContent(response.data.content);
-      setSavedDraftContent(response.data.content);
-      setDrafts((current) => [response.data.draft, ...current.filter((item) => item.draftId !== response.data.draft.draftId)]);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function openDraft(draftId: string) {
-    setError(null);
-    setLoading('draft-open');
-    try {
-      const response = await api.getAdapterDraft(draftId);
-      setDraft(response.data);
-      setDraftContent(response.data.content);
-      setSavedDraftContent(response.data.content);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function saveDraft() {
-    if (!draft) return;
-    setError(null);
-    setLoading('draft-save');
-    try {
-      const response = await api.saveAdapterDraftContent(draft.draft.draftId, { content: draftContent });
-      setDraft(response.data);
-      setDraftContent(response.data.content);
-      setSavedDraftContent(response.data.content);
-      setDrafts((current) => [response.data.draft, ...current.filter((item) => item.draftId !== response.data.draft.draftId)]);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  function reloadSavedDraft() {
-    setDraftContent(savedDraftContent);
-  }
-
-  async function resetDraft() {
-    if (!draft) return;
-    setError(null);
-    setLoading('draft-reset');
-    try {
-      const response = await api.resetAdapterDraft(draft.draft.draftId);
-      setDraft(response.data);
-      setDraftContent(response.data.content);
-      setSavedDraftContent(response.data.content);
-      setDrafts((current) => [response.data.draft, ...current.filter((item) => item.draftId !== response.data.draft.draftId)]);
-    } catch (err) {
-      setError(getApiErrorMessage(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function discardDraft() {
-    if (!draft) return;
-    setError(null);
-    setLoading('draft-discard');
-    try {
-      await api.discardAdapterDraft(draft.draft.draftId);
-      setDrafts((current) => current.filter((item) => item.draftId !== draft.draft.draftId));
-      clearDraftState();
     } catch (err) {
       setError(getApiErrorMessage(err));
     } finally {
