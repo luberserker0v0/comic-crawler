@@ -15,9 +15,9 @@ export function SelectorDiscoverySection(props: {
   selectorDiscoveryAoModelsLoading: boolean;
   selectorDiscoveryMessage: string | null;
   selectorDiscoveryPreflight: any | null;
+  selectorDiscoverySaveState: { state: 'idle' } | { state: 'saving' } | { state: 'saved'; at: string } | { state: 'error'; message: string };
   refreshSelectorDiscoveryBundleStatus: () => void;
   refreshSelectorDiscoveryBundleEvaluations: () => void;
-  handleSelectorDiscoverySave: () => void;
   handleLoadDefaultSelectorDiscoveryProvider: () => void;
   handleSelectorDiscoveryClear: () => void;
   handleSelectorDiscoveryTest: () => void;
@@ -38,9 +38,9 @@ export function SelectorDiscoverySection(props: {
     selectorDiscoveryAoModelsLoading,
     selectorDiscoveryMessage,
     selectorDiscoveryPreflight,
+    selectorDiscoverySaveState,
     refreshSelectorDiscoveryBundleStatus,
     refreshSelectorDiscoveryBundleEvaluations,
-    handleSelectorDiscoverySave,
     handleLoadDefaultSelectorDiscoveryProvider,
     handleSelectorDiscoveryClear,
     handleSelectorDiscoveryTest,
@@ -61,7 +61,7 @@ export function SelectorDiscoverySection(props: {
       <div>
         <h2 className="text-lg font-semibold">Selector Discovery (AO)</h2>
         <p className="mt-1 text-sm text-slate-500">
-          AO URL, provider JSON, and model are required. Provider secrets are accepted here but are not returned by the API.
+          Settings save automatically once AO URL, model, and provider JSON are filled in. Provider secrets are accepted here but are not returned by the API. Refresh AO models only needs the AO URL, so you can discover models before everything is filled in.
         </p>
         <p className="mt-1 text-sm text-slate-500">
           {text.settings.selectorDiscoveryIndependentSave}
@@ -94,7 +94,8 @@ export function SelectorDiscoverySection(props: {
             <button
               type="button"
               onClick={handleRefreshSelectorDiscoveryAoModels}
-              disabled={!selectorDiscoveryConfig?.configured || selectorDiscoveryAoModelsLoading}
+              disabled={!aoBaseUrl.trim() || selectorDiscoveryAoModelsLoading}
+              title={aoBaseUrl.trim() ? 'List providers/models from the AO URL above (no save needed)' : 'Enter an AO URL first'}
               className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
             >
               {selectorDiscoveryAoModelsLoading ? 'Loading...' : 'Refresh AO models'}
@@ -366,14 +367,21 @@ export function SelectorDiscoverySection(props: {
           </ol>
         </div>
       )}
-      <div className="flex gap-3">
-        <button
-          onClick={handleSelectorDiscoverySave}
-          disabled={!aoBaseUrl.trim() || !model.trim() || (!selectorDiscoveryConfig?.configured && !providerJson.trim())}
-          className="inline-flex justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+      <div className="flex items-center gap-3">
+        <span
+          className={
+            selectorDiscoverySaveState.state === 'error'
+              ? 'text-sm text-red-700'
+              : selectorDiscoverySaveState.state === 'saved'
+                ? 'text-sm text-emerald-700'
+                : 'text-sm text-slate-500'
+          }
         >
-          {text.settings.saveAoSettings}
-        </button>
+          {selectorDiscoverySaveState.state === 'saving' && 'Saving…'}
+          {selectorDiscoverySaveState.state === 'saved' && `Saved ✓ ${selectorDiscoverySaveState.at}`}
+          {selectorDiscoverySaveState.state === 'error' && selectorDiscoverySaveState.message}
+          {selectorDiscoverySaveState.state === 'idle' && 'Changes save automatically once AO URL, model, and provider JSON are filled in.'}
+        </span>
         <button
           onClick={handleSelectorDiscoveryTest}
           disabled={!selectorDiscoveryConfig?.configured}

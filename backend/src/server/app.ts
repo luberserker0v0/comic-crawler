@@ -13,6 +13,7 @@ import type { AdapterDraftService } from '../adapter-drafts/service';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
 import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
+import type { BrowserProviderRegistry } from '../browser/provider-registry';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -23,6 +24,7 @@ import { setupChallengeDiscoveryRoutes } from './routes/challenge-discovery';
 import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupMaintenanceRoutes } from './routes/maintenance';
+import { setupBrowserProviderRoutes } from './routes/browser-providers';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { logger } from '../utils/logger';
@@ -42,6 +44,7 @@ export interface ServerOptions {
   adapterDraftService?: AdapterDraftService;
   fixtureCaptureService?: FixtureCaptureService;
   maintenanceService?: MaintenanceService;
+  browserProviderRegistry?: BrowserProviderRegistry;
   storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
@@ -82,7 +85,10 @@ export class ComicCrawlerServer {
     await this.app.listen({ port: this.options.port, host: this.options.host });
     this.httpServer = this.app.server;
 
-    setupWebSocket(this.httpServer, this.options.eventBus);
+    const address = this.httpServer.address();
+    const port = typeof address === 'object' && address ? address.port : this.options.port;
+    this.options.browserProviderRegistry?.setRelayBaseUrl(`http://127.0.0.1:${port}`);
+    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserProviderRegistry);
 
     logger.info({ host: this.options.host, port: this.options.port }, 'Server started');
   }
@@ -91,6 +97,7 @@ export class ComicCrawlerServer {
     await this.app.close();
     await this.options.taskManager.dispose();
     await this.options.crawlerEngine.dispose();
+    this.options.browserProviderRegistry?.dispose();
 
     await Promise.all(
       this.options.adapterRegistry.getAll().map(async (adapter) => {
@@ -117,8 +124,13 @@ export class ComicCrawlerServer {
       }
     );
     setupConfigRoutes(this.app, this.options.configManager);
+    if (this.options.browserProviderRegistry) {
+      setupBrowserProviderRoutes(this.app, this.options.browserProviderRegistry);
+    }
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
+      getBrowserConfig: async () => this.resolveBrowserConfig(),
+      getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
@@ -126,6 +138,8 @@ export class ComicCrawlerServer {
     if (this.options.adapterDraftService) {
       setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
         challengeDiscoveryService: this.options.challengeDiscoveryService,
+        getBrowserConfig: async () => this.resolveBrowserConfig(),
+        getNetworkConfig: async () => (await this.options.configManager.get()).network,
       });
     }
     if (this.options.selectorDiscoveryService && this.options.selectorDiscoverySettingsStore) {
@@ -137,6 +151,8 @@ export class ComicCrawlerServer {
         {
           challengeDiscoveryService: this.options.challengeDiscoveryService,
           adapterDraftService: this.options.adapterDraftService,
+          getBrowserConfig: async () => this.resolveBrowserConfig(),
+          getNetworkConfig: async () => (await this.options.configManager.get()).network,
         }
       );
     }
@@ -153,6 +169,11 @@ export class ComicCrawlerServer {
     if (this.options.maintenanceService) {
       setupMaintenanceRoutes(this.app, this.options.maintenanceService);
     }
+  }
+
+  private async resolveBrowserConfig() {
+    const browser = (await this.options.configManager.get()).browser;
+    return this.options.browserProviderRegistry?.resolveBrowserConfig(browser) ?? browser;
   }
 
   private setupStaticFiles(): void {

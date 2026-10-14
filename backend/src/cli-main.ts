@@ -93,9 +93,7 @@ async function main(): Promise<void> {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       },
     });

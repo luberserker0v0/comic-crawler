@@ -10,13 +10,11 @@ export interface SelectorDiscoveryEvalCase {
   live: boolean;
   description?: string;
   url: string;
-  oracleAdapterId?: string;
   defaultRuns: number;
   expectations?: {
     metadata?: boolean;
     chapters?: boolean;
     images?: boolean;
-    oracleComparison?: boolean;
   };
 }
 
@@ -54,7 +52,29 @@ export async function loadSelectorDiscoveryEvalCases(input: {
   includeDisabled?: boolean;
   includeLiveNegative?: boolean;
 } = {}): Promise<SelectorDiscoveryEvalCase[]> {
-  const root = input.bundleRoot ?? process.env.AO_BUNDLE_PATH ?? join(process.cwd(), 'agent/ao/selector-discovery');
+  const roots = input.bundleRoot ? [input.bundleRoot] : resolveSelectorDiscoveryBundleRootCandidates();
+  let lastError: unknown;
+  for (const root of roots) {
+    try {
+      return await loadSelectorDiscoveryEvalCasesFromRoot(root, input);
+    } catch (error) {
+      lastError = error;
+      if (input.bundleRoot) break;
+    }
+  }
+  const tried = roots.map((root) => `"${root}"`).join(' and ');
+  throw new Error(
+    `Selector-discovery AO bundle not found. Tried ${tried} (expected eval/cases under it). ` +
+      'Set AO_BUNDLE_PATH to the selector-discovery bundle directory (containing draft/, eval/, active.json), ' +
+      'or mount it into the container (for example, -v ./agent/ao/selector-discovery:/app/agent/ao/selector-discovery:ro). ' +
+      `Cause: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
+}
+
+async function loadSelectorDiscoveryEvalCasesFromRoot(
+  root: string,
+  input: { caseId?: string; includeDisabled?: boolean; includeLiveNegative?: boolean },
+): Promise<SelectorDiscoveryEvalCase[]> {
   const casesRoot = join(root, 'eval', 'cases');
   const entries = await fs.readdir(casesRoot, { withFileTypes: true });
   const cases = await Promise.all(entries
@@ -114,6 +134,17 @@ export function evaluateSelectorDiscoveryEvalPolicy(input: SelectorDiscoveryEval
 }
 
 
+function resolveSelectorDiscoveryBundleRoot(): string {
+  if (process.env.AO_BUNDLE_PATH?.trim()) return process.env.AO_BUNDLE_PATH.trim();
+  return join(process.cwd(), 'agent/ao/selector-discovery');
+}
+
+export function resolveSelectorDiscoveryBundleRootCandidates(): string[] {
+  const primary = resolveSelectorDiscoveryBundleRoot();
+  const fallback = join(process.cwd(), '../agent/ao/selector-discovery');
+  return primary === fallback ? [primary] : [primary, fallback];
+}
+
 function normalizeEvalCase(value: unknown, fallbackId: string): SelectorDiscoveryEvalCase {
   if (!value || typeof value !== 'object') {
     throw new Error(`Eval case "${fallbackId}" must be a JSON object.`);
@@ -136,7 +167,6 @@ function normalizeEvalCase(value: unknown, fallbackId: string): SelectorDiscover
     live,
     description: typeof record.description === 'string' ? record.description : undefined,
     url,
-    oracleAdapterId: typeof record.oracleAdapterId === 'string' ? record.oracleAdapterId : undefined,
     defaultRuns: typeof record.defaultRuns === 'number' && record.defaultRuns > 0 ? Math.floor(record.defaultRuns) : 1,
     expectations: record.expectations && typeof record.expectations === 'object'
       ? record.expectations as SelectorDiscoveryEvalCase['expectations']

@@ -7,6 +7,7 @@
   },
   "workspaces": [
     "backend",
+    "browser-provider-sdk",
     "frontend",
     "shared"
   ],
@@ -17,11 +18,12 @@
     "dev:shared": "npm run -w shared build -- --watch --preserveWatchOutput",
     "dev:backend": "npm run -w backend dev",
     "dev:frontend": "npm run -w frontend dev",
-    "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
+    "build": "npm run build:shared && npm run build:browser-provider-sdk && npm run build:backend && npm run build:frontend",
+    "build:browser-provider-sdk": "npm run -w browser-provider-sdk build",
     "build:shared": "npm run -w shared build",
     "build:backend": "npm run -w backend build",
     "build:frontend": "npm run -w frontend build",
-    "pretest": "npm run build:shared",
+    "pretest": "npm run build:shared && npm run build:browser-provider-sdk",
     "test": "npm run test:dev && npm run test:workspaces",
     "test:workspaces": "npm run test --workspaces --if-present",
     "test:dev": "node --test scripts/dev.test.mjs",
@@ -34,7 +36,7 @@
     "verify:local": "npm run verify:quick && npm run -w backend test:e2e -- --project=chromium",
     "verify:utf8": "node ./scripts/verify-utf8.mjs",
     "lint": "npm run lint --workspaces",
-    "typecheck": "npm run build:shared && npm run typecheck --workspaces"
+    "typecheck": "npm run build:shared && npm run build:browser-provider-sdk && npm run typecheck --workspaces"
   },
   "devDependencies": {
     "concurrently": "^8.0.0",

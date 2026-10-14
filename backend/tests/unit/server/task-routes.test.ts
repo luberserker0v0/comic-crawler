@@ -35,7 +35,7 @@ describe('Task routes persistence', () => {
       id: 'kuronavi',
       name: 'Kuronavi',
       domains: ['kuronavi.one'],
-      parseMode: 'static',
+      parseMode: 'playwright',
       capabilities: { verification: false, metadata: true, chapterImages: true },
       matchUrl: (url: string) => url.includes('kuronavi.one'),
       loadDocument: async () => ({}),

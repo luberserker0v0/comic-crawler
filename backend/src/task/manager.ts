@@ -450,8 +450,8 @@ export class TaskManager {
     }
 
     const shouldWait = error instanceof ComicError
-      ? hasWaitingVerificationContext(error.context) || /human verification|challenge|cloudflare|anti-bot|browser profile/i.test(message)
-      : /human verification|challenge|cloudflare|anti-bot|browser profile/i.test(message);
+      ? hasWaitingVerificationContext(error.context) || /human verification|challenge|cloudflare|anti-bot/i.test(message)
+      : /human verification|challenge|cloudflare|anti-bot/i.test(message);
     if (!shouldWait) {
       return false;
     }

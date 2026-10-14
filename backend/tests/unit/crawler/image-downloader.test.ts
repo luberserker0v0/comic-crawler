@@ -106,7 +106,7 @@ describe('ImageDownloader', () => {
       {
         outputDir: TEST_ROOT,
         verifiedBrowser: {
-          cdpUrl: 'http://127.0.0.1:9222',
+          context: {} as any,
           pageUrl: 'https://m.happymh.com/mangaread/demo/1',
         },
       }

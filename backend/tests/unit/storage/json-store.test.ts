@@ -59,13 +59,20 @@ describe('JsonFileStore', () => {
     expect(await store.exists('non-existent')).toBe(false);
   });
 
-  it('should handle special characters in keys', async () => {
-    const key = 'comic:1/2';
-    await store.write(key, { title: 'Test' });
-    await store.dispose();
+  it('should store hierarchical keys without rewriting them', async () => {
+    await store.write('comics/1', { title: 'Test' });
+    await expect(store.read('comics/1')).resolves.toEqual({ title: 'Test' });
+    await expect(store.list()).resolves.toContain('comics/1');
+  });
 
-    const result = await store.read(key);
-    expect(result).toEqual({ title: 'Test' });
+  it('should reject invalid key characters and traversal', async () => {
+    await expect(store.write('comic:1', { title: 'Test' })).rejects.toThrow(/invalid key/i);
+    await expect(store.write('../comic', { title: 'Test' })).rejects.toThrow(/invalid key/i);
+  });
+
+  it('should throw for persistently invalid JSON', async () => {
+    await fs.writeFile(join(TEST_DIR, 'broken.json'), '{not json', 'utf-8');
+    await expect(store.read('broken')).rejects.toThrow(/invalid JSON/i);
   });
 
   it('should flush automatically after interval', async () => {

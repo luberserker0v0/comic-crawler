@@ -1,5 +1,4 @@
 import { promises as fs } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { ComicCrawlerServer } from './server';
 import { AgentAdminService } from './agent/admin-service';
@@ -22,6 +21,7 @@ import { AdapterDraftService } from './adapter-drafts/service';
 import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import { MaintenanceService } from './maintenance/service';
 import { logger } from './utils/logger';
+import { BrowserProviderRegistry } from './browser/provider-registry';
 
 async function main(): Promise<void> {
   try {
@@ -29,8 +29,6 @@ async function main(): Promise<void> {
     const eventBus = new EventBus();
     const bootstrapRuntime = resolveRuntimeConfig();
     await ensureDataDirectoryLayout(bootstrapRuntime.dataLayout);
-    await importLegacyRuntimeState(bootstrapRuntime.dataPath);
-    timing.mark('legacy runtime import');
     const storage = new JsonFileStore({ basePath: bootstrapRuntime.dataPath });
     await storage.initialize();
     timing.mark('storage initialize');
@@ -42,17 +40,21 @@ async function main(): Promise<void> {
     timing.mark('config load');
 
     const adapterRegistry = new AdapterRegistry(eventBus);
+    const browserProviderRegistry = new BrowserProviderRegistry(storage);
+    await browserProviderRegistry.initialize();
+    timing.mark('browser provider registry initialize');
+    const getBrowserConfig = async () => browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser);
 
     await registerProjectAdapters(storage, (adapter) => adapterRegistry.register(adapter));
 
     const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
     const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-      getBrowserConfig: async () => (await configManager.get()).browser,
+      getBrowserConfig,
       getNetworkConfig: async () => (await configManager.get()).network,
     });
     const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
       workspaceRoot: runtime.agentWorkspacePath,
-      getBrowserConfig: async () => (await configManager.get()).browser,
+      getBrowserConfig,
       getNetworkConfig: async () => (await configManager.get()).network,
     });
     const adapterDraftService = new AdapterDraftService(runtime.dataLayout.userPath, adapterRegistry);
@@ -63,6 +65,7 @@ async function main(): Promise<void> {
       concurrency: config.download.concurrency,
       browser: config.browser,
       network: config.network,
+      resolveRemoteBrowser: async () => (await getBrowserConfig()).remote,
       eventBus,
     });
 
@@ -82,7 +85,10 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         if (isHumanVerificationRequiredError(error)) {
-          const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
+          const errorUrl = error instanceof ComicError && typeof error.context.url === 'string'
+            ? error.context.url
+            : undefined;
+          const verificationUrl = errorUrl ?? task.data.chapterUrls?.[0] ?? task.data.url;
           eventBus.emit('task:progress', {
             taskId: task.id,
             progress: {
@@ -124,8 +130,6 @@ async function main(): Promise<void> {
     timing.mark('dynamic adapter load');
     await challengeDiscoveryService.loadActiveStrategies();
     timing.mark('challenge strategy load');
-    await challengeDiscoveryService.loadVerifiedBrowserSessions();
-    timing.mark('verified browser session load');
     const maintenanceService = new MaintenanceService({
       storage,
       taskManager,
@@ -138,9 +142,7 @@ async function main(): Promise<void> {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       },
     });
@@ -159,6 +161,7 @@ async function main(): Promise<void> {
       adapterDraftService,
       fixtureCaptureService,
       maintenanceService,
+      browserProviderRegistry,
       storage,
       staticDir: runtime.staticDir,
     });
@@ -221,44 +224,6 @@ function createBootstrapTiming() {
 
 function writeBootstrapTiming(step: string, durationMs: number, totalMs: number): void {
   process.stderr.write(`[bootstrap] ${step} +${durationMs}ms total=${totalMs}ms\n`);
-}
-
-async function importLegacyRuntimeState(dataPath: string): Promise<void> {
-  const targetDir = resolve(dataPath);
-  const legacyDir = resolve(
-    basename(process.cwd()).toLowerCase() === 'backend'
-      ? join(process.cwd(), 'data')
-      : join(process.cwd(), 'backend', 'data')
-  );
-  if (legacyDir === targetDir) return;
-
-  const keys = [
-    'global',
-    'selector-discovery-settings',
-    'selector-discovery-provider',
-    'selector-discovery-active-adapters',
-    'challenge-discovery-active-strategies',
-  ];
-
-  await fs.mkdir(targetDir, { recursive: true });
-  for (const key of keys) {
-    const fileName = `${key}.json`;
-    const legacyFile = join(legacyDir, fileName);
-    const targetFile = join(targetDir, fileName);
-    try {
-      await fs.access(targetFile);
-      continue;
-    } catch {
-      // Target is missing; import from legacy location if it exists.
-    }
-
-    try {
-      await fs.copyFile(legacyFile, targetFile);
-      logger.info({ key, legacyDir, targetDir }, 'Imported legacy runtime state');
-    } catch {
-      // Legacy file does not exist or is unreadable; leave target absent.
-    }
-  }
 }
 
 function startMaintenanceScheduler(maintenanceService: MaintenanceService, configManager: ConfigManager): void {

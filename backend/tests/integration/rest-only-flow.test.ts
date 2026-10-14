@@ -19,7 +19,7 @@ class RestOnlyAdapter extends AdapterBase {
   readonly id = 'rest-only';
   readonly name = 'REST Only Adapter';
   readonly domains = ['rest-only.example'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: true, chapterImages: true };
 
   matchUrl(url: string): boolean {
@@ -135,8 +135,7 @@ describe('Integration: REST-only crawl flow', () => {
       concurrency: 1,
       eventBus,
       browser: {
-        mode: 'static',
-        headless: true,
+        mode: 'remote',
         maxInstances: 1,
         timeout: 1000,
         waitUntil: 'domcontentloaded',
@@ -179,10 +178,10 @@ describe('Integration: REST-only crawl flow', () => {
           return job;
         },
         get: async (id: string) => challengeJobs.get(id) ?? null,
-        openExternalBrowser: async (id: string) => {
+        openBrowser: async (id: string) => {
           const job = challengeJobs.get(id);
           if (!job) throw new Error(`Challenge discovery job "${id}" was not found.`);
-          job.status = 'external_browser_open';
+          job.status = 'browser_open';
           job.updatedAt = new Date().toISOString();
           return job;
         },
@@ -289,11 +288,11 @@ describe('Integration: REST-only crawl flow', () => {
 
     const openResponse = await server.getApp().inject({
       method: 'POST',
-      url: '/api/challenge-discovery/handoff-rest-only/open-external-browser',
+      url: '/api/challenge-discovery/handoff-rest-only/open-browser',
       payload: {},
     });
     expect(openResponse.statusCode).toBe(200);
-    expect(openResponse.json().data.status).toBe('external_browser_open');
+    expect(openResponse.json().data.status).toBe('browser_open');
 
     const completeResponse = await server.getApp().inject({
       method: 'POST',

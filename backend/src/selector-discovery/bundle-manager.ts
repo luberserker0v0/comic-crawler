@@ -232,14 +232,24 @@ export class SelectorDiscoveryBundleManager {
   }
 
   private async resolveBundleRoot(): Promise<string> {
-    try {
-      await fs.access(this.bundleRoot);
-      return this.bundleRoot;
-    } catch {
-      const workspaceRootCandidate = join(process.cwd(), '../agent/ao/selector-discovery');
-      await fs.access(workspaceRootCandidate);
-      return workspaceRootCandidate;
+    const candidates = [this.bundleRoot];
+    const workspaceRootCandidate = join(process.cwd(), '../agent/ao/selector-discovery');
+    if (!candidates.includes(workspaceRootCandidate)) {
+      candidates.push(workspaceRootCandidate);
     }
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        // Try the next candidate.
+      }
+    }
+    throw new Error(
+      `Selector-discovery AO bundle not found. Tried ${candidates.map((candidate) => `"${candidate}"`).join(' and ')}. ` +
+        'Set AO_BUNDLE_PATH to the selector-discovery bundle directory (containing draft/, active.json), ' +
+        'or mount it into the container (for example, -v ./agent/ao/selector-discovery:/app/agent/ao/selector-discovery:ro).'
+    );
   }
 
   private async nextReleaseName(releasesRoot: string): Promise<string> {

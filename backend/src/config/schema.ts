@@ -24,8 +24,7 @@ export const NetworkConfigSchema = z.object({
 });
 
 export const BrowserConfigSchema = z.object({
-  mode: z.enum(['static', 'headless', 'auto']).default(DEFAULTS.browser.mode),
-  headless: z.boolean().default(DEFAULTS.browser.headless),
+  mode: z.literal('remote').default('remote'),
   maxInstances: z.number().min(1).max(10).default(DEFAULTS.browser.maxInstances),
   timeout: z.number().min(1000).default(DEFAULTS.browser.timeout),
   waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).default(DEFAULTS.browser.waitUntil),
@@ -33,15 +32,12 @@ export const BrowserConfigSchema = z.object({
   postLoadDelayMs: z.number().min(0).default(DEFAULTS.browser.postLoadDelayMs),
   challengeAutoAttempt: z.boolean().default(DEFAULTS.browser.challengeAutoAttempt),
   challengeWaitMs: z.number().min(0).default(DEFAULTS.browser.challengeWaitMs),
-  channel: z.string().optional(),
   storageStatePath: z.string().optional(),
-  userDataDir: z.string().optional(),
-  handoff: z.object({
-    mode: z.enum(['snapshot', 'cdp', 'managed']).default(DEFAULTS.browser.handoff.mode),
-    cdpUrl: z.string().optional(),
-    userDataDir: z.string().optional(),
-    channel: z.string().optional(),
-  }).default(DEFAULTS.browser.handoff),
+  remote: z.object({
+    connectTimeout: z.number().min(1000).default(30000),
+    exposeNetwork: z.string().optional(),
+    headers: z.record(z.string()).optional(),
+  }).strict().default(DEFAULTS.browser.remote),
 }).default(DEFAULTS.browser);
 
 export const ServerConfigSchema = z.object({
@@ -70,9 +66,7 @@ export const MaintenanceConfigSchema = z.object({
   intervalHours: z.number().min(0).default(24),
   tasksRetainDays: z.number().min(0).default(30),
   discoveryJobsRetainDays: z.number().min(0).default(14),
-  browserProfilesRetainDays: z.number().min(0).default(14),
   deleteFiles: z.boolean().default(true),
-  deleteOrphanProfiles: z.boolean().default(true),
   batchLimit: z.number().min(1).max(1000).default(100),
 });
 

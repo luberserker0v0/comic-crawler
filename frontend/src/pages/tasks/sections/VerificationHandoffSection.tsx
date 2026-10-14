@@ -1,18 +1,12 @@
 import type { TaskDetail } from '../../../store';
-import type { LocalBrowserOption } from '../widgets';
 
 export function VerificationHandoffSection(props: {
   detail: TaskDetail;
   challengeJob: any | null;
   challengeAction: string | null;
   challengeError: string | null;
-  browserOptions: LocalBrowserOption[];
-  browserExecutablePath: string;
-  setBrowserExecutablePath: (value: string) => void;
   shouldReopenVerificationBrowser: boolean;
-  isExternalVerificationUnreadable: boolean;
   isChallengeJobUnavailable: boolean;
-  browseBrowserExecutable: () => void;
   openVerificationBrowser: () => void;
 }) {
   const {
@@ -20,13 +14,8 @@ export function VerificationHandoffSection(props: {
     challengeJob,
     challengeAction,
     challengeError,
-    browserOptions,
-    browserExecutablePath,
-    setBrowserExecutablePath,
     shouldReopenVerificationBrowser,
-    isExternalVerificationUnreadable,
     isChallengeJobUnavailable,
-    browseBrowserExecutable,
     openVerificationBrowser,
   } = props;
 
@@ -64,50 +53,12 @@ export function VerificationHandoffSection(props: {
 
       {!isChallengeJobUnavailable && (
       <div className="mt-4 rounded-xl border border-purple-200 bg-white p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-          <label className="block">
-            <span className="text-sm font-medium text-purple-950">Local browser executable</span>
-            <input
-              type="text"
-              value={browserExecutablePath}
-              onChange={(event) => setBrowserExecutablePath(event.target.value)}
-              placeholder="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-              className="mt-1 block w-full rounded-md border-purple-200 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-sm"
-              data-testid="verification-browser-path-input"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => void browseBrowserExecutable()}
-            disabled={challengeAction !== null}
-            className="self-end rounded-md border border-purple-300 bg-white px-3 py-2 text-sm font-medium text-purple-900 shadow-sm hover:bg-purple-100 disabled:opacity-50"
-          >
-            {challengeAction === 'browse-browser' ? 'Browsing...' : 'Browse'}
-          </button>
-        </div>
-
         <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
-          ComicCrawler will open an isolated verification profile for this task. Your normal Chrome/Brave profiles are not used.
+          ComicCrawler will open this task in the configured remote Playwright service. No browser is launched in the ComicCrawler process or container.
         </div>
-
-        {browserOptions.length === 0 && (
-          <p className="mt-2 text-xs text-purple-800">
-            No local browser was auto-detected. Enter the browser executable path manually, or use Browse on Windows.
-          </p>
-        )}
-        {browserExecutablePath && (
-          <p className="mt-2 text-xs text-purple-800">
-            Recommended: ComicCrawler will open a separate browser profile so your normal Brave/Chrome session can keep running the WebUI.
-          </p>
-        )}
         {shouldReopenVerificationBrowser && (
           <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-            ComicCrawler cannot read the previous browser session. Close all windows for this browser/profile, then reopen it from here.
-          </p>
-        )}
-        {isExternalVerificationUnreadable && (
-          <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-            This browser window opened, but ComicCrawler cannot read it because no Chromium debugging connection was exposed. Use the isolated profile, or close every Chrome window that uses the selected profile and open it again from here.
+            ComicCrawler cannot read the previous remote browser session. Reopen it from here.
           </p>
         )}
 

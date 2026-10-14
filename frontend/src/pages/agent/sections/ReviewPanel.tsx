@@ -74,7 +74,7 @@ export function ReviewPanel(props: {
   } = props;
 
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow">
+    <section id="review-panel" className="overflow-hidden rounded-2xl bg-white shadow">
       <div className="flex flex-col gap-3 border-b border-slate-200 px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.25em] text-indigo-500">{text.agent.reviewPanelEyebrow}</p>

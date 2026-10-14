@@ -54,16 +54,15 @@ export const DEFAULTS = {
     retryDelay: 1000,
   },
   browser: {
-    mode: 'auto' as const,
-    headless: true,
+    mode: 'remote' as const,
     maxInstances: 2,
     timeout: 30000,
     waitUntil: 'domcontentloaded' as const,
     postLoadDelayMs: 0,
     challengeAutoAttempt: true,
     challengeWaitMs: 15000,
-    handoff: {
-      mode: 'snapshot' as const,
+    remote: {
+      connectTimeout: 30000,
     },
   },
   server: {
@@ -84,9 +83,7 @@ export const DEFAULTS = {
     intervalHours: 24,
     tasksRetainDays: 30,
     discoveryJobsRetainDays: 14,
-    browserProfilesRetainDays: 14,
     deleteFiles: true,
-    deleteOrphanProfiles: true,
     batchLimit: 100,
   },
 } as const;

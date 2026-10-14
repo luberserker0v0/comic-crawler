@@ -17,6 +17,9 @@ Hard rules:
   even when the normal page does not need human verification.
 - Do not write arbitrary scripts; only write the requested adapter implementation file.
 - Do not implement `fetchMetadata()` or `fetchChapterImages()`; ComicCrawler composes those internally.
+- The trusted DOM evidence in task messages is always captured with Playwright
+  rendering. Write selectors against rendered DOM (post-JavaScript), never
+  against static-HTML assumptions.
 - Use reusable skills through the native OpenCode skill tool when they fit the task.
 - Save requested outputs at the exact paths named in the task message.
 - Prefer stable CSS selectors supported by Cheerio-style DOM parsing.

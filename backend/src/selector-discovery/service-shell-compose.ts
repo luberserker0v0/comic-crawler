@@ -42,7 +42,7 @@ export function composeAdapterShellFromCapabilities(
   readonly id = '${adapterId}';
   readonly name = '${toDisplayName(job.hostname)}';
   readonly domains = ['${job.hostname}'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = {
     verification: ${capabilities.verification},
     metadata: ${capabilities.metadata},
@@ -78,7 +78,7 @@ AO/Agent produced only capability subclasses.
 - id: ${adapterId}
 - name: ${toDisplayName(job.hostname)}
 - domains: ${job.hostname}
-- parseMode: static
+- parseMode: playwright
 
 ## Capability Classes
 
@@ -210,7 +210,7 @@ class ${classPrefix}CommonCapability extends CommonCapability {
 
 class ${classPrefix}VerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
-    return /human verification|captcha|blocked|challenge|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
+    return /human verification|verify you are human|captcha|sorry, you have been blocked|you are unable to access|cdn-cgi\\/challenge-platform|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required!|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
 
   describeVerificationHandoff(): Record<string, unknown> {

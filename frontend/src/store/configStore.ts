@@ -21,8 +21,7 @@ export interface GlobalConfig {
     userAgent?: string;
   };
   browser: {
-    mode: 'static' | 'headless' | 'auto';
-    headless: boolean;
+    mode: 'remote';
     maxInstances: number;
     timeout: number;
     waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
@@ -30,14 +29,11 @@ export interface GlobalConfig {
     postLoadDelayMs?: number;
     challengeAutoAttempt?: boolean;
     challengeWaitMs?: number;
-    channel?: string;
     storageStatePath?: string;
-    userDataDir?: string;
-    handoff?: {
-      mode: 'snapshot' | 'cdp' | 'managed';
-      cdpUrl?: string;
-      userDataDir?: string;
-      channel?: string;
+    remote?: {
+      connectTimeout?: number;
+      exposeNetwork?: string;
+      headers?: Record<string, string>;
     };
   };
   server: {

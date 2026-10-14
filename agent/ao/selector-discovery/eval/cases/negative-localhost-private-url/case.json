@@ -8,7 +8,6 @@
   "expectations": {
     "metadata": false,
     "chapters": false,
-    "images": false,
-    "oracleComparison": false
+    "images": false
   }
 }

@@ -3,8 +3,10 @@ import { DEFAULTS } from '@comiccrawler/shared';
 import type {
   AdapterDomSource,
   AdapterFunctionTestResponse,
+  BrowserConfig,
   DomReadinessReport,
   DomReadinessTarget,
+  NetworkConfig,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
@@ -19,7 +21,6 @@ import type {
   VerifiedChallengeDocument,
 } from './adapter-function-types';
 
-const STATIC_ADAPTER_FUNCTION_TIMEOUT_MS = 30_000;
 const PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS = 15 * 60 * 1000;
 
 class TimingCollector {
@@ -44,8 +45,10 @@ export async function testAdapterFunction(
   functionId: AdapterFunctionId,
   url: string,
   options: {
+    browser?: BrowserConfig;
     challengeDiscoveryId?: string;
     challengeDiscoveryService?: ChallengeDiscoveryService;
+    network?: NetworkConfig;
   } = {}
 ): Promise<AdapterFunctionTestResponse> {
   const startedAt = Date.now();
@@ -53,17 +56,25 @@ export async function testAdapterFunction(
   const crawlerMode = defaultCrawlerModeForAdapter(adapter);
   const target = readinessTargetForFunction(functionId);
   const domSource = domSourceForCrawlerMode(crawlerMode);
-  const renderer = crawlerMode === 'playwright'
-    ? new PlaywrightHtmlRenderer({
-        ...DEFAULTS.browser,
-        mode: 'headless',
-        challengeAutoAttempt: false,
-        challengeWaitMs: 0,
-      })
-      : undefined;
+  const renderer = new PlaywrightHtmlRenderer({
+    ...(options.browser ?? DEFAULTS.browser),
+    mode: 'remote',
+    challengeAutoAttempt: false,
+    challengeWaitMs: 0,
+  }, options.network);
+  const adapterRenderer = {
+    render: async (renderUrl: string): Promise<string> => {
+      const html = await renderer.render(renderUrl);
+      if (adapter.verification && await adapter.verification.detectVerificationRequired(html)) {
+        throw new Error(`Adapter "${adapter.id}" detected that human verification is required for ${renderUrl}.`);
+      }
+      return html;
+    },
+    dispose: async (): Promise<void> => undefined,
+  };
   try {
-    if (renderer && typeof (adapter as unknown as { setHtmlRenderer?: (renderer: unknown) => void }).setHtmlRenderer === 'function') {
-      (adapter as unknown as { setHtmlRenderer: (renderer: unknown) => void }).setHtmlRenderer(renderer);
+    if (typeof (adapter as unknown as { setHtmlRenderer?: (renderer: unknown) => void }).setHtmlRenderer === 'function') {
+      (adapter as unknown as { setHtmlRenderer: (renderer: unknown) => void }).setHtmlRenderer(adapterRenderer);
     }
     const challengeDiscoveryId = options.challengeDiscoveryId;
     const verifiedDocument = challengeDiscoveryId
@@ -128,7 +139,7 @@ export async function testAdapterFunction(
       });
     }), adapterFunctionTimeoutMs(crawlerMode));
 
-    if (crawlerMode === 'playwright' && functionId === 'detectVerificationRequired' && resultSummary.verificationRequired === true) {
+    if (functionId === 'detectVerificationRequired' && resultSummary.verificationRequired === true) {
       return createVerificationRequiredResponse({
         adapterId: adapter.id,
         functionId,
@@ -181,7 +192,7 @@ export async function testAdapterFunction(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (crawlerMode === 'playwright' && shouldOfferHandoffForPlaywrightTest(message)) {
+    if (shouldOfferHandoffForPlaywrightTest(message)) {
       return createVerificationRequiredResponse({
         adapterId: adapter.id,
         functionId,
@@ -207,10 +218,10 @@ export async function testAdapterFunction(
       requiresVerification: false,
     };
   } finally {
-    if (renderer && typeof (adapter as unknown as { setHtmlRenderer?: (renderer: undefined) => void }).setHtmlRenderer === 'function') {
+    if (typeof (adapter as unknown as { setHtmlRenderer?: (renderer: undefined) => void }).setHtmlRenderer === 'function') {
       (adapter as unknown as { setHtmlRenderer: (renderer: undefined) => void }).setHtmlRenderer(undefined);
     }
-    await renderer?.dispose().catch(() => undefined);
+    await renderer.dispose().catch(() => undefined);
   }
 }
 
@@ -289,30 +300,19 @@ export function isMetadataFunction(functionId: AdapterFunctionId): boolean {
   ].includes(functionId);
 }
 
-export function defaultCrawlerModeForAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterCrawlerMode {
-  return adapter.parseMode === 'dynamic' || adapter.parseMode === 'interactive'
-    ? 'playwright'
-    : 'static';
+export function defaultCrawlerModeForAdapter(_adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterCrawlerMode {
+  return 'playwright';
 }
 
-export function adapterFunctionTimeoutMs(crawlerMode: AdapterCrawlerMode): number {
-  return crawlerMode === 'playwright'
-    ? PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS
-    : STATIC_ADAPTER_FUNCTION_TIMEOUT_MS;
+export function adapterFunctionTimeoutMs(_crawlerMode: AdapterCrawlerMode): number {
+  return PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS;
 }
 
 export async function runWithCrawlerMode<T>(
-  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
-  crawlerMode: AdapterCrawlerMode,
+  _adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
+  _crawlerMode: AdapterCrawlerMode,
   operation: () => Promise<T>
 ): Promise<T> {
-  const mode = crawlerMode === 'playwright' ? 'headless' : 'static';
-  const maybeScopedAdapter = adapter as unknown as {
-    withHtmlFetchMode?: <TResult>(mode: 'static' | 'headless', fn: () => Promise<TResult>) => Promise<TResult>;
-  };
-  if (maybeScopedAdapter.withHtmlFetchMode) {
-    return maybeScopedAdapter.withHtmlFetchMode(mode, operation);
-  }
   return operation();
 }
 
@@ -345,7 +345,7 @@ export async function loadVerifiedChallengeDocument(
     throw new Error(createChallengeNotReadyMessage(job));
   }
 
-  const snapshot = await challengeDiscoveryService.readCdpPageSnapshot(challengeDiscoveryId, job.browserCdpUrl, {
+  const snapshot = await challengeDiscoveryService.readRemotePageSnapshot(challengeDiscoveryId, {
     settle: options.settle,
     allowNavigate: options.allowNavigate,
   });
@@ -492,8 +492,8 @@ export async function detectVerificationRequiredForUrl(
   }
 }
 
-export function domSourceForCrawlerMode(crawlerMode: AdapterCrawlerMode): AdapterDomSource {
-  return crawlerMode === 'playwright' ? 'rendered' : 'static';
+export function domSourceForCrawlerMode(_crawlerMode: AdapterCrawlerMode): AdapterDomSource {
+  return 'rendered';
 }
 
 export function readinessTargetForFunction(functionId: AdapterFunctionId): DomReadinessTarget {

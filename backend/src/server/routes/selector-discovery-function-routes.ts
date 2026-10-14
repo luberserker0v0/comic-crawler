@@ -1,5 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AdapterFunctionRevisionRequest, AdapterFunctionTestRequest, AdapterImplementationResponse } from '@comiccrawler/shared';
+import type {
+  AdapterFunctionRevisionRequest,
+  AdapterFunctionTestRequest,
+  AdapterImplementationResponse,
+  BrowserConfig,
+  NetworkConfig,
+} from '@comiccrawler/shared';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
@@ -9,9 +15,14 @@ import { createImplementationOutline, instantiateDiscoveryDraftAdapter } from '.
 
 export function setupDiscoveryDraftFunctionRoutes(
   app: FastifyInstance,
-  prefix: '/api/selector-discovery' | '/api/site-discovery',
+  prefix: '/api/selector-discovery',
   discoveryService: SelectorDiscoveryService,
-  options: { challengeDiscoveryService?: ChallengeDiscoveryService; adapterDraftService?: AdapterDraftService } = {}
+  options: {
+    challengeDiscoveryService?: ChallengeDiscoveryService;
+    adapterDraftService?: AdapterDraftService;
+    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  } = {}
 ): void {
   app.get(`${prefix}/:id/implementation`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
@@ -70,9 +81,15 @@ export function setupDiscoveryDraftFunctionRoutes(
         return;
       }
       const adapter = await instantiateDiscoveryDraftAdapter(discoveryService, id);
+      const [browser, network] = await Promise.all([
+        options.getBrowserConfig?.(),
+        options.getNetworkConfig?.(),
+      ]);
       const result = await testAdapterFunction(adapter as any, functionId, body.url, {
+        browser,
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
       });
       reply.send({
         data: {

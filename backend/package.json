@@ -16,6 +16,7 @@
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
+    "@comiccrawler/browser-provider-sdk": "*",
     "@comiccrawler/shared": "*",
     "@fastify/static": "^9.1.3",
     "@fastify/swagger": "^9.8.0",

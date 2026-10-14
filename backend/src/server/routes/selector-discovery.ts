@@ -3,6 +3,7 @@ import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '.
 import { SelectorDiscoveryBundleManager } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
+import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 import { setupSelectorDiscoverySettingsRoutes } from './selector-discovery-settings';
 import { setupDiscoveryDraftFunctionRoutes } from './selector-discovery-function-routes';
@@ -12,19 +13,28 @@ export function setupSelectorDiscoveryRoutes(
   discoveryService: SelectorDiscoveryService,
   settingsStore: SelectorDiscoverySettingsStore,
   bundleManager = new SelectorDiscoveryBundleManager(),
-  options: { challengeDiscoveryService?: ChallengeDiscoveryService; adapterDraftService?: AdapterDraftService } = {}
+  options: {
+    challengeDiscoveryService?: ChallengeDiscoveryService;
+    adapterDraftService?: AdapterDraftService;
+    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  } = {}
 ): void {
   setupSelectorDiscoverySettingsRoutes(app, settingsStore, bundleManager);
 
   setupDiscoveryJobRoutes(app, '/api/selector-discovery', discoveryService, options);
-  setupDiscoveryJobRoutes(app, '/api/site-discovery', discoveryService, options);
 }
 
 function setupDiscoveryJobRoutes(
   app: FastifyInstance,
-  prefix: '/api/selector-discovery' | '/api/site-discovery',
+  prefix: '/api/selector-discovery',
   discoveryService: SelectorDiscoveryService,
-  options: { challengeDiscoveryService?: ChallengeDiscoveryService; adapterDraftService?: AdapterDraftService } = {}
+  options: {
+    challengeDiscoveryService?: ChallengeDiscoveryService;
+    adapterDraftService?: AdapterDraftService;
+    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  } = {}
 ): void {
   app.post(prefix, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -141,37 +151,10 @@ function setupDiscoveryJobRoutes(
     }
   });
 
-  app.post(`${prefix}/:id/revalidate`, async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id } = request.params as { id: string };
-      reply.send({ data: await discoveryService.revalidate(id) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post(`${prefix}/:id/validate`, async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id } = request.params as { id: string };
-      reply.send({ data: await discoveryService.validateCandidate(id) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
   app.post(`${prefix}/:id/promote`, async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
       reply.send({ data: await discoveryService.promote(id) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post(`${prefix}/:id/shadow-promote`, async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id } = request.params as { id: string };
-      reply.send({ data: await discoveryService.shadowPromote(id) });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

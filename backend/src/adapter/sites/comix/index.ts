@@ -1,0 +1,1 @@
+export { ComixAdapter } from './adapter';

@@ -9,11 +9,13 @@ import type { IStorage } from '../storage/types';
 export const PROJECT_ADAPTER_SOURCE: Record<string, string> = {
   kuronavi: 'backend/src/adapter/sites/kuronavi/adapter.ts',
   happymh: 'backend/src/adapter/sites/happymh/adapter.ts',
+  comix: 'backend/src/adapter/sites/comix/adapter.ts',
 };
 
 const PROJECT_ADAPTER_LOADERS: Record<string, () => Promise<{ adapter: IComicAdapter }>> = {
   kuronavi: () => loadProjectAdapterModule('kuronavi', 'KuronaviAdapter'),
   happymh: () => loadProjectAdapterModule('happymh', 'HappyMhAdapter'),
+  comix: () => loadProjectAdapterModule('comix', 'ComixAdapter'),
 };
 
 export const DELETED_ADAPTERS_KEY = 'adapters-deleted';
@@ -214,4 +216,5 @@ async function loadProjectAdapterModule(adapterId: string, className: string): P
 const PROJECT_ADAPTER_CLASS_NAMES: Record<string, string> = {
   kuronavi: 'KuronaviAdapter',
   happymh: 'HappyMhAdapter',
+  comix: 'ComixAdapter',
 };

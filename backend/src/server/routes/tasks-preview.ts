@@ -79,16 +79,7 @@ export async function buildTaskDownloadPreview(
 }
 
 export async function resolvePreviewRoot(result: { outputPath: string; metadata?: Record<string, unknown> | undefined }): Promise<string> {
-  const directRoot = isAbsolute(result.outputPath) ? result.outputPath : join(process.cwd(), result.outputPath);
-  try {
-    const stats = await fs.stat(directRoot);
-    if (stats.isDirectory()) return directRoot;
-  } catch {
-    // Fall back to the legacy layout below.
-  }
-
-  const title = typeof result.metadata?.title === 'string' ? result.metadata.title : null;
-  return title ? join(directRoot, title) : directRoot;
+  return isAbsolute(result.outputPath) ? result.outputPath : join(process.cwd(), result.outputPath);
 }
 
 export function isPreviewImage(path: string): boolean {

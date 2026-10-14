@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import * as undici from 'undici';
-import { chromium } from 'playwright';
 import type { ImageInfo } from '@comiccrawler/shared';
+import type { BrowserContext } from 'playwright';
 import { ComicError, ErrorType, errorToLogObject } from '../error/types';
 import { logger } from '../utils/logger';
 
@@ -12,7 +12,7 @@ export interface DownloadOptions {
   namingTemplate?: string;
   headers?: Record<string, string>;
   verifiedBrowser?: {
-    cdpUrl: string;
+    context: BrowserContext;
     pageUrl: string;
   };
   onProgress?: (completed: number, total: number, result: DownloadResult | null, image: ImageInfo) => void;
@@ -214,100 +214,95 @@ export class ImageDownloader {
       };
     }
 
-    const browser = await chromium.connectOverCDP(verifiedBrowser.cdpUrl);
-    try {
-      const pages = browser.contexts().flatMap((context) => context.pages());
-      const page = pages.find((candidate) => samePageUrl(candidate.url(), verifiedBrowser.pageUrl))
-        ?? pages.find((candidate) => candidate.url().startsWith(verifiedBrowser.pageUrl))
-        ?? pages.find((candidate) => sameOrigin(candidate.url(), verifiedBrowser.pageUrl));
+    const pages = verifiedBrowser.context.pages();
+    const page = pages.find((candidate) => samePageUrl(candidate.url(), verifiedBrowser.pageUrl))
+      ?? pages.find((candidate) => candidate.url().startsWith(verifiedBrowser.pageUrl))
+      ?? pages.find((candidate) => sameOrigin(candidate.url(), verifiedBrowser.pageUrl));
 
-      if (!page) {
-        throw new ComicError(
-          'Verified browser page was not found for image fallback',
-          ErrorType.DOWNLOAD_FAILED,
-          true,
-          { imageUrl: image.url, pageUrl: verifiedBrowser.pageUrl }
-        );
-      }
+    if (!page) {
+      throw new ComicError(
+        'Verified browser page was not found for image fallback',
+        ErrorType.DOWNLOAD_FAILED,
+        true,
+        { imageUrl: image.url, pageUrl: verifiedBrowser.pageUrl }
+      );
+    }
 
-      if (!samePageUrl(page.url(), verifiedBrowser.pageUrl)) {
-        await page.goto(verifiedBrowser.pageUrl, {
-          waitUntil: 'domcontentloaded',
-          timeout: 60000,
-        });
-        await settleLazyImages(page);
-      }
+    if (!samePageUrl(page.url(), verifiedBrowser.pageUrl)) {
+      await page.goto(verifiedBrowser.pageUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      await settleLazyImages(page);
+    }
 
-      const browserRequestResult = await this.downloadFromBrowserRequest(page, image, originalOutputPath, verifiedBrowser.pageUrl);
-      if (browserRequestResult) {
-        return browserRequestResult;
-      }
+    const browserRequestResult = await this.downloadFromBrowserRequest(page, image, originalOutputPath, verifiedBrowser.pageUrl);
+    if (browserRequestResult) {
+      return browserRequestResult;
+    }
 
-      const element = await page.evaluateHandle((targetUrl) => {
+    const element = await page.evaluateHandle((targetUrl) => {
         const images = Array.from(document.images);
         return images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl) ?? null;
-      }, image.url);
+    }, image.url);
 
-      const asElement = element.asElement();
-      if (!asElement) {
-        await element.dispose();
-        throw new ComicError(
-          'Image element was not found on the verified browser page',
-          ErrorType.DOWNLOAD_FAILED,
-          true,
-          { imageUrl: image.url, pageUrl: page.url() }
-        );
-      }
-
-      await withTimeout(async () => {
-        await asElement.scrollIntoViewIfNeeded({ timeout: 15000 });
-        await page.waitForFunction((targetUrl) => {
-          const images = Array.from(document.images);
-          const image = images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl);
-          return Boolean(image && image.complete && image.naturalWidth > 1 && image.naturalHeight > 1);
-        }, image.url, { timeout: 15000 });
-        await page.evaluate(async (targetUrl) => {
-          const images = Array.from(document.images);
-          const image = images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl);
-          if (image && typeof image.decode === 'function') {
-            await image.decode().catch(() => undefined);
-          }
-        }, image.url);
-        const box = await asElement.boundingBox();
-        if (!box || box.width < 2 || box.height < 2) {
-          throw new Error('Image element has no visible bounding box.');
-        }
-        await page.screenshot({
-          path: screenshotPath,
-          clip: {
-            x: Math.max(0, box.x),
-            y: Math.max(0, box.y),
-            width: Math.max(1, box.width),
-            height: Math.max(1, box.height),
-          },
-          timeout: 15000,
-        });
-      }, 25000, `Timed out capturing browser-rendered image ${image.url}`);
-      await asElement.dispose();
-
-      const completedFile = await this.getExistingFile(screenshotPath);
-      if (!completedFile) {
-        throw new ComicError(
-          'Failed to persist browser image fallback screenshot',
-          ErrorType.STORAGE_ERROR,
-          true,
-          { path: screenshotPath, url: image.url }
-        );
-      }
-
-      return {
-        path: screenshotPath,
-        size: completedFile.size,
-        url: image.url,
-      };
-    } finally {
-      await browser.close();
+    const asElement = element.asElement();
+    if (!asElement) {
+      await element.dispose();
+      throw new ComicError(
+        'Image element was not found on the verified browser page',
+        ErrorType.DOWNLOAD_FAILED,
+        true,
+        { imageUrl: image.url, pageUrl: page.url() }
+      );
     }
+
+    await withTimeout(async () => {
+      await asElement.scrollIntoViewIfNeeded({ timeout: 15000 });
+      await page.waitForFunction((targetUrl) => {
+        const images = Array.from(document.images);
+        const image = images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl);
+        return Boolean(image && image.complete && image.naturalWidth > 1 && image.naturalHeight > 1);
+      }, image.url, { timeout: 15000 });
+      await page.evaluate(async (targetUrl) => {
+        const images = Array.from(document.images);
+        const image = images.find((img) => img.currentSrc === targetUrl || img.src === targetUrl);
+        if (image && typeof image.decode === 'function') {
+          await image.decode().catch(() => undefined);
+        }
+      }, image.url);
+      const box = await asElement.boundingBox();
+      if (!box || box.width < 2 || box.height < 2) {
+        throw new Error('Image element has no visible bounding box.');
+      }
+      await page.screenshot({
+        path: screenshotPath,
+        clip: {
+          x: Math.max(0, box.x),
+          y: Math.max(0, box.y),
+          width: Math.max(1, box.width),
+          height: Math.max(1, box.height),
+        },
+        timeout: 15000,
+      });
+    }, 25000, `Timed out capturing browser-rendered image ${image.url}`);
+    await asElement.dispose();
+
+    const completedFile = await this.getExistingFile(screenshotPath);
+    if (!completedFile) {
+      throw new ComicError(
+        'Failed to persist browser image fallback screenshot',
+        ErrorType.STORAGE_ERROR,
+        true,
+        { path: screenshotPath, url: image.url }
+      );
+    }
+
+    return {
+      path: screenshotPath,
+      size: completedFile.size,
+      url: image.url,
+    };
   }
 
   private async downloadFromBrowserRequest(

@@ -66,7 +66,6 @@ export type {
   AdapterFunctionInputKind,
   AdapterFunctionDescriptor,
   AdapterCapabilityDetailResponse,
-  AdapterFunctionSourceResponse,
   AdapterImplementationSourceType,
   AdapterImplementationSymbolKind,
   AdapterImplementationSymbol,
@@ -119,6 +118,5 @@ export type {
   SelectorDiscoveryFunctionRevisionTask,
   SelectorDiscoveryJobListResponse,
   ChallengeHandoffJobSummary,
-  OpenVerificationBrowserRequest,
   ConfigResponse,
 } from './api';

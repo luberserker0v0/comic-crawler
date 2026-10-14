@@ -3,7 +3,7 @@ import type { IExtractionStrategy, ExtractionContext } from '../types';
 
 export class EmbeddedJsonStrategy implements IExtractionStrategy {
   readonly name = 'embedded-json';
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
 
   private jsonSelector: string;
 

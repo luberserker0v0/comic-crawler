@@ -53,12 +53,10 @@ classes. Create site-specific subclasses such as
 Do not combine capability handlers with `implements`. Each capability needs its
 own site-specific subclass.
 
-`parseMode` means:
-
-- `static`: ComicCrawler can use static HTML fetch first.
-- `dynamic`: ComicCrawler should use rendered DOM first.
-- `interactive`: ComicCrawler should use rendered DOM plus official human
-  verification handoff when blocked.
+`parseMode` has exactly one supported value: `playwright`. Selector discovery
+always uses Playwright-rendered DOM. Human verification is declared separately
+through `capabilities.verification` and the verification capability; there are
+no static, dynamic, or interactive compatibility values.
 
 ## Common capability
 

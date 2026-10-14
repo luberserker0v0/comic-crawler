@@ -22,29 +22,28 @@ export interface RuntimeConfig {
 }
 
 export const ENV_KEYS = {
-  host: ['COMICCRAWLER_HOST', 'HOST'],
-  port: ['COMICCRAWLER_PORT', 'PORT'],
-  dataPath: ['COMICCRAWLER_DATA_PATH', 'DATA_PATH'],
-  agentWorkspacePath: ['AGENT_WORKSPACE_PATH'],
-  staticDir: ['STATIC_DIR'],
-  maintenanceEnabled: ['COMICCRAWLER_MAINTENANCE_ENABLED'],
-  maintenanceIntervalHours: ['COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS'],
-  maintenanceTasksRetainDays: ['COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS'],
-  maintenanceJobsRetainDays: ['COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS'],
-  maintenanceProfilesRetainDays: ['COMICCRAWLER_MAINTENANCE_PROFILES_RETAIN_DAYS'],
-  maintenanceDeleteFiles: ['COMICCRAWLER_MAINTENANCE_DELETE_FILES'],
+  host: 'COMICCRAWLER_HOST',
+  port: 'COMICCRAWLER_PORT',
+  dataPath: 'COMICCRAWLER_DATA_PATH',
+  agentWorkspacePath: 'AGENT_WORKSPACE_PATH',
+  staticDir: 'STATIC_DIR',
+  maintenanceEnabled: 'COMICCRAWLER_MAINTENANCE_ENABLED',
+  maintenanceIntervalHours: 'COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS',
+  maintenanceTasksRetainDays: 'COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS',
+  maintenanceJobsRetainDays: 'COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS',
+  maintenanceDeleteFiles: 'COMICCRAWLER_MAINTENANCE_DELETE_FILES',
 } as const;
 
 export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): RuntimeConfig {
-  const envHost = firstEnv(ENV_KEYS.host);
+  const envHost = readEnv(ENV_KEYS.host);
   const configuredHost = config?.server.host;
-  const host = envHost ?? normalizeLegacyDefaultHost(configuredHost) ?? DEFAULTS.server.host;
-  const envPort = parsePort(firstEnv(ENV_KEYS.port));
-  const port = envPort ?? normalizeLegacyDefaultPort(config?.server.port) ?? DEFAULTS.server.port;
-  const dataPath = firstEnv(ENV_KEYS.dataPath) ?? defaultDataPath();
-  const dataLayout = resolveDataDirectoryLayout(dataPath, firstEnv(ENV_KEYS.agentWorkspacePath));
+  const host = envHost ?? configuredHost ?? DEFAULTS.server.host;
+  const envPort = parsePort(readEnv(ENV_KEYS.port));
+  const port = envPort ?? config?.server.port ?? DEFAULTS.server.port;
+  const dataPath = readEnv(ENV_KEYS.dataPath) ?? defaultDataPath();
+  const dataLayout = resolveDataDirectoryLayout(dataPath, readEnv(ENV_KEYS.agentWorkspacePath));
   const agentWorkspacePath = dataLayout.agentWorkspacePath;
-  const staticDir = firstEnv(ENV_KEYS.staticDir);
+  const staticDir = readEnv(ENV_KEYS.staticDir);
 
   return {
     host,
@@ -56,7 +55,7 @@ export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): Run
   };
 }
 
-export function resolveDataDirectoryLayout(dataPath = firstEnv(ENV_KEYS.dataPath) ?? defaultDataPath(), agentWorkspacePath = firstEnv(ENV_KEYS.agentWorkspacePath)): DataDirectoryLayout {
+export function resolveDataDirectoryLayout(dataPath = readEnv(ENV_KEYS.dataPath) ?? defaultDataPath(), agentWorkspacePath = readEnv(ENV_KEYS.agentWorkspacePath)): DataDirectoryLayout {
   const root = trimTrailingSlash(dataPath);
   return {
     root,
@@ -91,22 +90,9 @@ function trimTrailingSlash(path: string): string {
   return path.replace(/[\\/]$/, '');
 }
 
-function normalizeLegacyDefaultHost(host?: string): string | undefined {
-  if (!host) return undefined;
-  return host === 'localhost' ? DEFAULTS.server.host : host;
-}
-
-function normalizeLegacyDefaultPort(port?: number): number | undefined {
-  if (port === undefined) return undefined;
-  return port === 3000 ? DEFAULTS.server.port : port;
-}
-
-function firstEnv(keys: readonly string[]): string | undefined {
-  for (const key of keys) {
-    const value = process.env[key];
-    if (value?.trim()) return value.trim();
-  }
-  return undefined;
+function readEnv(key: string): string | undefined {
+  const value = process.env[key];
+  return value?.trim() || undefined;
 }
 
 function parsePort(value?: string): number | undefined {

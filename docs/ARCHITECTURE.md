@@ -5,6 +5,60 @@ crawling. The current runtime is built around a React WebUI, a Fastify backend,
 shared TypeScript types/constants, Playwright-assisted rendering, and AO-assisted
 adapter implementation discovery.
 
+## Chapter index
+
+- [System context](#system-context)
+- [Startup responsibilities](#startup-responsibilities)
+- [Runtime layout](#runtime-layout)
+- [Main flow](#main-flow)
+- [Adapters and capabilities](#adapters-and-capabilities)
+- [Crawler rendering](#crawler-rendering)
+- [Browser Provider boundary](#browser-provider-boundary)
+- [Task reliability](#task-reliability)
+- [Human verification handoff](#human-verification-handoff)
+- [AO adapter discovery](#ao-adapter-discovery-and-verification-handoff)
+- [Configuration and defaults](#configuration-and-defaults)
+
+## System context
+
+```mermaid
+flowchart LR
+  User["User"] --> UI["React WebUI"]
+  Automation["REST client"] --> API["Fastify API"]
+
+  subgraph ComicCrawler["ComicCrawler server"]
+    UI --> API
+    API --> Tasks["Task manager + queue"]
+    Tasks --> Crawler["Crawler engine"]
+    Crawler --> Adapters["Adapter registry"]
+    Crawler --> Storage["Runtime state + downloads"]
+    API --> BrowserRegistry["Browser Provider registry"]
+    Crawler --> BrowserRegistry
+    API --> Selector["Selector discovery"]
+  end
+
+  Provider["User-side Browser Provider"] -->|"outbound WebSockets"| BrowserRegistry
+  Provider --> Browser["Temporary browser profile"]
+  Browser --> Sites["Comic websites"]
+  Crawler -->|"image requests"| Sites
+  Selector --> AO["Optional AO service"]
+```
+
+The server owns orchestration and state.
+The user device owns the browser process.
+The AO service is required only for adapter generation.
+
+## Startup responsibilities
+
+| Component | Production | Development | Owner |
+|---|---|---|---|
+| ComicCrawler backend | Container process | `npm run dev` | Operator |
+| WebUI | Served by backend | Vite dev server | ComicCrawler launcher |
+| Browser Provider | Separate user process | Separate user process | User |
+| Browser | Started per session | Started per session | Browser Provider |
+| AO service | Optional external service | Optional fixture or service | Administrator |
+| Runtime storage | Named volume or app-data path | `repo/data/` | ComicCrawler backend |
+
 ## Runtime layout
 
 ```text
@@ -32,7 +86,8 @@ The resolved data root is organized for new features as:
   logs/
 ```
 
-Legacy flat files directly under `data/` remain supported during migration.
+Runtime state is read only from the resolved data root; startup does not scan or
+import alternate historical locations.
 
 ## Main flow
 
@@ -42,10 +97,10 @@ flowchart TD
   Resolve -->|adapter covers requested mode| Queue["Create crawl task"]
   Resolve -->|missing or capability mismatch| Discovery["Queue adapter implementation discovery"]
   Queue --> Crawl["Crawler engine"]
-  Crawl -->|static parse succeeds| Download["Download images"]
-  Crawl -->|parse needs rendering| Headless["Playwright render HTML"]
-  Headless --> Download
-  Crawl -->|human verification needed| Wait["waiting_verification"]
+  Crawl --> Remote["Remote Playwright render HTML"]
+  Remote --> Extract["Adapter extraction"]
+  Extract --> Download["Download images"]
+  Remote -->|human verification needed| Wait["waiting_verification"]
   Wait --> Handoff["Task detail handoff browser"]
   Handoff --> Resume["Continue from checkpoint"]
   Resume --> Crawl
@@ -66,24 +121,20 @@ internally. Agent-generated TypeScript should implement the BaseAdapter
 contract and must not expose old runtime facade functions such as
 `fetchMetadata()` or `fetchChapterImages()`.
 
-`parseMode` is only the DOM acquisition strategy:
-
-- `static` fetches HTML directly.
-- `dynamic` renders with Playwright before parsing.
-- `interactive` renders with Playwright and can enter human verification
-  handoff.
+`parseMode` is only the DOM acquisition strategy. Its sole value is
+`playwright`, which renders through the remote browser provider before parsing.
+Human verification is modeled separately by `capabilities.verification` and
+runtime challenge detection.
 
 Runtime may choose a DOM source, but site-specific strategy belongs in the
-adapter implementation or reviewed dynamic manifest. Adapter Lab and runtime do
+adapter implementation or reviewed generated draft. Adapter Lab and runtime do
 not perform hidden generic site operations such as scanning and clicking
 "show all chapters" controls before calling an extraction function.
 
 All-chapter tasks require metadata and chapter-image support. Specific-chapter
 tasks require only chapter-image support. All site adapters are resolved through
-the same registry; implementation source is an internal loading detail, not a
-product category. AO discovery now produces TypeScript `AdapterBase`
-implementation drafts for review. Dynamic selector manifests remain legacy
-runtime support and are not the primary AO output.
+the same registry. Implementation source is an internal loading detail. AO
+discovery produces TypeScript `AdapterBase` implementation drafts for review.
 
 Project TypeScript adapters are loaded through a project adapter source map at
 backend startup, not through hard static imports in the server entrypoint. This
@@ -92,7 +143,7 @@ directory under `backend/src/adapter/sites/<adapter-id>/` has been deleted, the
 startup loader skips it instead of crashing or re-registering it.
 
 Adapter Lab is the human review workbench for this boundary. It displays the
-full adapter source or dynamic manifest, supports user-owned drafts, locks
+full adapter source, supports user-owned drafts, locks
 metadata tests to manga URLs and image tests to chapter URLs, and returns full
 `imageUrls` for image extraction tests.
 
@@ -113,16 +164,46 @@ an adapter draft.
 
 ## Crawler rendering
 
-The crawler supports static and Playwright-rendered HTML:
+The crawler always renders pages through a remote Playwright service. The
+endpoint comes from the active Browser Provider session:
 
-- Static mode fetches HTML and parses it with existing selector logic.
-- Headless mode opens a Playwright page, waits for rendering, and passes
-  `page.content()` into the same parser path.
-- Auto mode prefers static HTML and falls back to headless rendering for parsing
-  failures such as missing required selectors, no chapters, or no images.
+- Remote mode opens a Playwright page, waits for rendering, and passes
+  `page.content()` into the parser path.
+- There is no static fetch path; every adapter declares `parseMode: playwright`.
+  Verification handoff does not introduce another parse mode.
 
 Image downloading remains URL-based. Browser image fallback exists only for
 specific verified-session cases.
+
+### Browser Provider boundary
+
+The Browser Provider SDK is the stable integration boundary for a desktop GUI,
+browser companion, or standalone local service. Its provider strategy owns the
+browser lifecycle, while the outbound client adapts that strategy to the common
+control and relay protocol.
+
+```mermaid
+flowchart LR
+  Client[GUI / extension companion / local process] --> Provider[Browser Provider SDK]
+  Provider -->|outbound control + relay WebSockets| Cloud[ComicCrawler backend]
+  Cloud -->|session request over control channel| Provider
+  Provider --> Browser[User-side Chromium]
+  Cloud --> Resolver[Active-session resolver]
+  Resolver --> Crawl[Crawl / discovery / handoff / download fallback]
+```
+
+The backend registry persists enrolled identities and tracks one active session.
+The browser-config resolver overlays that session's connection URL at execution
+time, so callers do not need separate compatibility paths for crawling,
+selector discovery, or verification handoff. `reverse-relay` is the only
+transport: user devices need outbound access to ComicCrawler but do not accept
+inbound connections.
+
+Profile lifecycle uses inheritance: `BrowserProfileStrategy` is the abstract
+parent and `EphemeralProfileStrategy` is currently its only production child.
+It launches a fresh Playwright-managed temporary Chromium profile for each
+provider session. Profile copying, persistent user-data directories, and attach
+to an existing Chrome process are outside the current implementation.
 
 ## Task reliability
 
@@ -148,12 +229,16 @@ When a matched adapter encounters a human verification page, the task enters
 
 1. Open the task detail page.
 2. Click **Open browser for verification**.
-3. Complete verification in the isolated browser profile.
+3. Complete verification in the browser opened by the paired remote Playwright service.
 4. Click **Continue** to resume from checkpoint.
 
 If the challenge handoff expires or is removed, the task detail page prompts the
 user to click **Continue** to recreate the handoff before opening the browser
 again.
+
+Crawler rendering, selector discovery, verification, and browser-assisted image
+downloads share one remote Playwright provider. The backend never launches a
+local browser; the browser process and profile live on the user-side service.
 
 ## AO adapter discovery and verification handoff
 
@@ -162,7 +247,7 @@ AO bundle sources live under `agent/ao/`.
 - `selector-discovery` produces TypeScript `AdapterBase` implementation drafts
   and Markdown review notes for unknown or capability-missing sites.
 - Human verification is handled in the current public flow through handoff jobs
-  exposed under the historical `/api/challenge-discovery/*` namespace.
+  exposed through the canonical `/api/challenge-discovery/*` resource.
 - Restricted challenge strategy drafts are experimental/internal work and
   are not the normal crawl path.
 
@@ -179,11 +264,15 @@ project state.
 
 Shared runtime defaults live in `shared/constants/index.ts`. Process-level
 deployment settings can be overridden by environment variables documented in the
-root README. The dev launcher waits for the backend before starting the
+[Developer Guide](DEVELOPER_GUIDE.md). The dev launcher waits for the backend before starting the
 frontend, then verifies both services are ready.
 
 ## Documentation status
 
-This document describes the current high-level architecture. Detailed API
-schemas, adapter authoring guides, AO operation guides, and reliability internals
-are tracked as follow-up documentation work in `docs/README.md`.
+This document describes the current high-level architecture.
+
+- Detailed system design: outer `docs/SDD.md`.
+- API schema: [OpenAPI](openapi.yaml).
+- Adapter design: [Adapters](ADAPTERS.md).
+- AO operation: [AO Selector Discovery](AO_SELECTOR_DISCOVERY.md).
+- Runtime recovery: [Reliability](RELIABILITY.md).

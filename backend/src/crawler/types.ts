@@ -1,14 +1,18 @@
 export interface BrowserPoolConfig {
   maxInstances: number;
-  headless: boolean;
   timeout: number;
   userAgent?: string;
   proxy?: string;
-  channel?: string;
   storageStatePath?: string;
-  userDataDir?: string;
-  chromiumProfileDirectory?: string;
+  remote?: {
+    wsEndpoint?: string;
+    connectTimeout?: number;
+    exposeNetwork?: string;
+    headers?: Record<string, string>;
+  };
 }
+
+export type RemoteBrowserConfigResolver = () => Promise<BrowserPoolConfig['remote'] | undefined>;
 
 export interface BrowserInstance {
   id: string;

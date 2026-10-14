@@ -5,6 +5,7 @@ import { composeChapterImages, composeMetadata } from '../adapter/runtime-compos
 import type { EventBus } from '../events/bus';
 import { HtmlParser } from './html-parser';
 import type { BrowserPool } from './browser-pool';
+import type { RemoteBrowserConfigResolver } from './types';
 import { ChapterFetcher } from './chapter-fetcher';
 import { ImageDownloader, type DownloadOptions } from './image-downloader';
 import { SearchEngine } from './search';
@@ -20,7 +21,6 @@ import {
   createPreviewFile,
   ensureChapterCheckpoint,
   getOutputRoot,
-  isHeadlessFallbackHttpStatus,
   isHumanVerificationRequiredError,
   recountCheckpoint,
 } from './crawl-helpers';
@@ -31,6 +31,7 @@ export interface CrawlerEngineOptions {
   eventBus?: EventBus;
   browser?: BrowserConfig;
   network?: NetworkConfig;
+  resolveRemoteBrowser?: RemoteBrowserConfigResolver;
 }
 
 export interface CrawlResult {
@@ -76,16 +77,13 @@ export class CrawlerEngine {
     this.downloadDir = options.downloadDir;
     this.concurrency = options.concurrency ?? 5;
     this.browserConfig = options.browser ?? {
-      mode: 'auto',
-      headless: true,
+      mode: 'remote',
       maxInstances: 2,
       timeout: 30000,
       waitUntil: 'domcontentloaded',
       postLoadDelayMs: 0,
     };
-    if (this.browserConfig.mode !== 'static') {
-      this.htmlRenderer = new PlaywrightHtmlRenderer(this.browserConfig, options.network);
-    }
+    this.htmlRenderer = new PlaywrightHtmlRenderer(this.browserConfig, options.network, options.resolveRemoteBrowser);
   }
 
   async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
@@ -316,8 +314,8 @@ export class CrawlerEngine {
         const downloadOptions: DownloadOptions = {
           outputDir: chapterDir,
           concurrency: this.concurrency,
-          ...(verifiedSession?.cdpUrl
-            ? { verifiedBrowser: { cdpUrl: verifiedSession.cdpUrl, pageUrl: chapter.url } }
+          ...(verifiedSession
+            ? { verifiedBrowser: { context: verifiedSession.context, pageUrl: chapter.url } }
             : {}),
           onProgress: (completed, _total, result, image) => {
             const progressImage = image ?? remainingImages[completed - 1];
@@ -484,9 +482,38 @@ export class CrawlerEngine {
   }
 
   private attachRenderer(adapter: AdapterBase): void {
-    if (typeof (adapter as any).setHtmlRenderer === 'function') {
-      adapter.setHtmlRenderer(this.htmlRenderer);
+    const renderer = this.htmlRenderer;
+    if (!renderer) {
+      throw new ComicError('Remote HTML renderer is not configured.', ErrorType.CONFIG_ERROR, false, {
+        adapterId: adapter.id,
+      });
     }
+    const rendererAttachableAdapter = adapter as AdapterBase & {
+      setHtmlRenderer?: (renderer: HtmlRenderer | undefined) => void;
+    };
+    if (typeof rendererAttachableAdapter.setHtmlRenderer !== 'function') {
+      return;
+    }
+    rendererAttachableAdapter.setHtmlRenderer({
+      render: async (url) => {
+        const html = await renderer.render(url);
+        if (adapter.verification && await adapter.verification.detectVerificationRequired(html)) {
+          throw new ComicError(
+            `Adapter "${adapter.id}" detected that human verification is required for ${url}.`,
+            ErrorType.AUTH_ERROR,
+            false,
+            {
+              adapterId: adapter.id,
+              url,
+              antiBotChallenge: true,
+              challengeType: 'adapter_verification_required',
+            }
+          );
+        }
+        return html;
+      },
+      dispose: async () => undefined,
+    });
   }
 
   private emitProgressStage(taskId: string, stage: CrawlStage, stageDetail: string): void {
@@ -504,104 +531,10 @@ export class CrawlerEngine {
   }
 
   private async composeMetadata(adapter: AdapterBase, url: string): Promise<ComicMetadata> {
-    return this.withCrawlerFetchMode(adapter, () => composeMetadata(adapter, url), {
-      adapter,
-      url,
-      operation: 'composeMetadata',
-    });
+    return composeMetadata(adapter, url);
   }
 
   private async composeChapterImages(adapter: AdapterBase, chapterUrl: string): Promise<ImageInfo[]> {
-    return this.withCrawlerFetchMode(adapter, () => composeChapterImages(adapter, chapterUrl), {
-      adapter,
-      url: chapterUrl,
-      operation: 'composeChapterImages',
-    });
-  }
-
-  private async withCrawlerFetchMode<T>(
-    adapter: AdapterBase,
-    operation: () => Promise<T>,
-    context: { adapter: AdapterBase; url: string; operation: string }
-  ): Promise<T> {
-    const preferredMode = this.getPreferredMode(adapter);
-    if (preferredMode === 'static') {
-      return this.runAdapterOperation(adapter, 'static', operation);
-    }
-
-    if (preferredMode === 'headless') {
-      return this.runAdapterOperation(adapter, 'headless', operation);
-    }
-
-    try {
-      return await this.runAdapterOperation(adapter, 'static', operation);
-    } catch (staticError) {
-      if (!this.shouldFallbackToHeadless(staticError)) {
-        throw staticError;
-      }
-
-      logger.warn(
-        {
-          adapterId: context.adapter.id,
-          url: context.url,
-          operation: context.operation,
-          error: errorToLogObject(staticError),
-        },
-        'Static extraction failed; retrying with Playwright headless render'
-      );
-
-      try {
-        return await this.runAdapterOperation(adapter, 'headless', operation);
-      } catch (headlessError) {
-        throw new ComicError(
-          `Static extraction failed and headless fallback also failed for ${context.url}`,
-          ErrorType.PARSING_ERROR,
-          false,
-          {
-            adapterId: context.adapter.id,
-            operation: context.operation,
-            url: context.url,
-            staticError: errorToLogObject(staticError),
-            headlessError: errorToLogObject(headlessError),
-          }
-        );
-      }
-    }
-  }
-
-  private getPreferredMode(adapter: AdapterBase): 'static' | 'headless' | 'auto' {
-    if (this.browserConfig.mode !== 'auto') {
-      return this.browserConfig.mode;
-    }
-    if (adapter.parseMode === 'dynamic' || adapter.parseMode === 'interactive') {
-      return 'headless';
-    }
-    return 'auto';
-  }
-
-  private async runAdapterOperation<T>(
-    adapter: AdapterBase,
-    mode: 'static' | 'headless',
-    operation: () => Promise<T>
-  ): Promise<T> {
-    if (typeof (adapter as any).withHtmlFetchMode === 'function') {
-      return adapter.withHtmlFetchMode(mode, operation);
-    }
-    return operation();
-  }
-
-  private shouldFallbackToHeadless(error: unknown): boolean {
-    if (error instanceof ComicError) {
-      if (error.type === ErrorType.NETWORK_ERROR && isHeadlessFallbackHttpStatus(error.context.statusCode)) {
-        return true;
-      }
-      return error.type === ErrorType.PARSING_ERROR;
-    }
-
-    if (error instanceof Error) {
-      return /HTTP (401|403|429|503)|forbidden|access denied|captcha|cloudflare|anti-bot|too many requests|no chapters|no images|required selector|parsing|empty html/i.test(error.message);
-    }
-
-    return false;
+    return composeChapterImages(adapter, chapterUrl);
   }
 }

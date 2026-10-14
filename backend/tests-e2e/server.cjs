@@ -11,6 +11,8 @@ const { SelectorDiscoveryService, SelectorDiscoverySettingsStore } = require('..
 const { ChallengeDiscoveryService } = require('../dist/challenge');
 const { DynamicSiteAdapter } = require('../dist/adapter/dynamic-site-adapter');
 const { ComicError, ErrorType, errorToLogObject } = require('../dist/error/types');
+const { BrowserProviderRegistry } = require('../dist/browser/provider-registry');
+const { ReverseRelayBrowserProviderClient } = require('../../browser-provider-sdk/dist/src');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
 
@@ -34,13 +36,16 @@ async function start() {
       challengeWaitMs: 1000,
     },
   });
+  const browserProviderRegistry = new BrowserProviderRegistry(storage);
+  await browserProviderRegistry.initialize();
+  const getBrowserConfig = async () => browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser);
 
   const adapterRegistry = new AdapterRegistry(eventBus);
   adapterRegistry.register({
     id: 'kuronavi',
     name: 'Kuronavi E2E Fixture',
     domains: ['kuronavi.one'],
-    parseMode: 'static',
+    parseMode: 'playwright',
     matchUrl: (url) => url.includes('kuronavi.one'),
     capabilities: { verification: false, metadata: true, chapterImages: true },
     loadDocument: async () => ({}),
@@ -62,7 +67,7 @@ async function start() {
     id: 'reliability-fixture',
     name: 'Reliability Fixture',
     domains: ['reliability-fixture.invalid'],
-    parseMode: 'static',
+    parseMode: 'playwright',
     capabilities: { verification: true, metadata: true, chapterImages: true },
     matchUrl: (url) => /\/api\/fixtures\/reliability-/.test(url),
     loadDocument: async (url) => url,
@@ -103,14 +108,17 @@ async function start() {
     concurrency: 1,
     eventBus,
     browser: {
-      mode: 'auto',
-      headless: true,
+      mode: 'remote',
       maxInstances: 1,
       timeout: 30000,
       waitUntil: 'domcontentloaded',
       waitForSelector: '#reader img',
       postLoadDelayMs: 0,
+      remote: {
+        connectTimeout: 30000,
+      },
     },
+    resolveRemoteBrowser: async () => (await getBrowserConfig()).remote,
   });
 
   const taskManager = new TaskManager(async (task) => {
@@ -149,18 +157,18 @@ async function start() {
   await taskManager.initialize();
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-    getBrowserConfig: async () => (await configManager.get()).browser,
+    getBrowserConfig,
     getNetworkConfig: async () => (await configManager.get()).network,
   });
   const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
     workspaceRoot: path.resolve(__dirname, '../../test-results/e2e-agent-workspaces'),
-    getBrowserConfig: async () => (await configManager.get()).browser,
+    getBrowserConfig,
     getNetworkConfig: async () => (await configManager.get()).network,
   });
 
   const server = new ComicCrawlerServer({
-    port: Number.parseInt(process.env.PORT || '4173', 10),
-    host: process.env.HOST || '127.0.0.1',
+    port: Number.parseInt(process.env.COMICCRAWLER_E2E_PORT || '4173', 10),
+    host: process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1',
     configManager,
     taskManager,
     adapterRegistry,
@@ -169,6 +177,7 @@ async function start() {
     selectorDiscoveryService,
     selectorDiscoverySettingsStore,
     challengeDiscoveryService,
+    browserProviderRegistry,
     staticDir: path.resolve(__dirname, '../../frontend/dist'),
   });
 
@@ -314,7 +323,20 @@ async function start() {
 
   await server.start();
 
+  const enrollment = await browserProviderRegistry.enroll(browserProviderRegistry.createEnrollmentToken().token);
+  const provider = createE2eBrowserProvider(enrollment.providerId, process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT);
+  const providerClient = new ReverseRelayBrowserProviderClient({
+    serverUrl: `http://${process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1'}:${process.env.COMICCRAWLER_E2E_PORT || '4173'}`,
+    credential: enrollment.credential,
+    provider,
+  });
+  const providerConnection = providerClient.connectOnce();
+  await waitFor(() => Boolean(browserProviderRegistry.list()[0]?.descriptor));
+  await browserProviderRegistry.createSession(enrollment.providerId, { ttlSeconds: 3600 });
+
   const shutdown = async () => {
+    await providerClient.close();
+    await providerConnection;
     await server.stop();
     await storage.dispose();
     process.exit(0);
@@ -322,6 +344,39 @@ async function start() {
 
   process.once('SIGINT', () => void shutdown());
   process.once('SIGTERM', () => void shutdown());
+}
+
+function createE2eBrowserProvider(providerId, localWsEndpoint) {
+  if (!localWsEndpoint) throw new Error('COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT is required.');
+  const capabilities = {
+    browser: 'chromium', headed: false, interactive: true, persistentContext: false,
+    screenshots: true, downloads: true, tracing: true, fileTransfer: false,
+  };
+  const now = Date.now();
+  const session = {
+    sessionId: 'e2e-browser-session', providerId, protocol: 'playwright', transport: 'reverse-relay',
+    localWsEndpoint, runtimeVersion: require('playwright/package.json').version,
+    capabilities, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 3_600_000).toISOString(),
+  };
+  return {
+    describe: async () => ({
+      contractVersion: '1', providerId, providerType: 'playwright',
+      runtimeVersion: session.runtimeVersion, capabilities, transports: ['reverse-relay'],
+    }),
+    createSession: async () => session,
+    getSession: async (sessionId) => sessionId === session.sessionId ? session : undefined,
+    heartbeat: async () => session,
+    closeSession: async () => undefined,
+    close: async () => undefined,
+  };
+}
+
+async function waitFor(predicate) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for E2E browser provider connection.');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 function installFakeAo(app) {
@@ -399,10 +454,19 @@ function installFakeAo(app) {
   app.post('/__ao/api/conversations/:id/message', async (request, reply) => {
     const conversation = getConversation(conversations, request.params.id);
     const text = request.body?.text || '';
-    const isCandidateTask = text.includes('Selector Discovery Phase 2') || text.includes('Selector Discovery Chapter-Only Candidate');
-    const output = isCandidateTask ? fakeCandidateMarkdown(text) : fakePhase1Markdown(text);
-    const outputPath = isCandidateTask ? 'outputs/candidate-output.md' : 'outputs/phase1-output.md';
-    conversation.files.set(outputPath, output);
+    if (text.includes('# Capability Stage Task')) {
+      const stage = /Produce only the ([a-z-]+) capability draft\./.exec(text)?.[1] || 'chapter-images';
+      const sourcePath = /Write TypeScript capability source to ([^\s]+)\./.exec(text)?.[1];
+      const reviewPath = /Write human review notes for this capability to ([^\s]+)\./.exec(text)?.[1];
+      const source = fakeCapabilitySource(stage, `${conversation.files.get('task.md') || ''}\n${text}`);
+      if (sourcePath) conversation.files.set(sourcePath, source);
+      if (reviewPath) conversation.files.set(reviewPath, `# ${stage} review\n\nE2E fixture capability generated for review.`);
+      conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
+      reply.send({ messageId: `msg-${conversation.messages.length}`, text: `Wrote ${sourcePath} and ${reviewPath}.` });
+      return;
+    }
+    const output = fakePhase1Markdown(text);
+    conversation.files.set('outputs/phase1-output.md', output);
     conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
     reply.send({ messageId: `msg-${conversation.messages.length}`, text: output });
   });
@@ -449,72 +513,35 @@ ${sourceUrl}
 - none`;
 }
 
-function fakeCandidateMarkdown(text = '') {
+function fakeCapabilitySource(stage, text = '') {
+  if (stage === 'common-verification') {
+    const skeletons = [...text.matchAll(/```ts\s*([\s\S]*?)```/g)];
+    const skeleton = skeletons.at(-1)?.[1]?.trim() || '';
+    const sourceUrl = extractSourceUrl(text) || '';
+    const fixturePrefix = sourceUrl.includes('/api/fixtures/discovery-')
+      ? '/api/fixtures/discovery-'
+      : sourceUrl.includes('/api/fixtures/challenge-clears')
+        ? '/api/fixtures/challenge-clears'
+        : undefined;
+    return fixturePrefix
+      ? skeleton.replace(/parsed\.pathname === '\/api' \|\| parsed\.pathname\.startsWith\('\/api\/'\)/, `parsed.pathname.startsWith('${fixturePrefix}')`)
+      : skeleton;
+  }
   const sourceUrl = extractSourceUrl(text) || 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';
-  const source = new URL(sourceUrl);
-  const isChallengeClears = sourceUrl.includes('challenge-clears');
-  const isFixtureReplayDraft = sourceUrl.includes('fixture-replay-draft');
-  const adapterId = isFixtureReplayDraft ? 'fixture-replay-draft-e2e' : isChallengeClears ? 'challenge-clears-e2e' : 'discovery-e2e';
-  const name = isFixtureReplayDraft ? 'Fixture Replay Draft E2E' : isChallengeClears ? 'Challenge Clears E2E' : 'Discovery E2E';
-  const pattern = isChallengeClears
-    ? `${source.origin}/api/fixtures/challenge-*`
-    : isFixtureReplayDraft
-      ? `${source.origin}/api/fixtures/fixture-replay-draft-*`
-    : `${source.origin}/api/fixtures/discovery-*`;
-  const imageItemSelector = isFixtureReplayDraft ? 'img.fixture-replay-draft-page' : 'img.page-image';
-  return `## Adapter Identity
+  const imageSelector = sourceUrl.includes('fixture-replay-draft')
+    ? 'img.fixture-replay-draft-page'
+    : 'img.page-image';
+  return `import { ChapterImagesCapability } from '../../base';
 
-- Adapter ID: ${adapterId}
-- Name: ${name}
-- Source URL: ${sourceUrl}
-
-## URL Patterns
-
-- Domain: ${source.hostname}
-- Pattern: ${pattern}
-
-## Metadata Selectors
-
-- Title:
-- Author:
-- Cover:
-- Status:
-- Tags:
-- Description:
-
-## Chapter Selectors
-
-- Chapter List Container:
-- Item:
-- Title:
-- URL:
-
-## Image Selectors
-
-- Container: #reader
-- Item: ${imageItemSelector}
-- Source Attribute: data-src
-
-## Sample Extraction
-
-- First image: http://127.0.0.1:4173/api/fixtures/discovery-image.jpg
-
-## Evidence
-
-- The rendered reader contains ${imageItemSelector} with data-src.
-
-## Confidence
-
-High for chapter-only image extraction.
-
-## Known Risks
-
-- This fixture only validates chapter-only extraction.
-
-## Reviewer Checklist
-
-- [x] Image selector is present.
-- [x] Source attribute is present.`;
+class E2EChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document);
+    return $('${imageSelector}').map((_, element) => {
+      const raw = $(element).attr('data-src') ?? $(element).attr('src') ?? '';
+      return raw ? this.adapter.resolveUrl(sourceUrl, raw) : '';
+    }).get().filter(Boolean);
+  }
+}`;
 }
 
 function extractSourceUrl(text) {

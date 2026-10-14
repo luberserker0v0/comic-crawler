@@ -1,7 +1,6 @@
 import * as cheerio from 'cheerio';
 import { compactText, safeResolve, summarizeHtmlForAgent } from './html-summary';
 import type { SafeHtmlFetchResult } from './safe-fetch';
-import type { ParsedMarkdownCandidate } from './types';
 import type { AdapterCapabilities, SiteSelectors } from '@comiccrawler/shared';
 
 export interface ExistingAdapterCapabilityContext {
@@ -11,7 +10,6 @@ export interface ExistingAdapterCapabilityContext {
   imageSelectors?: SiteSelectors['images'];
   note?: string;
 }
-
 export function createCapabilityPipelineMarkdown(input: {
   target: 'full' | 'chapter-only';
   existingAdapter?: ExistingAdapterCapabilityContext;
@@ -357,31 +355,4 @@ export function extractFallbackChapterUrlFromHtml(html: string, baseUrl: string)
     }
   });
   return candidates.find((url) => url !== baseUrl);
-}
-
-export function createManifestMarkdown(candidate: ParsedMarkdownCandidate): string {
-  return `# Reviewed Selector Manifest
-
-## Adapter
-
-- Adapter ID: ${candidate.adapterId ?? ''}
-- Name: ${candidate.name ?? ''}
-- Domains: ${candidate.domains.join(', ')}
-- URL Patterns: ${candidate.urlPatterns.join(', ')}
-
-## Selectors
-
-- Metadata Title: ${candidate.selectors.metadata?.title ?? ''}
-- Metadata Author: ${candidate.selectors.metadata?.author ?? ''}
-- Metadata Cover: ${candidate.selectors.metadata?.cover ?? ''}
-- Metadata Status: ${candidate.selectors.metadata?.status ?? ''}
-- Metadata Tags: ${candidate.selectors.metadata?.tags ?? ''}
-- Chapter List: ${candidate.selectors.chapters?.list ?? ''}
-- Chapter Item: ${candidate.selectors.chapters?.item ?? ''}
-- Chapter Title: ${candidate.selectors.chapters?.title ?? ''}
-- Chapter URL: ${candidate.selectors.chapters?.url ?? ''}
-- Image Container: ${candidate.selectors.images?.container ?? ''}
-- Image Item: ${candidate.selectors.images?.item ?? ''}
-- Image Source Attribute: ${candidate.selectors.images?.srcAttr ?? ''}
-`;
 }

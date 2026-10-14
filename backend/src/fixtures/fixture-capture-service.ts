@@ -33,10 +33,13 @@ export class FixtureCaptureService {
       throw new Error(`Challenge discovery job "${input.challengeDiscoveryId}" is not ready.`);
     }
 
-    const snapshot = await this.challengeDiscoveryService.readCdpPageSnapshot(input.challengeDiscoveryId, job.browserCdpUrl, {
-      settle: input.settle,
-      allowNavigate: input.allowNavigate,
-    });
+    const snapshot = await this.challengeDiscoveryService.readRemotePageSnapshot(
+      input.challengeDiscoveryId,
+      {
+        settle: input.settle,
+        allowNavigate: input.allowNavigate,
+      }
+    );
     if (input.expectedUrl && !sameDocumentPath(snapshot.page.url, input.expectedUrl)) {
       throw new Error(`Verified browser page does not match the expected URL. Browser page: ${snapshot.page.url}`);
     }

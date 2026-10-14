@@ -161,9 +161,8 @@ While a task is waiting for verification, it does not occupy a worker slot.
 ### 4. Human verification handoff
 
 The current API namespace is `/api/challenge-discovery`, but the public crawl
-flow treats these records as human verification handoff jobs. Strategy discovery
-and CDP inspection endpoints are diagnostic/internal and are not part of the
-normal crawl flow.
+flow treats these records as human verification handoff jobs. Every browser
+operation uses the configured remote Playwright WebSocket service.
 
 Read the handoff job:
 
@@ -171,20 +170,15 @@ Read the handoff job:
 GET /api/challenge-discovery/:id
 ```
 
-Open the isolated browser for the user:
+Open the task URL in the configured remote browser service:
 
 ```http
-POST /api/challenge-discovery/:id/open-external-browser
+POST /api/challenge-discovery/:id/open-browser
 ```
 
-Optional body:
-
-```json
-{
-  "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "profileId": "default"
-}
-```
+This creates the browser context through ComicCrawler's remote Playwright
+connection. The later inspect, selector-discovery, and verification calls reuse
+that context; they do not attach to an unrelated Playwright client session.
 
 After the user completes verification in that browser:
 
@@ -210,26 +204,16 @@ When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
 GET /api/selector-discovery/:id
 ```
 
-Validate/revalidate if needed:
-
-```http
-POST /api/selector-discovery/:id/validate
-POST /api/selector-discovery/:id/revalidate
-```
-
 Stage 1 AO discovery produces a TypeScript `AdapterBase` implementation draft
 and Markdown review notes. Review those artifacts before any runtime promotion.
-Legacy selector-manifest promotion endpoints may still exist, but AO
-TypeScript promotion is intentionally not automatic in Stage 1.
 
-After human review of a legacy selector draft, approve the draft:
+After human review, approve the TypeScript implementation draft:
 
 ```http
 POST /api/selector-discovery/:id/promote
 ```
 
-Then create the crawl task again. For AO TypeScript implementation drafts, use
-the WebUI review flow until the Stage 2 promotion policy is finalized.
+Then create the crawl task again.
 
 ### 6. Result and previews
 
@@ -242,8 +226,68 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 
 ## Public support APIs
 
+### Browser Provider registration and sessions
+
+Browser-backed operations use an enrolled user-side Browser Provider. An
+SDK client first reads the service document:
+
+```http
+GET /.well-known/comiccrawler-browser-provider
+```
+
+It contains the contract version, `reverse-relay` transport, enrollment
+endpoint, control WebSocket endpoint, and relay endpoint template. An
+administrator then creates a short-lived, one-time enrollment token:
+
+```http
+POST /api/browser-providers/enrollment-tokens
+Content-Type: application/json
+
+{ "ttlSeconds": 600 }
+```
+
+The user-side CLI submits that token to `POST /api/browser-providers/enroll` as
+`Authorization: Bearer <token>`. ComicCrawler returns the server-assigned
+`providerId`, `credentialId`, and credential once. The CLI stores state and the
+credential in separate files, then uses the credential for an outbound
+WebSocket connection to `/api/browser-providers/connect`. Neither the user
+machine nor its browser exposes an inbound port.
+
+Create the active browser session:
+
+```http
+POST /api/browser-providers/{providerId}/sessions
+Content-Type: application/json
+
+{
+  "requestedCapabilities": {
+    "interactive": true
+  },
+  "ttlSeconds": 1800
+}
+```
+
+ComicCrawler automatically resolves the active session's relay `connectUrl` for
+all browser-backed work. Only one active session is supported by the current
+registry. Enrollment records persist across backend restarts; the client
+reconnects outbound and sessions remain short-lived.
+
+Use these lifecycle endpoints to inspect, renew, or close it:
+
+```http
+GET /api/browser-providers
+GET /api/browser-providers/sessions/active
+POST /api/browser-providers/sessions/{sessionId}/heartbeat
+DELETE /api/browser-providers/sessions/{sessionId}
+```
+
+The only transport is `reverse-relay`. Protect ComicCrawler's administrative
+API, provider credential files, and active session URLs. Use HTTPS/WSS for
+remote deployments.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/.well-known/comiccrawler-browser-provider` | Discover the browser-provider contract and outbound connection endpoints. |
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `POST` | `/api/adapters/chapter-images` | Resolve an adapter and return every ordered image URL extracted from one chapter. |
@@ -251,7 +295,6 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
 | `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
-| `GET` | `/api/adapters/:id/functions/:functionId/source` | Read the legacy function source snippet view. Prefer `/implementation` for review. |
 | `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
 | `POST` | `/api/adapters/:id/restore` | Restore a deleted adapter when a runtime backup or restored project source is available. |
@@ -273,6 +316,14 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/config/selector-discovery` | Read selector discovery settings without provider secrets. |
 | `PUT` | `/api/config/selector-discovery` | Save AO URL, provider document, and selected model. |
 | `POST` | `/api/config/selector-discovery/test` | Test selector discovery settings. |
+| `POST` | `/api/browser-providers/enrollment-tokens` | Create a short-lived one-time enrollment token. |
+| `POST` | `/api/browser-providers/enroll` | Exchange an enrollment token for server-assigned provider state and a credential. |
+| `GET` | `/api/browser-providers` | List registered providers and the active session. |
+| `DELETE` | `/api/browser-providers/:providerId` | Revoke and remove an enrolled provider that has no active session. |
+| `GET` | `/api/browser-providers/sessions/active` | Read the active browser session. |
+| `POST` | `/api/browser-providers/:providerId/sessions` | Create and activate a negotiated browser session. |
+| `POST` | `/api/browser-providers/sessions/:sessionId/heartbeat` | Extend the active session expiry. |
+| `DELETE` | `/api/browser-providers/sessions/:sessionId` | Close the active session and its user-side browser. |
 
 Adapter Lab function tests are diagnostic support APIs. The WebUI locks
 metadata tests to manga catalog URLs and chapter image tests to chapter URLs;
@@ -299,11 +350,9 @@ These routes currently exist but should not be used as the normal crawl API:
 - `GET /api/challenge-discovery`
 - `POST /api/challenge-discovery/:id/retry`
 - `POST /api/challenge-discovery/:id/promote`
-- `POST /api/challenge-discovery/:id/open-browser`
-- `POST /api/challenge-discovery/cdp/test`
-- `POST /api/challenge-discovery/:id/inspect-cdp-page`
-- `POST /api/challenge-discovery/:id/create-selector-discovery-from-cdp`
-- `/api/site-discovery/*` - backwards-compatible alias for selector discovery.
+- `POST /api/challenge-discovery/remote/test`
+- `POST /api/challenge-discovery/:id/inspect-remote-page`
+- `POST /api/challenge-discovery/:id/create-selector-discovery-from-remote`
 - `/api/agent/adapters/*` - adapter review/admin routes.
 
 They may remain useful for tests, development, diagnostics, or future AO work,
@@ -311,8 +360,8 @@ but they are intentionally excluded from the public crawl flow above.
 
 ## WebSocket
 
-`/ws` emits task and image events for live UI updates. REST polling remains the
-contractual fallback for API-only clients.
+`/ws` emits task and image events for live UI updates. API-only clients can use
+the REST task resources directly.
 
 ## CLI boundary
 

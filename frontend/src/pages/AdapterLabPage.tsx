@@ -32,7 +32,6 @@ export const AdapterLabPage: React.FC = () => {
   const [testResult, setTestResult] = useState<AdapterFunctionTestResponse | null>(null);
   const [challengeJob, setChallengeJob] = useState<ChallengeHandoffJobSummary | null>(null);
   const [verifiedChallengeId, setVerifiedChallengeId] = useState<string | null>(null);
-  const [browserExecutablePath, setBrowserExecutablePath] = useState('');
   const [browserAction, setBrowserAction] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [testStatusMessage, setTestStatusMessage] = useState<string | null>(null);
@@ -81,15 +80,12 @@ export const AdapterLabPage: React.FC = () => {
   const editorLanguage = draft?.language ?? implementation?.language ?? 'markdown';
 
   const challengeDiscoveryId = testResult?.challengeDiscoveryId;
-  const browserAlreadyOpen = challengeJob?.status === 'external_browser_open'
-    || challengeJob?.status === 'external_browser_opening'
-    || challengeJob?.status === 'ready';
+  const browserAlreadyOpen = challengeJob?.status === 'browser_open' || challengeJob?.status === 'ready';
 
   /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): challenge-status fetch with sync reset; remodel to render-time derivation */
   useEffect(() => {
     if (!challengeDiscoveryId) {
       setChallengeJob(null);
-      setBrowserExecutablePath('');
       return;
     }
 
@@ -99,16 +95,6 @@ export const AdapterLabPage: React.FC = () => {
         if (!cancelled) setChallengeJob(response.data);
       })
       .catch(() => undefined);
-    api.getChallengeBrowserOptions()
-      .then((response) => {
-        if (cancelled) return;
-        const first = response.data?.browsers?.[0];
-        if (first?.executablePath) {
-          setBrowserExecutablePath((current) => current || first.executablePath);
-        }
-      })
-      .catch(() => undefined);
-
     return () => {
       cancelled = true;
     };
@@ -156,7 +142,7 @@ export const AdapterLabPage: React.FC = () => {
     try {
       const response = await api.getAdapterCapabilities(adapterId);
       const implementationResponse = await api.getAdapterImplementation(adapterId);
-      const draftListResponse = await api.getAdapterDrafts();
+      const draftListResponse = await api.getAdapterDrafts().catch(() => ({ data: { drafts: [] } }));
       setCapabilityDetail(response.data);
       setImplementation(implementationResponse.data);
       setDrafts(draftListResponse.data.drafts);
@@ -191,14 +177,8 @@ export const AdapterLabPage: React.FC = () => {
       setError('Project-source TypeScript draft execution is not supported yet. Save the draft, then test the active adapter or wait for TS draft sandbox support.');
       return;
     }
-    const adapterDomStrategy = capabilityDetail?.adapter.parseMode === 'dynamic' || capabilityDetail?.adapter.parseMode === 'interactive'
-      ? 'Playwright render'
-      : 'Static fetch';
-    const challengeIdForTest = challengeId ?? (
-      capabilityDetail?.adapter.parseMode === 'dynamic' || capabilityDetail?.adapter.parseMode === 'interactive'
-        ? verifiedChallengeId ?? undefined
-        : undefined
-    );
+    const adapterDomStrategy = 'Playwright render';
+    const challengeIdForTest = challengeId ?? verifiedChallengeId ?? undefined;
     setError(null);
     setLoading('test');
     setTestStatusMessage(challengeIdForTest
@@ -239,9 +219,7 @@ export const AdapterLabPage: React.FC = () => {
     setError(null);
     setBrowserAction('open');
     try {
-      const response = await api.openChallengeDiscoveryExternalBrowser(challengeDiscoveryId, {
-        executablePath: browserExecutablePath || undefined,
-      });
+      const response = await api.openChallengeDiscoveryBrowser(challengeDiscoveryId);
       setChallengeJob(response.data);
     } catch (err) {
       setError(getApiErrorMessage(err));
@@ -368,8 +346,6 @@ export const AdapterLabPage: React.FC = () => {
           editorLanguage={editorLanguage}
           testResult={testResult}
           challengeJob={challengeJob}
-          browserExecutablePath={browserExecutablePath}
-          setBrowserExecutablePath={setBrowserExecutablePath}
           browserAction={browserAction}
           browserAlreadyOpen={browserAlreadyOpen}
           openVerificationBrowser={openVerificationBrowser}

@@ -1,11 +1,12 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { fetch } from 'undici';
-import { chromium } from 'playwright';
 import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import { assertNotAntiBotChallenge, looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
 import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
+import { connectRemoteBrowser } from '../browser/remote-browser-provider';
+import { findPageHtmlInContexts } from '../challenge/remote-handoff';
 
 export interface SafeHtmlFetchResult {
   url: string;
@@ -22,6 +23,12 @@ export interface SafeHtmlFetchOptions {
   timeoutMs?: number;
   browser?: Partial<BrowserConfig>;
   network?: NetworkConfig;
+  /**
+   * Skip the static fetch and go straight to Playwright-rendered DOM.
+   * Selector discovery always renders so AO evidence and runtime use the
+   * same mechanism; static stays available for other callers.
+   */
+  renderFirst?: boolean;
 }
 
 export async function fetchSafeHtml(
@@ -32,6 +39,13 @@ export async function fetchSafeHtml(
   const timeoutMs = options.timeoutMs ?? options.browser?.timeout ?? options.network?.timeout ?? 30000;
   let currentUrl = normalizeAndValidateUrl(url);
   const redirectChain: string[] = [];
+
+  if (options.renderFirst) {
+    await validateResolvedAddresses(currentUrl);
+    const html = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
+    assertNotAntiBotChallenge(html, currentUrl);
+    return { url, finalUrl: currentUrl, redirectChain, html, contentType: 'text/html; rendered=playwright' };
+  }
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     await validateResolvedAddresses(currentUrl);
@@ -75,7 +89,7 @@ export async function fetchSafeHtml(
       }
 
       const html = await readLimitedText(response as any, MAX_HTML_BYTES);
-      if (looksLikeAntiBotChallenge(html) && options.browser?.mode !== 'static') {
+      if (looksLikeAntiBotChallenge(html)) {
         const renderedHtml = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
         assertNotAntiBotChallenge(renderedHtml, currentUrl);
         return { url, finalUrl: currentUrl, redirectChain, html: renderedHtml, contentType: 'text/html; rendered=playwright' };
@@ -152,18 +166,13 @@ function shouldFallbackToHeadless(status: number): boolean {
 
 async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { timeoutMs: number }): Promise<string> {
   const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
+  if (verifiedSession) {
+    return (await findPageHtmlInContexts([verifiedSession.context], {
+      targetUrl: url,
+    })).html;
+  }
   const browserOptions = {
     ...(options.browser ?? {}),
-    ...(verifiedSession ? { userDataDir: verifiedSession.userDataDir } : {}),
-  };
-  const launchOptions = {
-    headless: verifiedSession?.userDataDir ? false : browserOptions.headless ?? true,
-    channel: browserOptions.channel,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      ...(verifiedSession?.chromiumProfileDirectory ? [`--profile-directory=${verifiedSession.chromiumProfileDirectory}`] : []),
-    ],
   };
   const contextOptions = {
     userAgent: options.network?.userAgent,
@@ -171,13 +180,13 @@ async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { 
     storageState: browserOptions.storageStatePath,
     viewport: { width: 1920, height: 1080 },
   };
-  const browser = browserOptions.userDataDir ? undefined : await chromium.launch(launchOptions);
-  const context = browserOptions.userDataDir
-    ? await chromium.launchPersistentContext(browserOptions.userDataDir, {
-        ...launchOptions,
-        ...contextOptions,
-      })
-    : await browser!.newContext(contextOptions);
+  const browser = await connectRemoteBrowser({
+    wsEndpoint: browserOptions.remote?.wsEndpoint,
+    timeout: browserOptions.remote?.connectTimeout ?? options.timeoutMs,
+    exposeNetwork: browserOptions.remote?.exposeNetwork,
+    headers: browserOptions.remote?.headers,
+  });
+  const context = await browser.newContext(contextOptions);
   try {
     const page = await context.newPage();
     await page.goto(url, {
@@ -199,7 +208,7 @@ async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { 
     })).html;
   } finally {
     await context.close().catch(() => undefined);
-    await browser?.close().catch(() => undefined);
+    await browser.close().catch(() => undefined);
   }
 }
 

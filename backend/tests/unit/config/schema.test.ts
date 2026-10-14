@@ -2,7 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { validateGlobalConfig } from '../../../src/config/schema';
 
 describe('global config schema', () => {
-  it('adds default browser crawler config for legacy configs', () => {
+  it('applies the remote browser defaults when browser config is omitted', () => {
     const config = validateGlobalConfig({
       download: {
         directory: './downloads',
@@ -34,16 +34,15 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toEqual({
-      mode: 'auto',
-      headless: true,
+      mode: 'remote',
       maxInstances: 2,
       timeout: 30000,
       waitUntil: 'domcontentloaded',
       postLoadDelayMs: 0,
       challengeAutoAttempt: true,
       challengeWaitMs: 15000,
-      handoff: {
-        mode: 'snapshot',
+      remote: {
+        connectTimeout: 30000,
       },
     });
   });
@@ -67,20 +66,17 @@ describe('global config schema', () => {
         retryDelay: 1000,
       },
       browser: {
-        mode: 'headless',
-        headless: false,
+        mode: 'remote',
         maxInstances: 1,
         timeout: 45000,
         waitUntil: 'domcontentloaded',
         postLoadDelayMs: 1000,
         challengeAutoAttempt: true,
         challengeWaitMs: 60000,
-        channel: 'chrome',
         storageStatePath: 'D:/secrets/storage-state.json',
-        userDataDir: 'D:/profiles/comiccrawler',
-        handoff: {
-          mode: 'cdp',
-          cdpUrl: 'http://127.0.0.1:9222',
+        remote: {
+          connectTimeout: 45000,
+          exposeNetwork: '<loopback>',
         },
       },
       server: {
@@ -97,12 +93,10 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toMatchObject({
-      channel: 'chrome',
       storageStatePath: 'D:/secrets/storage-state.json',
-      userDataDir: 'D:/profiles/comiccrawler',
-      handoff: {
-        mode: 'cdp',
-        cdpUrl: 'http://127.0.0.1:9222',
+      remote: {
+        connectTimeout: 45000,
+        exposeNetwork: '<loopback>',
       },
       challengeAutoAttempt: true,
       challengeWaitMs: 60000,

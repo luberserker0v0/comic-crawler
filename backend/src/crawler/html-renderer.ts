@@ -2,9 +2,10 @@ import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import { BrowserPool } from './browser-pool';
 import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
 import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
-import { findCdpPageHtml } from '../challenge/cdp-handoff';
+import { findPageHtmlInContexts, settleLazyLoadedImages } from '../challenge/remote-handoff';
 import { assertNotAntiBotChallenge } from './anti-bot';
 import { ComicError, ErrorType } from '../error/types';
+import type { RemoteBrowserConfigResolver } from './types';
 
 export interface HtmlRenderer {
   render(url: string): Promise<string>;
@@ -13,19 +14,20 @@ export interface HtmlRenderer {
 
 export class PlaywrightHtmlRenderer implements HtmlRenderer {
   private browserPool?: BrowserPool;
-  private browserPoolProfileKey?: string;
+  private browserPoolEndpointKey?: string;
   private readonly challengeHandler = new BrowserChallengeHandler();
 
   constructor(
     private readonly browser: BrowserConfig,
-    private readonly network?: NetworkConfig
+    private readonly network?: NetworkConfig,
+    private readonly resolveRemote?: RemoteBrowserConfigResolver
   ) {}
 
   async render(url: string): Promise<string> {
     const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
-    if (verifiedSession?.cdpUrl) {
+    if (verifiedSession) {
       try {
-        const page = await findCdpPageHtml({ cdpUrl: verifiedSession.cdpUrl, targetUrl: url });
+        const page = await findPageHtmlInContexts([verifiedSession.context], { targetUrl: url });
         assertNotAntiBotChallenge(page.html, page.url);
         return page.html;
       } catch (error) {
@@ -35,61 +37,21 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
           true,
           {
             humanVerificationProfileUnavailable: true,
-            challengeDiscoveryId: verifiedSession.sourceJobId,
-            challengeStatus: 'external_browser_required',
+            challengeDiscoveryId: verifiedSession?.sourceJobId,
+            challengeStatus: 'challenge_required',
             hostname: new URL(url).hostname,
-            cdpUrl: verifiedSession.cdpUrl,
-            userDataDir: verifiedSession.userDataDir,
-            chromiumProfileDirectory: verifiedSession.chromiumProfileDirectory,
+            wsEndpoint: verifiedSession.wsEndpoint,
             cause: error instanceof Error ? error.message : String(error),
           }
         );
       }
     }
 
-    if (verifiedSession?.userDataDir) {
-      throw new ComicError(
-        'Human verification must continue from the verified browser page. Reopen the verification browser for this task and complete verification; ComicCrawler will attach to that page instead of opening a new tab.',
-        ErrorType.NETWORK_ERROR,
-        true,
-        {
-          humanVerificationProfileUnavailable: true,
-          challengeDiscoveryId: verifiedSession.sourceJobId,
-          challengeStatus: 'external_browser_required',
-          hostname: new URL(url).hostname,
-          userDataDir: verifiedSession.userDataDir,
-          chromiumProfileDirectory: verifiedSession.chromiumProfileDirectory,
-        }
-      );
-    }
-
-    let browserPool: BrowserPool;
-    let page: import('playwright').Page;
-    try {
-      browserPool = await this.getBrowserPool(url);
-      page = await browserPool.createPage({
-        userAgent: this.network?.userAgent,
-        proxy: this.network?.proxy,
-      });
-    } catch (error) {
-      if (verifiedSession?.userDataDir) {
-        throw new ComicError(
-          'Human verification browser profile is not available yet. Close the verification browser window for that profile, then continue the task.',
-          ErrorType.NETWORK_ERROR,
-          true,
-          {
-            humanVerificationProfileUnavailable: true,
-            hostname: new URL(url).hostname,
-            userDataDir: verifiedSession.userDataDir,
-            chromiumProfileDirectory: verifiedSession.chromiumProfileDirectory,
-            challengeDiscoveryId: verifiedSession.sourceJobId,
-            challengeStatus: 'ready',
-            cause: error instanceof Error ? error.message : String(error),
-          }
-        );
-      }
-      throw error;
-    }
+    const browserPool = await this.getBrowserPool(url);
+    const page = await browserPool.createPage({
+      userAgent: this.network?.userAgent,
+      proxy: this.network?.proxy,
+    });
 
     try {
       await page.goto(url, {
@@ -112,10 +74,14 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
         await page.waitForTimeout(this.browser.postLoadDelayMs);
       }
 
-      return (await this.challengeHandler.ensureReady(page, url, {
+      await this.challengeHandler.ensureReady(page, url, {
         challengeAutoAttempt: this.browser.challengeAutoAttempt,
         challengeWaitMs: this.browser.challengeWaitMs,
-      })).html;
+      });
+      await settleLazyLoadedImages(page, { onlyDetectedTargets: true });
+      const html = await page.content();
+      assertNotAntiBotChallenge(html, page.url());
+      return html;
     } finally {
       await browserPool.closePage(page);
     }
@@ -125,29 +91,24 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
     await this.browserPool?.dispose();
   }
 
-  private async getBrowserPool(url: string): Promise<BrowserPool> {
-    const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
-    const userDataDir = verifiedSession?.userDataDir ?? this.browser.userDataDir;
-    const chromiumProfileDirectory = verifiedSession?.chromiumProfileDirectory;
-    const profileKey = `${userDataDir ?? '__ephemeral__'}::${chromiumProfileDirectory ?? ''}`;
+  private async getBrowserPool(_url: string): Promise<BrowserPool> {
+    const remote = await this.resolveRemote?.() ?? this.browser.remote;
+    const endpointKey = remote?.wsEndpoint ?? '__remote_unconfigured__';
 
-    if (this.browserPool && this.browserPoolProfileKey === profileKey) {
+    if (this.browserPool && this.browserPoolEndpointKey === endpointKey) {
       return this.browserPool;
     }
 
     await this.browserPool?.dispose();
-    this.browserPoolProfileKey = profileKey;
-      this.browserPool = new BrowserPool({
-      maxInstances: userDataDir ? 1 : this.browser.maxInstances,
-      headless: verifiedSession?.userDataDir ? false : this.browser.headless,
+    this.browserPoolEndpointKey = endpointKey;
+    this.browserPool = new BrowserPool({
+      maxInstances: this.browser.maxInstances,
       timeout: this.browser.timeout,
       userAgent: this.network?.userAgent,
       proxy: this.network?.proxy,
-      channel: this.browser.channel,
       storageStatePath: this.browser.storageStatePath,
-      userDataDir,
-      chromiumProfileDirectory,
-    });
+      remote,
+    }, this.resolveRemote);
     return this.browserPool;
   }
 }

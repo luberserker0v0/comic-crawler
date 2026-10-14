@@ -2,7 +2,7 @@ import type { Page } from 'playwright';
 import { ComicError, ErrorType } from '../error/types';
 import { PlaywrightChallengeContext } from './challenge-context';
 import type { ChallengeDecision, ChallengeStrategyModule } from './types';
-import { ChallengeStrategyRegistry, getGlobalChallengeStrategyRegistry } from './registry';
+import { getGlobalChallengeStrategyRegistry } from './registry';
 
 export interface BrowserChallengeHandlerOptions {
   challengeAutoAttempt?: boolean;

@@ -4,7 +4,7 @@ import { KURONAVI_SELECTORS } from './selectors';
 
 export const KURONAVI_SITE_MANIFEST: SiteManifest = {
   id: 'kuronavi',
-  parseMode: 'static',
+  parseMode: 'playwright',
   selectors: KURONAVI_SELECTORS,
   maintenance: {
     repairMode: 'selector-only',

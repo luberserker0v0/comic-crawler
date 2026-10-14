@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AdapterFunctionTestRequest, SaveAdapterDraftContentRequest } from '@comiccrawler/shared';
+import type { AdapterFunctionTestRequest, BrowserConfig, NetworkConfig, SaveAdapterDraftContentRequest } from '@comiccrawler/shared';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
@@ -8,6 +8,8 @@ import { instantiateAdapterImplementationDraft } from '../../selector-discovery/
 
 interface AdapterDraftRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
+  getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+  getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
 }
 
 export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDraftService, options: AdapterDraftRouteOptions = {}): void {
@@ -84,9 +86,15 @@ export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDr
       const adapter = draft.draft.sourceKind === 'generated-draft'
         ? instantiateAdapterImplementationDraft(draft.content)
         : new DynamicSiteAdapter(parseDynamicManifestDraft(draft.content));
+      const [browser, network] = await Promise.all([
+        options.getBrowserConfig?.(),
+        options.getNetworkConfig?.(),
+      ]);
       const result = await testAdapterFunction(adapter, functionId, body.url, {
+        browser,
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
       });
       reply.send({
         data: {

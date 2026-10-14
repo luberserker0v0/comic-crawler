@@ -1,8 +1,9 @@
+import type { BrowserContext } from 'playwright';
+
 export interface VerifiedBrowserSession {
   hostname: string;
-  userDataDir: string;
-  chromiumProfileDirectory?: string;
-  cdpUrl?: string;
+  wsEndpoint: string;
+  context: BrowserContext;
   verifiedAt: string;
   sourceJobId?: string;
 }
@@ -27,6 +28,12 @@ export class VerifiedBrowserSessionRegistry {
 
   clear(): void {
     this.sessions.clear();
+  }
+
+  deleteBySourceJobId(sourceJobId: string): void {
+    for (const [hostname, session] of this.sessions) {
+      if (session.sourceJobId === sourceJobId) this.sessions.delete(hostname);
+    }
   }
 }
 

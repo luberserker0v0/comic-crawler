@@ -29,15 +29,18 @@ import type { DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adap
 import type { ActiveImplementationAdapterRecord } from '../../selector-discovery/service';
 import type { IStorage } from '../../storage/types';
 import type { ChallengeDiscoveryService } from '../../challenge';
-import { getAdapterFunctionSource, getAdapterImplementation } from './adapter-function-source';
+import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
 import type { AdapterFunctionId } from './adapter-function-types';
+import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
 
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
+  getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+  getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
 }
 
@@ -247,9 +250,15 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
+    const [browser, network] = await Promise.all([
+      options.getBrowserConfig?.(),
+      options.getNetworkConfig?.(),
+    ]);
     const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+      browser,
       challengeDiscoveryId: body.challengeDiscoveryId,
       challengeDiscoveryService: options.challengeDiscoveryService,
+      network,
     });
     if (!extraction.ok) {
       reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
@@ -311,23 +320,6 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     reply.send({ data });
   });
 
-  app.get('/api/adapters/:id/functions/:functionId/source', async (request: FastifyRequest, reply: FastifyReply) => {
-    const adapter = getAdapterFromRequest(request, registry);
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
-
-    const { functionId } = request.params as { functionId: AdapterFunctionId };
-    if (!isKnownAdapterFunction(functionId)) {
-      reply.code(400).send({ error: 'Unknown adapter function.' });
-      return;
-    }
-
-    const source = await getAdapterFunctionSource(adapter, functionId);
-    reply.send({ data: source });
-  });
-
   app.post('/api/adapters/:id/functions/:functionId/test', async (request: FastifyRequest, reply: FastifyReply) => {
     const adapter = getAdapterFromRequest(request, registry);
     if (!adapter) {
@@ -347,9 +339,15 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
-      const result = await testAdapterFunction(adapter, functionId, body.url, {
+    const [browser, network] = await Promise.all([
+      options.getBrowserConfig?.(),
+      options.getNetworkConfig?.(),
+    ]);
+    const result = await testAdapterFunction(adapter, functionId, body.url, {
+        browser,
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
       });
     reply.send({ data: result });
   });

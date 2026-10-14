@@ -3,6 +3,9 @@
 This guide is for contributors working in `repo/`, which is the source-of-truth
 Git root for ComicCrawler.
 
+See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for runtime settings,
+startup behavior, troubleshooting, and detailed verification commands.
+
 ## Development setup
 
 Requirements:
@@ -59,7 +62,7 @@ Use the smallest gate that covers your change:
   npm run test:api
   ```
 
-- WebUI flows, crawler behavior, challenge handoff, selector discovery, dynamic
+- WebUI flows, crawler behavior, challenge handoff, selector discovery, generated
   adapters, or reliability behavior:
 
   ```bash
@@ -142,7 +145,7 @@ generic pre-extraction button clicking or DOM preparation.
 
 Built-in adapters should include focused unit tests. Verified DOM fixtures may
 be captured from real browser sessions for local diagnosis, but hand-written
-fake site fixtures must not be used to imply live-site correctness. Dynamic
+fake site fixtures must not be used to imply live-site correctness. Generated
 adapters should come from reviewed selector drafts and should be promoted
 through the existing adapter review flow.
 

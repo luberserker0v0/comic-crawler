@@ -45,7 +45,7 @@ export function assertNotAntiBotChallenge(html: string, url: string): void {
   }
 
   throw new ComicError(
-    `Anti-bot challenge page detected while fetching ${url}. Playwright rendered the challenge page instead of the comic DOM. Configure a user-provided browser session storageStatePath or userDataDir after solving the challenge manually.`,
+    `Anti-bot challenge page detected while fetching ${url}. Complete verification in the configured remote Playwright browser session, then resume the task.`,
     ErrorType.NETWORK_ERROR,
     false,
     { url, antiBotChallenge: true }

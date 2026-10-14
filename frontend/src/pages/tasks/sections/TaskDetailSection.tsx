@@ -7,7 +7,6 @@ export function TaskDetailSection(props: {
   detail: TaskDetail;
   taskAction: string | null;
   isVerificationBrowserOpening: boolean;
-  isExternalVerificationUnreadable: boolean;
   pauseTask: (id: string) => void;
   cancelTask: (id: string) => void;
   handleResumeTask: (id: string) => void;
@@ -20,7 +19,6 @@ export function TaskDetailSection(props: {
     detail,
     taskAction,
     isVerificationBrowserOpening,
-    isExternalVerificationUnreadable,
     pauseTask,
     cancelTask,
     handleResumeTask,
@@ -47,16 +45,14 @@ export function TaskDetailSection(props: {
             {canResumeTaskDetail(detail) && (
               <button
                 onClick={() => void handleResumeTask(detail.task.id)}
-                disabled={taskAction !== null || isVerificationBrowserOpening || isExternalVerificationUnreadable}
+                disabled={taskAction !== null || isVerificationBrowserOpening}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 {isVerificationBrowserOpening
                   ? 'Opening browser...'
-                  : isExternalVerificationUnreadable
-                    ? 'Browser not readable'
-                    : taskAction === 'resume'
-                      ? 'Continuing...'
-                      : text.taskList.resume}
+                  : taskAction === 'resume'
+                    ? 'Continuing...'
+                    : text.taskList.resume}
               </button>
             )}
             {['running', 'pending', 'paused'].includes(detail.task.status) && (

@@ -7,7 +7,7 @@ export class HappyMhAdapter extends AdapterBase {
   readonly id = 'happymh';
   readonly name = 'HappyMH';
   readonly domains = ['m.happymh.com'];
-  readonly parseMode = 'dynamic' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = {
     verification: true,
     metadata: true,

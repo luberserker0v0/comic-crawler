@@ -79,7 +79,7 @@ describe('KuronaviAdapter', () => {
       fetchHtmlSpy.mockRestore();
     });
 
-    it('should ignore non-chapter navigation links when the legacy chapter-list wrapper is absent', async () => {
+    it('should ignore non-chapter navigation links when the primary chapter-list wrapper is absent', async () => {
       const html = `
         <html>
           <body>
@@ -154,7 +154,7 @@ describe('KuronaviAdapter', () => {
     });
 
     it('should use static parse mode', () => {
-      expect(adapter.parseMode).toBe('static');
+      expect(adapter.parseMode).toBe('playwright');
     });
   });
 });

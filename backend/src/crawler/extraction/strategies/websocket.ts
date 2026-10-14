@@ -3,7 +3,7 @@ import type { IExtractionStrategy, ExtractionContext } from '../types';
 
 export class WebSocketExtractionStrategy implements IExtractionStrategy {
   readonly name = 'websocket';
-  readonly parseMode = 'dynamic' as const;
+  readonly parseMode = 'playwright' as const;
 
   async extractMetadata(_context: ExtractionContext): Promise<ComicMetadata> {
     throw new Error('WebSocketExtractionStrategy requires WebSocket listener setup');

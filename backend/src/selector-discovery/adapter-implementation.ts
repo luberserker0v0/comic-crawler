@@ -134,8 +134,8 @@ export function validateAdapterImplementationDraft(
     }
   }
 
-  if (!/readonly\s+parseMode\s*[^=]*=\s*['"](?:static|dynamic|interactive)['"]/.test(source)) {
-    errors.push('parseMode must be one of "static", "dynamic", or "interactive".');
+  if (!/readonly\s+parseMode\s*[^=]*=\s*['"]playwright['"]/.test(source)) {
+    errors.push('parseMode must be "playwright".');
   }
 
   if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*(?:true|false)[^}]*metadata\s*:\s*(?:true|false)[^}]*chapterImages\s*:\s*(?:true|false)/s.test(source)) {

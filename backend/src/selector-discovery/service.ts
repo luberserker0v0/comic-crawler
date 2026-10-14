@@ -1,7 +1,5 @@
 import type { AdapterRegistry } from '../adapter/registry';
 import { getAdapterCapabilities } from '../adapter/registry';
-import { AdapterBase } from '../adapter/base';
-import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../adapter/dynamic-site-adapter';
 import {
   ACTIVE_DYNAMIC_ADAPTERS_KEY,
@@ -11,14 +9,12 @@ import type { AdapterCapabilities, BrowserConfig, IComicAdapter, NetworkConfig }
 import type { IStorage } from '../storage/types';
 import { AoClient } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
-import { parseMarkdownCandidate, validateMarkdownCandidate } from './markdown-candidate';
-import { validateChapterImageSelectorExtraction, validateSelectorExtraction } from './extraction-validator';
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
 import { looksLikeAntiBotChallenge } from '../crawler/anti-bot';
 import { SelectorDiscoverySettingsStore } from './settings-store';
 import { validateAdapterImplementationDraft, validateCapabilityDraft } from './adapter-implementation';
 import { instantiateAdapterImplementationDraft } from './adapter-draft-runtime';
-import { createChapterOnlyTaskMarkdown, createManifestMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, validatePhase1Markdown } from './task-markdown';
+import { createChapterOnlyTaskMarkdown, createPhase1TaskMarkdown, createPhase2TaskMarkdown, extractFallbackChapterUrlFromHtml, validatePhase1Markdown } from './task-markdown';
 import {
   adapterSupportsDiscoveryTarget,
   createAoPhaseRetryFeedback,
@@ -37,9 +33,6 @@ import {
   createChapterOnlyPhase1Markdown,
   createCommonVerificationSkeleton,
   createMetadataSkeleton,
-  hasCompleteImageSelectors,
-  normalizeComparableText,
-  safeAdapterId,
   tryExtractRepresentativeChapterUrl,
   validateMetadataSelectorEvidence,
 } from './service-shell-compose';
@@ -47,15 +40,12 @@ import {
   DEFAULT_SELECTOR_DISCOVERY_AGENT,
   DEFAULT_SELECTOR_DISCOVERY_MODEL,
   type DiscoveryInput,
-  type SelectorDiscoveryOracleComparison,
   type SelectorDiscoveryJob,
   type SelectorDiscoveryCapabilityDraft,
-  type SelectorDiscoveryShadowPromotion,
 } from './types';
 
 const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
-const SHADOW_PROMOTION_PREFIX = 'selector-discovery-shadow-promotion-';
 const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>> = [
   { stage: 'common-verification', sourcePath: 'outputs/common-verification.ts', reviewPath: 'outputs/common-verification-review.md' },
   { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
@@ -74,7 +64,7 @@ export interface ActiveImplementationAdapterRecord {
   promotedAt: string;
 }
 
-export type SelectorDiscoveryPromotionResult = DynamicSiteAdapterManifest | ActiveImplementationAdapterRecord;
+export type SelectorDiscoveryPromotionResult = ActiveImplementationAdapterRecord;
 
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
@@ -196,7 +186,14 @@ export class SelectorDiscoveryService {
 
   async retry(id: string): Promise<SelectorDiscoveryJob> {
     const job = await this.getRequiredJob(id);
-    return this.create({ url: job.normalizedUrl, target: job.target, forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId) });
+    const replacement = await this.create({ url: job.normalizedUrl, target: job.target, forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId) });
+    if (replacement.id !== job.id) {
+      await this.updateJob(replacement.id, { retriedFromId: job.id });
+    }
+    if (job.status === 'configuration_required' && replacement.id !== job.id) {
+      await this.deleteJob(job.id);
+    }
+    return (await this.get(replacement.id)) ?? replacement;
   }
 
   async loadActiveDynamicAdapters(): Promise<void> {
@@ -251,88 +248,7 @@ export class SelectorDiscoveryService {
 
   async promote(id: string): Promise<SelectorDiscoveryPromotionResult> {
     const job = await this.getRequiredJob(id);
-    if (!job.parsedCandidate && job.adapterImplementationTs?.trim()) {
-      return this.promoteImplementationDraft(job);
-    }
-
-    const manifest = this.createManifestFromJob(job);
-    const adapterId = manifest.adapterId;
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    if (job.promotionMode === 'augment') {
-      const baseAdapterId = job.baseAdapterId;
-      if (!baseAdapterId) {
-        throw new Error('Augment promotion requires a base adapter id.');
-      }
-      if (adapterId !== baseAdapterId) {
-        throw new Error(`Capability supplement must keep existing adapter id "${baseAdapterId}", got "${adapterId}".`);
-      }
-      if (!this.adapterRegistry.has(baseAdapterId)) {
-        throw new Error(`Base adapter "${baseAdapterId}" is not registered.`);
-      }
-
-      const merged = this.mergeManifestWithBase(manifest, manifests, baseAdapterId);
-      this.adapterRegistry.replace(new DynamicSiteAdapter(merged));
-      await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== baseAdapterId), merged]);
-      await this.updateJob(id, {
-        adapterId: baseAdapterId,
-        adapterName: merged.name,
-        status: 'promoted',
-        phase: 'complete',
-        error: undefined,
-      });
-      return merged;
-    }
-
-    if (this.adapterRegistry.has(adapterId)) {
-      throw new Error(`Adapter "${adapterId}" is already registered.`);
-    }
-
-    const domains = manifest.domains;
-    if (this.adapterRegistry.list().some((adapter) => adapter.domains.some((domain) => domains.includes(domain)))) {
-      throw new Error(`Domain conflict detected for ${domains.join(', ')}.`);
-    }
-
-    this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
-    await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [...manifests.filter((item) => item.adapterId !== adapterId), manifest]);
-    await this.updateJob(id, {
-      adapterId,
-      adapterName: manifest.name,
-      status: 'promoted',
-      phase: 'complete',
-      error: undefined,
-    });
-    return manifest;
-  }
-
-  async shadowPromote(id: string): Promise<SelectorDiscoveryJob> {
-    let job = await this.getRequiredJob(id);
-    const manifest = this.createManifestFromJob(job);
-    if (!job.extractionValidation?.valid) {
-      job = await this.validateCandidate(id);
-    }
-
-    const oracleComparison = await this.compareWithBuiltInOracle(job);
-    const storageKey = `${SHADOW_PROMOTION_PREFIX}${id}`;
-    const shadowPromotion: SelectorDiscoveryShadowPromotion = {
-      id: `shadow-${id}`,
-      jobId: id,
-      createdAt: new Date().toISOString(),
-      manifestAdapterId: manifest.adapterId,
-      manifestName: manifest.name,
-      domains: manifest.domains,
-      storageKey,
-      note: 'Stored for bundle evaluation only. Runtime adapter registry was not modified.',
-    };
-
-    await this.storage.write(storageKey, {
-      shadowPromotion,
-      manifest,
-      oracleComparison,
-      candidateMarkdown: job.candidateMarkdown,
-      parsedCandidate: job.parsedCandidate,
-    });
-    await this.updateJob(id, { shadowPromotion, oracleComparison });
-    return this.getRequiredJob(id);
+    return this.promoteImplementationDraft(job);
   }
 
   async reject(id: string): Promise<SelectorDiscoveryJob> {
@@ -414,42 +330,6 @@ export class SelectorDiscoveryService {
     return this.getRequiredJob(job.id);
   }
 
-  async revalidate(id: string): Promise<SelectorDiscoveryJob> {
-    const job = await this.getRequiredJob(id);
-    if (!job.candidateMarkdown) {
-      throw new Error('Discovery job has no candidate Markdown to revalidate.');
-    }
-
-    const validation = validateMarkdownCandidate(job.candidateMarkdown, { target: job.target });
-    const parsedCandidate = parseMarkdownCandidate(job.candidateMarkdown);
-    await this.updateJob(id, {
-      status: validation.valid ? 'awaiting_review' : 'invalid',
-      parsedCandidate,
-      validation,
-      error: validation.valid ? undefined : job.error,
-    });
-    return this.getRequiredJob(id);
-  }
-
-  async validateCandidate(id: string): Promise<SelectorDiscoveryJob> {
-    const job = await this.getRequiredJob(id);
-    if (!job.parsedCandidate?.selectors) {
-      throw new Error('Discovery job has no parsed candidate selectors to validate.');
-    }
-
-    const extractionValidation = job.target === 'chapter-only'
-      ? await validateChapterImageSelectorExtraction({
-          chapterUrl: job.normalizedUrl,
-          selectors: job.parsedCandidate.selectors,
-        })
-      : await validateSelectorExtraction({
-          metadataUrl: job.normalizedUrl,
-          selectors: job.parsedCandidate.selectors as any,
-        });
-    await this.updateJob(id, { extractionValidation });
-    return this.getRequiredJob(id);
-  }
-
   async get(id: string): Promise<SelectorDiscoveryJob | null> {
     return this.storage.read<SelectorDiscoveryJob>(`${JOB_PREFIX}${id}`);
   }
@@ -461,8 +341,6 @@ export class SelectorDiscoveryService {
     await this.storage.write(INDEX_KEY, ids.filter((entry) => entry !== id));
     await this.storage.delete(`${JOB_PREFIX}${id}`);
     await this.storage.delete(`selector-discovery-implementation-${id}`);
-    await this.storage.delete(`selector-discovery-manifest-${id}`);
-    await this.storage.delete(`${SHADOW_PROMOTION_PREFIX}${id}`);
     return true;
   }
 
@@ -798,6 +676,10 @@ Stage rules:
 - chapter-images: write only one ChapterImagesCapability subclass.
 - Every method must use the exact signature documented for this capability
   stage.
+- The trusted DOM in task.md was captured with Playwright rendering
+  (Content-Type "rendered=playwright"). Write selectors against rendered DOM;
+  never assume static-HTML fetch. The composed adapter always declares
+  parseMode "playwright".
 ${templateInstruction}
 ${retryFeedback ? `
 ## Retry Feedback
@@ -978,23 +860,6 @@ ${finalUrl}
     });
   }
 
-  private async finalizeCandidate(job: SelectorDiscoveryJob, candidateMarkdown: string): Promise<void> {
-    const validation = validateMarkdownCandidate(candidateMarkdown, {
-      target: job.target,
-      allowExistingImageSelectors: job.promotionMode === 'augment',
-    });
-    const parsedCandidate = parseMarkdownCandidate(candidateMarkdown);
-    const manifestMarkdown = createManifestMarkdown(parsedCandidate);
-    await this.updateJob(job.id, {
-      status: validation.valid ? 'awaiting_review' : 'invalid',
-      phase: 'complete',
-      candidateMarkdown,
-      parsedCandidate,
-      validation,
-    });
-    await this.storage.write(`selector-discovery-manifest-${job.id}`, { markdown: manifestMarkdown, parsedCandidate });
-  }
-
   private async getRequiredJob(id: string): Promise<SelectorDiscoveryJob> {
     const job = await this.get(id);
     if (!job) throw new Error(`Discovery job "${id}" was not found.`);
@@ -1118,12 +983,15 @@ ${finalUrl}
     return `disc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private async getSafeFetchOptions(): Promise<{ browser?: BrowserConfig; network?: NetworkConfig }> {
+  private async getSafeFetchOptions(): Promise<{ browser?: BrowserConfig; network?: NetworkConfig; renderFirst: boolean }> {
     const [browser, network] = await Promise.all([
       this.getBrowserConfig?.(),
       this.getNetworkConfig?.(),
     ]);
-    return { browser, network };
+    // Selector discovery always uses Playwright-rendered DOM so AO evidence
+    // and runtime extraction run on the same mechanism. Static fetch stays
+    // available for existing hand-written adapters and other callers.
+    return { browser, network, renderFirst: true };
   }
 
   private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<ActiveImplementationAdapterRecord> {
@@ -1184,44 +1052,6 @@ ${finalUrl}
     return record;
   }
 
-  private createManifestFromJob(job: SelectorDiscoveryJob): DynamicSiteAdapterManifest {
-    if (job.status !== 'awaiting_review' || !job.parsedCandidate) {
-      throw new Error('Only awaiting_review discovery jobs can be promoted.');
-    }
-
-    const target = job.target ?? 'full';
-    const selectors = job.parsedCandidate.selectors;
-    if (!hasCompleteImageSelectors(selectors.images) && job.promotionMode !== 'augment') {
-      throw new Error('Candidate image selectors are incomplete.');
-    }
-    if (target === 'full' && (!selectors.metadata || !selectors.chapters)) {
-      throw new Error('Candidate metadata/chapter selectors are incomplete.');
-    }
-
-    if (job.promotionMode === 'augment' && job.baseAdapterId && job.parsedCandidate.adapterId) {
-      const candidateAdapterId = safeAdapterId(job.parsedCandidate.adapterId);
-      if (candidateAdapterId !== job.baseAdapterId) {
-        throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${candidateAdapterId}".`);
-      }
-    }
-
-    const adapterId = safeAdapterId(job.promotionMode === 'augment'
-      ? job.baseAdapterId ?? job.parsedCandidate.adapterId ?? job.hostname
-      : job.parsedCandidate.adapterId ?? job.hostname);
-    return {
-      adapterId,
-      name: job.parsedCandidate.name ?? adapterId,
-      domains: job.parsedCandidate.domains.length > 0 ? job.parsedCandidate.domains : [job.hostname],
-      urlPatterns: job.parsedCandidate.urlPatterns,
-      capabilities: target === 'chapter-only'
-        ? { verification: true, metadata: false, chapterImages: true }
-        : { verification: true, metadata: true, chapterImages: true },
-      selectors: selectors as DynamicSiteAdapterManifest['selectors'],
-      sourceDiscoveryId: job.id,
-      promotedAt: new Date().toISOString(),
-    };
-  }
-
   private findRegisteredAdapterByDomains(domains: string[]): ReturnType<AdapterRegistry['getAll']>[number] | undefined {
     return this.adapterRegistry.getAll().find((adapter) => adapter.domains.some((domain) => domains.includes(domain)));
   }
@@ -1245,98 +1075,4 @@ ${finalUrl}
     };
   }
 
-  private mergeManifestWithBase(
-    supplement: DynamicSiteAdapterManifest,
-    manifests: DynamicSiteAdapterManifest[],
-    baseAdapterId: string
-  ): DynamicSiteAdapterManifest {
-    const base = manifests.find((item) => item.adapterId === baseAdapterId);
-    if (!base) {
-      throw new Error(`Base dynamic adapter manifest "${baseAdapterId}" was not found.`);
-    }
-    return {
-      ...base,
-      name: supplement.name || base.name,
-      domains: Array.from(new Set([...base.domains, ...supplement.domains])),
-      urlPatterns: Array.from(new Set([...base.urlPatterns, ...supplement.urlPatterns])),
-      capabilities: {
-        verification: base.capabilities?.verification ?? supplement.capabilities?.verification ?? true,
-        metadata: true,
-        chapterImages: true,
-      },
-      selectors: {
-        metadata: supplement.selectors.metadata ?? base.selectors.metadata,
-        chapters: supplement.selectors.chapters ?? base.selectors.chapters,
-        images: hasCompleteImageSelectors(supplement.selectors.images) ? supplement.selectors.images : base.selectors.images,
-      },
-      sourceDiscoveryId: supplement.sourceDiscoveryId,
-      promotedAt: supplement.promotedAt,
-    };
-  }
-
-  private async compareWithBuiltInOracle(job: SelectorDiscoveryJob): Promise<SelectorDiscoveryOracleComparison | undefined> {
-    const oracle = this.adapterRegistry.findByUrl(job.normalizedUrl);
-    if (!oracle) return undefined;
-
-    const warnings: string[] = [];
-    let oracleTitle: string | undefined;
-    let oracleChapterCount = 0;
-    let oracleFirstChapterUrl: string | undefined;
-    let oracleImageCount: number | undefined;
-    let oracleFirstImageUrl: string | undefined;
-
-    try {
-      if (!(oracle instanceof AdapterBase)) return undefined;
-      const metadata = await composeMetadata(oracle, job.normalizedUrl);
-      oracleTitle = metadata.title;
-      oracleChapterCount = metadata.chapters.length;
-      oracleFirstChapterUrl = metadata.chapters[0]?.url;
-      if (oracleFirstChapterUrl) {
-        const images = await composeChapterImages(oracle, oracleFirstChapterUrl);
-        oracleImageCount = images.length;
-        oracleFirstImageUrl = images[0]?.url;
-      } else {
-        warnings.push('Oracle adapter did not return a representative chapter URL.');
-      }
-    } catch (error) {
-      warnings.push(`Oracle extraction failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const candidate = job.extractionValidation;
-    const candidateTitle = candidate?.metadata?.title;
-    const candidateChapterCount = candidate?.metadata?.chapterCount ?? 0;
-    const candidateImageCount = candidate?.images?.imageCount;
-    const imageCountDelta = typeof oracleImageCount === 'number' && typeof candidateImageCount === 'number'
-      ? candidateImageCount - oracleImageCount
-      : undefined;
-
-    if (!candidate?.valid) warnings.push('Candidate extraction validation has not passed.');
-    if (normalizeComparableText(candidateTitle) !== normalizeComparableText(oracleTitle)) warnings.push('Candidate title differs from oracle title.');
-    if (Math.abs(candidateChapterCount - oracleChapterCount) > 0) warnings.push('Candidate chapter count differs from oracle chapter count.');
-    if (typeof imageCountDelta === 'number' && imageCountDelta !== 0) warnings.push('Candidate image count differs from oracle image count.');
-
-    return {
-      adapterId: oracle.id,
-      adapterName: oracle.name,
-      checkedAt: new Date().toISOString(),
-      candidate: {
-        title: candidateTitle,
-        chapterCount: candidateChapterCount,
-        firstChapterUrl: candidate?.metadata?.firstChapterUrl,
-        imageCount: candidateImageCount,
-        firstImageUrl: candidate?.images?.firstImageUrl,
-      },
-      oracle: {
-        title: oracleTitle,
-        chapterCount: oracleChapterCount,
-        firstChapterUrl: oracleFirstChapterUrl,
-        imageCount: oracleImageCount,
-        firstImageUrl: oracleFirstImageUrl,
-      },
-      titleMatched: normalizeComparableText(candidateTitle) === normalizeComparableText(oracleTitle),
-      chapterCountDelta: candidateChapterCount - oracleChapterCount,
-      imageCountDelta,
-      warnings,
-    };
-  }
 }

@@ -1,10 +1,10 @@
-import { chromium, type Page } from 'playwright';
-import type { BrowserPoolConfig, BrowserInstance, BrowserPoolStats } from './types';
+import type { Page } from 'playwright';
+import type { BrowserPoolConfig, BrowserInstance, BrowserPoolStats, RemoteBrowserConfigResolver } from './types';
 import { ComicError, ErrorType } from '../error/types';
+import { connectRemoteBrowser } from '../browser/remote-browser-provider';
 
 const DEFAULT_CONFIG: BrowserPoolConfig = {
   maxInstances: 3,
-  headless: true,
   timeout: 30000,
 };
 
@@ -15,11 +15,8 @@ export class BrowserPool {
   private requestCount = 0;
   private isInitialized = false;
 
-  constructor(config?: Partial<BrowserPoolConfig>) {
+  constructor(config?: Partial<BrowserPoolConfig>, private readonly resolveRemote?: RemoteBrowserConfigResolver) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    if (this.config.userDataDir && this.config.maxInstances > 1) {
-      this.config.maxInstances = 1;
-    }
   }
 
   async initialize(): Promise<void> {
@@ -118,16 +115,6 @@ export class BrowserPool {
   }
 
   private async createInstance(): Promise<BrowserInstance> {
-    const launchOptions = {
-      headless: this.config.headless,
-      channel: this.config.channel,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        ...(this.config.chromiumProfileDirectory ? [`--profile-directory=${this.config.chromiumProfileDirectory}`] : []),
-      ],
-    };
-
     const contextOptions = {
       userAgent: this.config.userAgent,
       proxy: this.config.proxy ? { server: this.config.proxy } : undefined,
@@ -135,13 +122,14 @@ export class BrowserPool {
       storageState: this.config.storageStatePath,
     };
 
-    const browser = this.config.userDataDir ? undefined : await chromium.launch(launchOptions);
-    const context = this.config.userDataDir
-      ? await chromium.launchPersistentContext(this.config.userDataDir, {
-          ...launchOptions,
-          ...contextOptions,
-        })
-      : await browser!.newContext(contextOptions);
+    const remote = await this.resolveRemote?.() ?? this.config.remote;
+    const browser = await connectRemoteBrowser({
+      wsEndpoint: remote?.wsEndpoint,
+      timeout: remote?.connectTimeout ?? this.config.timeout,
+      exposeNetwork: remote?.exposeNetwork,
+      headers: remote?.headers,
+    });
+    const context = await browser.newContext(contextOptions);
 
     const page = await context.newPage();
 

@@ -21,7 +21,7 @@ export interface ExtractionResult {
 
 export interface IExtractionStrategy {
   readonly name: string;
-  readonly parseMode: 'static' | 'dynamic' | 'interactive';
+  readonly parseMode: 'playwright';
 
   extractMetadata(context: ExtractionContext): Promise<ComicMetadata>;
   extractChapters(context: ExtractionContext): Promise<Array<{ id: string; title: string; url: string }>>;

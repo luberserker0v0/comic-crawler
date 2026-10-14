@@ -23,7 +23,7 @@ class MockAdapter extends AdapterBase {
   readonly id = 'mock';
   readonly name = 'Mock Adapter';
   readonly domains = ['mock.example.com'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
 
   matchUrl(url: string): boolean {
     return url.includes('mock.example.com');

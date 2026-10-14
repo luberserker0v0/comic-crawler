@@ -151,7 +151,7 @@ export class GeneratedDemoAdapter extends AdapterBase {
   readonly id = 'generated-demo';
   readonly name = 'Generated Demo';
   readonly domains = ['generated.test'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: true, chapterImages: true };
   readonly common = new GeneratedCommon(this);
   readonly verification = new GeneratedVerification(this);

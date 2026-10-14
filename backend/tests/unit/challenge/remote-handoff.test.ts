@@ -1,35 +1,29 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-const connectOverCDP = jest.fn();
+const connect = jest.fn();
 
 jest.mock('playwright', () => ({
   chromium: {
-    connectOverCDP,
+    connect,
   },
 }));
 
-import { findCdpPageHtml, inspectCdpBrowser } from '../../../src/challenge/cdp-handoff';
+import { findPageHtmlInContexts, inspectRemoteBrowser } from '../../../src/challenge/remote-handoff';
 
-describe('CDP browser handoff', () => {
-  it('rejects non-local CDP endpoints', async () => {
-    await expect(inspectCdpBrowser('http://example.com:9222')).rejects.toThrow(/localhost|127\.0\.0\.1/);
+describe('remote Playwright browser handoff', () => {
+  it('accepts remote hosts but requires a Playwright WebSocket endpoint', async () => {
+    await expect(inspectRemoteBrowser('http://example.com:3000')).rejects.toThrow(/ws:\/\/ or wss:\/\//);
   });
 
-  it('rejects non-CDP URL protocols', async () => {
-    await expect(inspectCdpBrowser('https://127.0.0.1:9222')).rejects.toThrow(/http:\/\/ or ws:\/\//);
+  it('rejects non-WebSocket URL protocols', async () => {
+    await expect(inspectRemoteBrowser('https://browser.example:3000')).rejects.toThrow(/ws:\/\/ or wss:\/\//);
   });
 
   it('reuses a same-host verified page by navigating it to the requested chapter URL', async () => {
     const targetUrl = 'https://m.happymh.com/mangaread/demo/1';
     const page = createMockPage('https://m.happymh.com/manga/demo', '<main><img src="https://img.happymh.com/demo/1.webp"></main>');
-    const browser = {
-      contexts: jest.fn(() => [{ pages: () => [page] }]),
-      close: jest.fn(async () => undefined),
-    };
-    connectOverCDP.mockResolvedValue(browser as never);
-
-    const result = await findCdpPageHtml({
-      cdpUrl: 'http://127.0.0.1:9222',
+    const context = { pages: () => [page] };
+    const result = await findPageHtmlInContexts([context as never], {
       targetUrl,
     });
 
@@ -38,7 +32,6 @@ describe('CDP browser handoff', () => {
       timeout: 60000,
     });
     expect(result.html).toContain('img.happymh.com');
-    expect(browser.close).toHaveBeenCalled();
   });
 });
 

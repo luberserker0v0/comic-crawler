@@ -25,20 +25,6 @@ export function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export interface LocalBrowserProfile {
-  id: string;
-  name: string;
-  directory?: string;
-}
-
-export interface LocalBrowserOption {
-  id: string;
-  name: string;
-  executablePath: string;
-  profiles: LocalBrowserProfile[];
-  defaultProfileId?: string;
-}
-
 export type FlowNodeState = 'pending' | 'active' | 'done' | 'blocked' | 'failed' | 'skipped';
 
 export interface FlowNode {

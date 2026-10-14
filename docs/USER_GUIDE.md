@@ -1,6 +1,42 @@
 # ComicCrawler User Guide
 
-## Start the app
+## Install and start
+
+### Docker
+
+Start the production container:
+
+```bash
+docker compose up -d
+```
+
+Open these addresses:
+
+- WebUI: `http://127.0.0.1:4100/`
+- REST API: `http://127.0.0.1:4100/api/status`
+- Swagger UI: `http://127.0.0.1:4100/api-docs`
+
+Use another host port when `4100` is unavailable:
+
+```bash
+COMICCRAWLER_HOST_PORT=4200 docker compose up -d
+```
+
+Docker stores data in two named volumes:
+
+- `comic-data`
+- `comic-downloads`
+
+Container logs rotate at 10 MB.
+Docker retains three log files.
+
+Stop the container without deleting volumes:
+
+```bash
+docker compose down
+```
+
+### Source checkout
 
 From the repo root:
 
@@ -16,6 +52,8 @@ http://127.0.0.1:5173
 ```
 
 If that port is unavailable, `npm run dev` prints the fallback frontend URL.
+
+See the [Developer Guide](DEVELOPER_GUIDE.md) for development setup details.
 
 ## What the WebUI is for
 
@@ -69,7 +107,7 @@ Adapters expose capabilities:
   downloading.
 - Verification - used when a matched site requires human verification.
 
-A chapter-only dynamic adapter can download specific chapter URLs but cannot run
+A chapter-only adapter can download specific chapter URLs but cannot run
 all-chapter tasks until metadata selectors are discovered and promoted.
 
 ## Create adapter tasks
@@ -91,7 +129,7 @@ metadata and chapter-list support.
 
 Adapter review and version maintenance are intentionally GUI-first workflows.
 Use the adapter management/review screens to inspect drafts, promote approved
-changes, reject bad drafts, or roll back a promoted dynamic adapter version.
+changes, reject bad drafts, or roll back a promoted generated adapter version.
 
 Do not promote an adapter solely because a test returned some data. Review the
 source DOM, readiness result, extracted values, and known risks first. A
@@ -133,12 +171,11 @@ The implementation panel shows the full adapter source or dynamic selector
 manifest. Function selection only chooses the test target; helper functions and
 shared constants can still be part of the implementation.
 
-Editable drafts are user-owned copies. Project-source TypeScript drafts can be saved,
-reset, discarded, and diffed against the active adapter, but they are not
-executed yet. Dynamic manifest drafts can be tested without promoting or
-registering them.
+Editable drafts are user-owned copies. Project-source TypeScript drafts can be
+saved, reset, discarded, and diffed against the active adapter. Generated
+adapter drafts can be tested before promotion.
 
-Adapter Lab tests use the adapter `parseMode` automatically. If a site requires
+Adapter Lab tests use the adapter's `playwright` DOM acquisition automatically. If a site requires
 human verification, use the verification handoff shown in the test result,
 complete verification in the opened browser, then continue the test. Adapter Lab
 does not secretly click generic "show all" buttons or rewrite the page before
@@ -146,6 +183,31 @@ calling the selected adapter function.
 
 Adapter Lab is for diagnosis and draft testing. It does not create crawl tasks
 and does not promote adapter versions by itself.
+
+## Browser Provider
+
+Browser-backed features require a user-side Browser Provider.
+The backend and Docker container do not launch Chromium.
+
+The client uses outbound connections.
+No inbound user port is required.
+
+Setup follows this order:
+
+1. Create an enrollment token.
+2. Enroll the client once.
+3. Start the client.
+4. Create an active session.
+
+The active session supports these features:
+
+- Normal Playwright crawling.
+- Selector discovery.
+- Human verification.
+- Browser-assisted downloads.
+
+See the [Browser Provider SDK guide](../browser-provider-sdk/README.md) for the
+configuration and CLI commands.
 
 ## Human verification
 
@@ -156,7 +218,7 @@ To continue:
 
 1. Open the task from Task Manager.
 2. Click **Open browser for verification** in the task detail panel.
-3. Complete verification in the isolated browser profile.
+3. Complete verification in the browser opened by your remote Playwright service.
 4. Return to the task detail page and click **Continue**.
 
 ComicCrawler then resumes from the latest checkpoint. While a task is waiting

@@ -5,7 +5,7 @@ import { ComicError, ErrorType } from '../../../error/types';
 
 export class DomExtractionStrategy implements IExtractionStrategy {
   readonly name = 'dom';
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
 
   async extractMetadata(context: ExtractionContext): Promise<ComicMetadata> {
     const { $, selectors, baseUrl } = context;

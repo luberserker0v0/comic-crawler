@@ -58,7 +58,7 @@ export class IncrementalUpdater {
           id: adapterId,
           name: '',
           domains: [],
-          parseMode: 'static',
+          parseMode: 'playwright',
           capabilities: { verification: false, metadata: true, chapterImages: false },
           matchUrl: () => true,
           loadDocument: async () => ({}),

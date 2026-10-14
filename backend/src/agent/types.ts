@@ -112,7 +112,7 @@ export type AgentNotification = CandidateReviewNotification | RollbackNotificati
 export interface ExtractionFailureContext {
   [key: string]: unknown;
   adapterId: string;
-  parseMode: 'static' | 'dynamic' | 'interactive';
+  parseMode: 'playwright';
   repairMode: 'selector-only' | 'parser-hook';
   repairTargets: string[];
   fixturesRoot: string;

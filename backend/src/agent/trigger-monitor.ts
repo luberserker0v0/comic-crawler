@@ -93,7 +93,7 @@ export class AgentTriggerMonitor {
   private isExtractionFailureContext(context: Record<string, unknown>): context is ExtractionFailureContext {
     return (
       typeof context.adapterId === 'string' &&
-      typeof context.parseMode === 'string' &&
+      context.parseMode === 'playwright' &&
       typeof context.repairMode === 'string' &&
       typeof context.pageType === 'string' &&
       typeof context.url === 'string' &&

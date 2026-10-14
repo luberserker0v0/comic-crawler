@@ -3,6 +3,7 @@ export type TaskStatus =
   | 'running'
   | 'paused'
   | 'waiting_verification'
+  | 'interrupted'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -44,7 +45,7 @@ export interface TaskOptions {
   namingTemplate?: string;
   imageFormat?: ImageFormat;
   imageQuality?: number;
-  parseMode?: 'static' | 'dynamic' | 'interactive';
+  parseMode?: 'playwright';
 }
 
 export interface ChapterInfo {
@@ -100,7 +101,7 @@ export interface CrawlOptions {
   namingTemplate?: string;
   imageFormat?: ImageFormat;
   imageQuality?: number;
-  parseMode?: 'static' | 'dynamic' | 'interactive';
+  parseMode?: 'playwright';
 }
 
 export interface DownloadResult {

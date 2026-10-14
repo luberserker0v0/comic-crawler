@@ -26,7 +26,7 @@ describe('AgentMaintenanceLoop', () => {
     });
     errorContext = {
       adapterId: 'kuronavi',
-      parseMode: 'static',
+      parseMode: 'playwright',
       repairMode: 'selector-only',
       repairTargets: ['selectors.ts'],
       fixturesRoot: '/fixtures/kuronavi',

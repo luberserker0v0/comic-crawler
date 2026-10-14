@@ -6,18 +6,15 @@ import type { ChallengeDiscoveryService } from '../challenge';
 import { logger } from '../utils/logger';
 import { cleanupTasks } from './task-cleanup';
 import { cleanupDiscoveryJobs } from './discovery-cleanup';
-import { cleanupAgentSessions, cleanupBrowserProfiles, cleanupFixtures } from './workspace-cleanup';
+import { cleanupAgentSessions, cleanupFixtures } from './workspace-cleanup';
 
 export interface MaintenancePolicyOverrides {
   tasksRetainDays?: number;
   discoveryJobsRetainDays?: number;
-  browserProfilesRetainDays?: number;
   deleteFiles?: boolean;
-  deleteOrphanProfiles?: boolean;
   batchLimit?: number;
   includeTasks?: boolean;
   includeDiscoveryJobs?: boolean;
-  includeBrowserProfiles?: boolean;
 }
 
 export interface MaintenanceScopeResult {
@@ -31,7 +28,6 @@ export interface MaintenanceResult {
   dryRun: boolean;
   tasks: MaintenanceScopeResult & { filesDeleted: string[]; filesSkipped: string[] };
   discoveryJobs: MaintenanceScopeResult;
-  browserProfiles: MaintenanceScopeResult & { bytesFreed: number };
   fixtures: MaintenanceScopeResult & { bytesFreed: number };
   agentSessions: MaintenanceScopeResult;
   startedAt: string;
@@ -86,12 +82,6 @@ export class MaintenanceService {
       dryRun,
       tasks.deleted
     );
-    const browserProfiles = await cleanupBrowserProfiles(
-      { workspaceRoot: this.options.workspaceRoot, challengeDiscoveryService: this.options.challengeDiscoveryService },
-      policy,
-      dryRun,
-      discoveryJobs.deleted
-    );
     const fixtures = await cleanupFixtures({ workspaceRoot: this.options.workspaceRoot }, policy, dryRun);
     const agentSessions = await cleanupAgentSessions({ workspaceRoot: this.options.workspaceRoot }, policy, dryRun);
 
@@ -100,7 +90,6 @@ export class MaintenanceService {
       dryRun,
       tasks,
       discoveryJobs,
-      browserProfiles,
       fixtures,
       agentSessions,
       startedAt: startedAt.toISOString(),
@@ -115,10 +104,9 @@ export class MaintenanceService {
         dryRun,
         tasksDeleted: tasks.deleted.length,
         jobsDeleted: discoveryJobs.deleted.length,
-        profilesDeleted: browserProfiles.deleted.length,
         fixturesDeleted: fixtures.deleted.length,
         agentSessionsDeleted: agentSessions.deleted.length,
-        bytesFreed: browserProfiles.bytesFreed + fixtures.bytesFreed,
+        bytesFreed: fixtures.bytesFreed,
       },
       dryRun ? 'Maintenance preview completed' : 'Maintenance cleanup completed'
     );
@@ -133,18 +121,14 @@ export class MaintenanceService {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       };
     return {
       ...base,
       ...(overrides?.tasksRetainDays !== undefined ? { tasksRetainDays: overrides.tasksRetainDays } : {}),
       ...(overrides?.discoveryJobsRetainDays !== undefined ? { discoveryJobsRetainDays: overrides.discoveryJobsRetainDays } : {}),
-      ...(overrides?.browserProfilesRetainDays !== undefined ? { browserProfilesRetainDays: overrides.browserProfilesRetainDays } : {}),
       ...(overrides?.deleteFiles !== undefined ? { deleteFiles: overrides.deleteFiles } : {}),
-      ...(overrides?.deleteOrphanProfiles !== undefined ? { deleteOrphanProfiles: overrides.deleteOrphanProfiles } : {}),
       ...(overrides?.batchLimit !== undefined ? { batchLimit: overrides.batchLimit } : {}),
     };
   }

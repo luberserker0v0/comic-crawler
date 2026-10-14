@@ -1,8 +1,8 @@
 # Capability Draft Output Contract
 
-This legacy-named file describes capability draft review notes. Agents do not
-write the final `AdapterBase` shell; ComicCrawler assembles it from reviewed
-capability classes.
+This file describes capability draft review notes. Agents do not write the
+final `AdapterBase` shell; ComicCrawler assembles it from reviewed capability
+classes.
 
 ## TypeScript Capability Requirements
 

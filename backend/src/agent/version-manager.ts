@@ -32,36 +32,18 @@ export class VersionManager {
   }
 
   async load(adapterId: string): Promise<AgentVersions | null> {
-    for (const candidatePath of [this.getIndexPath(adapterId), this.getLegacyVersionsPath(adapterId)]) {
-      try {
-        const content = await fs.readFile(candidatePath, 'utf-8');
-        return JSON.parse(content) as AgentVersions;
-      } catch {
-        // Try the next path.
-      }
+    try {
+      const content = await fs.readFile(this.getIndexPath(adapterId), 'utf-8');
+      return JSON.parse(content) as AgentVersions;
+    } catch {
+      return null;
     }
-
-    return null;
   }
 
   async save(adapterId: string, versions: AgentVersions): Promise<void> {
     const indexPath = this.getIndexPath(adapterId);
     await fs.mkdir(join(indexPath, '..'), { recursive: true });
     await fs.writeFile(indexPath, JSON.stringify(versions, null, 2));
-  }
-
-  async addVersion(
-    adapterId: string,
-    selectorsContent: string,
-    parserContent: string,
-    testResults: { passed: number; failed: number }
-  ): Promise<string> {
-    return this.createCandidateVersion({
-      adapterId,
-      selectorsContent,
-      parserContent,
-      testResults,
-    });
   }
 
   async createCandidateVersion(options: CreateVersionOptions): Promise<string> {
@@ -120,10 +102,6 @@ export class VersionManager {
     await this.writeVersionMetadata(adapterId, targetVersion);
     await this.save(adapterId, versions);
     return true;
-  }
-
-  async getCurrentVersion(adapterId: string): Promise<AgentVersion | null> {
-    return this.getActiveVersion(adapterId);
   }
 
   async getVersion(adapterId: string, version: string): Promise<AgentVersion | null> {
@@ -187,10 +165,6 @@ export class VersionManager {
     await this.writeVersionMetadata(adapterId, targetVersion);
     await this.save(adapterId, versions);
     return true;
-  }
-
-  async getStableVersion(adapterId: string): Promise<AgentVersion | null> {
-    return this.getActiveVersion(adapterId);
   }
 
   async readVersionSource(adapterId: string, version: string): Promise<VersionSourceFiles | null> {
@@ -280,7 +254,4 @@ export class VersionManager {
     return join(this.workspacePath, adapterId, 'index.json');
   }
 
-  private getLegacyVersionsPath(adapterId: string): string {
-    return join(this.workspacePath, adapterId, 'versions.json');
-  }
 }

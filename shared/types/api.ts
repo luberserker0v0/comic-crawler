@@ -117,15 +117,6 @@ export interface AdapterCapabilityDetailResponse {
   functions: AdapterFunctionDescriptor[];
 }
 
-export interface AdapterFunctionSourceResponse {
-  adapterId: string;
-  functionId: string;
-  language: 'typescript' | 'json' | 'markdown';
-  sourceKind: 'project-source' | 'dynamic-manifest' | 'pipeline-summary';
-  source: string;
-  notes: string;
-}
-
 export type AdapterImplementationSourceType = 'project-source' | 'dynamic' | 'summary' | 'generated-draft';
 export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
 
@@ -197,7 +188,7 @@ export interface CompleteHumanVerificationRequest {
 
 export type AdapterFunctionTestStatus = 'passed' | 'failed' | 'verification_required';
 
-export type AdapterDomSource = 'static' | 'rendered' | 'verified-fixture' | 'handoff-required';
+export type AdapterDomSource = 'rendered' | 'verified-fixture' | 'handoff-required';
 export type DomReadinessStatus =
   | 'ready'
   | 'human_verification_required'
@@ -339,7 +330,7 @@ export interface TaskSummary {
   id: string;
   url: string;
   mode?: CrawlMode;
-  status: TaskStatus | 'interrupted';
+  status: TaskStatus;
   priority: number;
   createdAt: string;
   startedAt?: string;
@@ -371,7 +362,7 @@ export interface TaskProgressSummary {
 
 export interface TaskResultSummary {
   taskId: string;
-  status: TaskStatus | 'interrupted';
+  status: TaskStatus;
   metadata?: Record<string, unknown>;
   downloadedImages: number;
   failedImages: number;
@@ -482,13 +473,13 @@ export interface SelectorDiscoveryJobSummary {
   createdAt: string;
   updatedAt: string;
   phase1Markdown?: string;
-  candidateMarkdown?: string;
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
   functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: unknown;
   validation?: unknown;
   error?: string;
+  retriedFromId?: string;
   adapterId?: string;
   adapterName?: string;
 }
@@ -521,11 +512,6 @@ export interface ChallengeHandoffJobSummary {
   createdAt?: string;
   updatedAt?: string;
   error?: string;
-}
-
-export interface OpenVerificationBrowserRequest {
-  executablePath?: string;
-  profileId?: string;
 }
 
 export type ConfigResponse = GlobalConfig;

@@ -3,7 +3,7 @@ import type { IExtractionStrategy, ExtractionContext } from '../types';
 
 export class ApiInterceptionStrategy implements IExtractionStrategy {
   readonly name = 'api-interception';
-  readonly parseMode = 'dynamic' as const;
+  readonly parseMode = 'playwright' as const;
 
   async extractMetadata(_context: ExtractionContext): Promise<ComicMetadata> {
     throw new Error('ApiInterceptionStrategy requires Playwright page and API interception setup');

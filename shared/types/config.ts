@@ -33,8 +33,7 @@ export interface NetworkConfig {
 }
 
 export interface BrowserConfig {
-  mode: 'static' | 'headless' | 'auto';
-  headless: boolean;
+  mode: 'remote';
   maxInstances: number;
   timeout: number;
   waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
@@ -42,17 +41,15 @@ export interface BrowserConfig {
   postLoadDelayMs?: number;
   challengeAutoAttempt?: boolean;
   challengeWaitMs?: number;
-  channel?: string;
   storageStatePath?: string;
-  userDataDir?: string;
-  handoff?: BrowserHandoffConfig;
+  remote?: RemoteBrowserConfig;
 }
 
-export interface BrowserHandoffConfig {
-  mode: 'snapshot' | 'cdp' | 'managed';
-  cdpUrl?: string;
-  userDataDir?: string;
-  channel?: string;
+export interface RemoteBrowserConfig {
+  wsEndpoint?: string;
+  connectTimeout?: number;
+  exposeNetwork?: string;
+  headers?: Record<string, string>;
 }
 
 export interface ServerConfig {
@@ -79,9 +76,7 @@ export interface MaintenanceConfig {
   intervalHours: number;
   tasksRetainDays: number;
   discoveryJobsRetainDays: number;
-  browserProfilesRetainDays: number;
   deleteFiles: boolean;
-  deleteOrphanProfiles: boolean;
   batchLimit: number;
 }
 

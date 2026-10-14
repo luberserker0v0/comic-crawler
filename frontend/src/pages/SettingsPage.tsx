@@ -10,7 +10,7 @@ import { SelectorDiscoverySection } from './settings/sections/SelectorDiscoveryS
 
 export const SettingsPage: React.FC = () => {
   const { config, loading, error, fetchConfig, updateConfig, resetConfig, clearError } = useConfigStore();
-  const { form, handleChange, handleNestedChange, handleSave, handleReset } = useConfigForm({ config, updateConfig, resetConfig });
+  const { form, handleChange, handleSave, handleReset } = useConfigForm({ config, updateConfig, resetConfig });
   const {
     selectorDiscoveryConfig,
     selectorDiscoveryBundleStatus,
@@ -25,26 +25,25 @@ export const SettingsPage: React.FC = () => {
     setProviderJson,
     selectorDiscoveryMessage,
     selectorDiscoveryPreflight,
+    selectorDiscoverySaveState,
     refreshSelectorDiscoveryBundleStatus,
     refreshSelectorDiscoveryBundleEvaluations,
-    handleSelectorDiscoverySave,
     handleLoadDefaultSelectorDiscoveryProvider,
     handleSelectorDiscoveryClear,
     handleSelectorDiscoveryTest,
     handleRefreshSelectorDiscoveryAoModels,
   } = useSelectorDiscoverySettings({ fetchConfig });
-  const [cdpTestMessage, setCdpTestMessage] = React.useState<string | null>(null);
+  const [remoteTestMessage, setRemoteTestMessage] = React.useState<string | null>(null);
   const [downloadDirectoryMessage, setDownloadDirectoryMessage] = React.useState<string | null>(null);
   const { text } = useI18n();
 
-  const handleCdpTest = async () => {
-    setCdpTestMessage(null);
+  const handleRemoteTest = async () => {
+    setRemoteTestMessage(null);
     try {
-      const cdpUrl = (form as any).browser?.handoff?.cdpUrl;
-      const response = await api.testChallengeDiscoveryCdp(cdpUrl);
-      setCdpTestMessage(`Connected. Pages: ${response.data.pageCount}. ${response.data.pages?.[0]?.title ?? response.data.pages?.[0]?.url ?? ''}`);
+      const response = await api.testChallengeDiscoveryRemote();
+      setRemoteTestMessage(`Connected. Pages: ${response.data.pageCount}. ${response.data.pages?.[0]?.title ?? response.data.pages?.[0]?.url ?? ''}`);
     } catch (err: any) {
-      setCdpTestMessage(err.response?.data?.error ?? err.message);
+      setRemoteTestMessage(err.response?.data?.error ?? err.message);
     }
   };
 
@@ -101,9 +100,8 @@ export const SettingsPage: React.FC = () => {
       <BrowserSettingsSection
         form={form}
         handleChange={handleChange}
-        handleNestedChange={handleNestedChange}
-        cdpTestMessage={cdpTestMessage}
-        handleCdpTest={handleCdpTest}
+        remoteTestMessage={remoteTestMessage}
+        handleRemoteTest={handleRemoteTest}
       />
 
       <SelectorDiscoverySection
@@ -120,9 +118,9 @@ export const SettingsPage: React.FC = () => {
         selectorDiscoveryAoModelsLoading={selectorDiscoveryAoModelsLoading}
         selectorDiscoveryMessage={selectorDiscoveryMessage}
         selectorDiscoveryPreflight={selectorDiscoveryPreflight}
+        selectorDiscoverySaveState={selectorDiscoverySaveState}
         refreshSelectorDiscoveryBundleStatus={refreshSelectorDiscoveryBundleStatus}
         refreshSelectorDiscoveryBundleEvaluations={refreshSelectorDiscoveryBundleEvaluations}
-        handleSelectorDiscoverySave={handleSelectorDiscoverySave}
         handleLoadDefaultSelectorDiscoveryProvider={handleLoadDefaultSelectorDiscoveryProvider}
         handleSelectorDiscoveryClear={handleSelectorDiscoveryClear}
         handleSelectorDiscoveryTest={handleSelectorDiscoveryTest}

@@ -38,8 +38,6 @@ export function ImplementationTestSection(props: {
   editorLanguage: EditorLanguage;
   testResult: AdapterFunctionTestResponse | null;
   challengeJob: ChallengeHandoffJobSummary | null;
-  browserExecutablePath: string;
-  setBrowserExecutablePath: (value: string) => void;
   browserAction: string | null;
   browserAlreadyOpen: boolean;
   openVerificationBrowser: () => void;
@@ -74,8 +72,6 @@ export function ImplementationTestSection(props: {
     editorLanguage,
     testResult,
     challengeJob,
-    browserExecutablePath,
-    setBrowserExecutablePath,
     browserAction,
     browserAlreadyOpen,
     openVerificationBrowser,
@@ -113,11 +109,10 @@ export function ImplementationTestSection(props: {
         <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
           <div className="text-sm font-medium text-gray-800">Adapter DOM strategy</div>
           <div className="mt-1 text-sm text-gray-700">
-            {capabilityDetail.adapter.parseMode === 'static'
-              ? 'Static fetch'
-              : capabilityDetail.adapter.parseMode === 'dynamic'
-                ? 'Playwright render'
-                : 'Playwright render + human verification handoff'}
+            Playwright render
+          </div>
+          <div className="mt-1 text-sm text-gray-700">
+            Human verification handoff: {capabilityDetail.adapter.capabilities.verification ? 'supported' : 'not supported'}
           </div>
           <div className="mt-1 text-xs text-gray-500">
             This is adapter metadata. Adapter Lab uses it automatically; users do not choose crawler mode per test.
@@ -331,15 +326,9 @@ export function ImplementationTestSection(props: {
                   <div className="text-xs text-gray-600">Handoff job: {testResult.challengeDiscoveryId}</div>
                   {challengeJob?.status && <div className="mt-1 text-xs text-gray-600">Status: {challengeJob.status}</div>}
                   {challengeJob?.error && <div className="mt-1 text-xs text-amber-800">{challengeJob.error}</div>}
-                  <label className="mt-3 block text-xs font-medium text-gray-700">
-                    Browser executable path
-                    <input
-                      value={browserExecutablePath}
-                      onChange={(event) => setBrowserExecutablePath(event.target.value)}
-                      placeholder="Auto-detected Chrome / Chromium path"
-                      className="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm"
-                    />
-                  </label>
+                  <p className="mt-3 text-xs text-gray-600">
+                    Verification opens in the configured remote Playwright service.
+                  </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"

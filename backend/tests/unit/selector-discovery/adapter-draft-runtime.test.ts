@@ -17,7 +17,7 @@ export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
   readonly domains = ['demo.test'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: true, chapterImages: true };
   readonly common = new DemoCommonCapability(this);
   readonly verification = new DemoVerificationCapability(this);

@@ -22,7 +22,7 @@ export interface SiteMaintenanceProfile {
 
 export interface SiteManifest {
   id: string;
-  parseMode: 'static' | 'dynamic' | 'interactive';
+  parseMode: 'playwright';
   selectors: SiteSelectors;
   maintenance: SiteMaintenanceProfile;
 }

@@ -202,8 +202,6 @@ export async function deleteDiscoveryCandidate(deps: DiscoveryCleanupDeps, candi
   await deps.storage.delete(`${prefix}${candidate.id}`);
   if (candidate.kind === 'selector') {
     await deps.storage.delete(`selector-discovery-implementation-${candidate.id}`);
-    await deps.storage.delete(`selector-discovery-manifest-${candidate.id}`);
-    await deps.storage.delete(`selector-discovery-shadow-promotion-${candidate.id}`);
   }
   try {
     const ids = (await deps.storage.read<string[]>(indexKey)) ?? [];

@@ -290,6 +290,7 @@ export const AgentPage: React.FC = () => {
           buildJobs={buildJobs}
           buildJobsLoading={buildJobsLoading}
           buildJobsError={buildJobsError}
+          reviewError={reviewError}
           retryingBuildJobId={retryingBuildJobId}
           reviewLoading={reviewLoading}
           fetchBuildJobs={fetchBuildJobs}

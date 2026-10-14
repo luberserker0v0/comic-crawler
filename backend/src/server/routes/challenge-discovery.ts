@@ -24,26 +24,9 @@ export function setupChallengeDiscoveryRoutes(
     reply.send({ data: { jobs: await challengeDiscoveryService.list() } });
   });
 
-  app.post('/api/challenge-discovery/cdp/test', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/challenge-discovery/remote/test', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const body = request.body as { cdpUrl?: string };
-      reply.send({ data: await challengeDiscoveryService.testCdpConnection(body?.cdpUrl) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.get('/api/challenge-discovery/browser-options', async (_request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      reply.send({ data: await challengeDiscoveryService.listLocalBrowsers() });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/challenge-discovery/browser-options/browse-executable', async (_request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      reply.send({ data: await challengeDiscoveryService.browseBrowserExecutable() });
+      reply.send({ data: await challengeDiscoveryService.testRemoteConnection() });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -86,38 +69,23 @@ export function setupChallengeDiscoveryRoutes(
     }
   });
 
-  app.post('/api/challenge-discovery/:id/open-external-browser', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/challenge-discovery/:id/inspect-remote-page', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };
-      const body = request.body as { executablePath?: string; profileId?: string };
-      reply.send({ data: await challengeDiscoveryService.openExternalBrowser(id, {
-        executablePath: body?.executablePath,
-        profileId: body?.profileId,
-      }) });
+      reply.send({ data: await challengeDiscoveryService.inspectRemotePage(id) });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
-  app.post('/api/challenge-discovery/:id/inspect-cdp-page', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id } = request.params as { id: string };
-      const body = request.body as { cdpUrl?: string };
-      reply.send({ data: await challengeDiscoveryService.inspectCdpPage(id, body?.cdpUrl) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.post('/api/challenge-discovery/:id/create-selector-discovery-from-cdp', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/challenge-discovery/:id/create-selector-discovery-from-remote', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       if (!selectorDiscoveryService) {
         reply.code(400).send({ error: 'Selector discovery service is not available.' });
         return;
       }
       const { id } = request.params as { id: string };
-      const body = request.body as { cdpUrl?: string };
-      const snapshot = await challengeDiscoveryService.readCdpPageSnapshot(id, body?.cdpUrl);
+      const snapshot = await challengeDiscoveryService.readRemotePageSnapshot(id);
       const discovery = await selectorDiscoveryService.create({
         url: snapshot.job.normalizedUrl,
         target: 'chapter-only',

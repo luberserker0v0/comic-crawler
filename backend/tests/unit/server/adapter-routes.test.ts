@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { DEFAULTS } from '@comiccrawler/shared';
 import fastify from 'fastify';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -41,11 +42,11 @@ class MemoryStorage implements IStorage {
   }
 }
 
-class StaticDemoAdapter extends AdapterBase {
-  readonly id: string = 'static-demo';
-  readonly name = 'Static Demo';
+class RenderedDemoAdapter extends AdapterBase {
+  readonly id: string = 'rendered-demo';
+  readonly name = 'Rendered Demo';
   readonly domains = ['example.com'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   override readonly capabilities = { verification: true, metadata: true, chapterImages: true };
 
   override extractTitle(document: unknown): string {
@@ -149,12 +150,14 @@ describe('Adapter routes', () => {
   it('extracts the complete ordered image URL list directly through the matched adapter', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
-    const adapter = new StaticDemoAdapter();
+    const adapter = new RenderedDemoAdapter();
     jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue(
       '<div class="reader"><img src="/images/1.jpg"><img src="/images/2.jpg"><img src="/images/3.webp"></div>'
     );
     registry.register(adapter);
-    setupAdaptersRoutes(app, registry);
+    const getBrowserConfig = jest.fn(async () => DEFAULTS.browser);
+    const getNetworkConfig = jest.fn(async () => DEFAULTS.network);
+    setupAdaptersRoutes(app, registry, { getBrowserConfig, getNetworkConfig });
 
     const response = await app.inject({
       method: 'POST',
@@ -164,7 +167,7 @@ describe('Adapter routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
-      adapterId: 'static-demo',
+      adapterId: 'rendered-demo',
       chapterUrl: 'https://example.com/read/1',
       imageUrlCount: 3,
       imageUrls: [
@@ -172,8 +175,10 @@ describe('Adapter routes', () => {
         'https://example.com/images/2.jpg',
         'https://example.com/images/3.webp',
       ],
-      domSource: 'static',
+      domSource: 'rendered',
     });
+    expect(getBrowserConfig).toHaveBeenCalledTimes(1);
+    expect(getNetworkConfig).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -468,26 +473,6 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
-  it('returns allowlisted project source snippets', async () => {
-    const app = fastify();
-    const registry = new AdapterRegistry();
-    registry.register(new HappyMhAdapter());
-    setupAdaptersRoutes(app, registry);
-
-    const response = await app.inject({ method: 'GET', url: '/api/adapters/happymh/functions/extractTitle/source' });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json().data).toMatchObject({
-      adapterId: 'happymh',
-      functionId: 'extractTitle',
-      language: 'typescript',
-      sourceKind: 'project-source',
-    });
-    expect(response.json().data.source).toContain('extractTitle');
-
-    await app.close();
-  });
-
   it('returns full project-source adapter implementation for Adapter Lab workbench', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
@@ -509,33 +494,6 @@ describe('Adapter routes', () => {
       expect.objectContaining({ id: 'extractChapterList', kind: 'method' }),
       expect.objectContaining({ id: 'helper:extractMangaSlug', kind: 'helper' }),
     ]));
-
-    await app.close();
-  });
-
-  it('returns dynamic selector manifest source without reading arbitrary files', async () => {
-    const app = fastify();
-    const registry = new AdapterRegistry();
-    registry.register(new DynamicSiteAdapter({
-      adapterId: 'dynamic-demo',
-      name: 'Dynamic Demo',
-      domains: ['example.com'],
-      urlPatterns: ['https://example.com/read/*'],
-      capabilities: { verification: true, metadata: false, chapterImages: true },
-      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-      sourceDiscoveryId: 'disc-1',
-      promotedAt: '2026-07-09T00:00:00.000Z',
-    }));
-    setupAdaptersRoutes(app, registry);
-
-    const response = await app.inject({ method: 'GET', url: '/api/adapters/dynamic-demo/functions/extractChapterImageUrls/source' });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json().data).toMatchObject({
-      sourceKind: 'dynamic-manifest',
-      language: 'json',
-    });
-    expect(response.json().data.source).toContain('"selectors"');
 
     await app.close();
   });
@@ -575,7 +533,7 @@ describe('Adapter routes', () => {
   it('tests metadata and chapter image functions with structured summaries', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
-    const adapter = new StaticDemoAdapter();
+    const adapter = new RenderedDemoAdapter();
     jest.spyOn(adapter as any, 'fetchHtml').mockImplementation(async (url: unknown) => {
       const value = String(url);
       if (value.includes('/manga/')) {
@@ -588,25 +546,25 @@ describe('Adapter routes', () => {
 
     const metadata = await app.inject({
       method: 'POST',
-      url: '/api/adapters/static-demo/functions/extractTitle/test',
+      url: '/api/adapters/rendered-demo/functions/extractTitle/test',
       payload: { url: 'https://example.com/manga/demo' },
     });
     const images = await app.inject({
       method: 'POST',
-      url: '/api/adapters/static-demo/functions/extractChapterImageUrls/test',
+      url: '/api/adapters/rendered-demo/functions/extractChapterImageUrls/test',
       payload: { url: 'https://example.com/read/1' },
     });
 
     expect(metadata.statusCode).toBe(200);
     expect(metadata.json().data).toMatchObject({
       ok: true,
-      domSource: 'static',
+      domSource: 'rendered',
       resultSummary: { title: 'Demo Title' },
     });
     expect(images.statusCode).toBe(200);
     expect(images.json().data).toMatchObject({
       ok: true,
-      domSource: 'static',
+      domSource: 'rendered',
       resultSummary: {
         imageUrlCount: 2,
         imageUrls: [
@@ -619,63 +577,59 @@ describe('Adapter routes', () => {
     await app.close();
   });
 
-  it('does not start verification handoff for static-mode extraction failures', async () => {
+  it('starts verification handoff for rendered extraction failures with verification message', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
-    class BlockedStaticAdapter extends StaticDemoAdapter {
-      override readonly id = 'blocked-demo';
+    class BlockedRenderedAdapter extends RenderedDemoAdapter {
+      override readonly id = 'blocked-rendered';
       override readonly capabilities = { verification: true, metadata: false, chapterImages: true };
     }
-    const adapter = new BlockedStaticAdapter();
+    const adapter = new BlockedRenderedAdapter();
     jest.spyOn(adapter as any, 'fetchHtml').mockRejectedValue(new Error('Human verification is required before crawling can continue.'));
     registry.register(adapter);
     setupAdaptersRoutes(app, registry);
 
     const response = await app.inject({
       method: 'POST',
-      url: '/api/adapters/blocked-demo/functions/extractChapterImageUrls/test',
+      url: '/api/adapters/blocked-rendered/functions/extractChapterImageUrls/test',
       payload: { url: 'https://example.com/read/1' },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
       ok: false,
-      status: 'failed',
-      requiresVerification: false,
-      domSource: 'static',
+      status: 'verification_required',
+      requiresVerification: true,
+      domSource: 'handoff-required',
     });
 
     await app.close();
   });
 
-  it('detects verification from HTTP 403 fetch failures in static mode without opening handoff', async () => {
+  it('detects verification from HTTP 403 fetch failures and opens handoff', async () => {
     const app = fastify();
     const registry = new AdapterRegistry();
-    class ForbiddenStaticAdapter extends StaticDemoAdapter {
-      override readonly id = 'forbidden-demo';
+    class ForbiddenRenderedAdapter extends RenderedDemoAdapter {
+      override readonly id = 'forbidden-rendered';
       override readonly capabilities = { verification: true, metadata: false, chapterImages: true };
     }
-    const adapter = new ForbiddenStaticAdapter();
+    const adapter = new ForbiddenRenderedAdapter();
     jest.spyOn(adapter as any, 'fetchHtml').mockRejectedValue(new Error('HTTP 403 for https://example.com/manga/demo'));
     registry.register(adapter);
     setupAdaptersRoutes(app, registry);
 
     const response = await app.inject({
       method: 'POST',
-      url: '/api/adapters/forbidden-demo/functions/detectVerificationRequired/test',
+      url: '/api/adapters/forbidden-rendered/functions/detectVerificationRequired/test',
       payload: { url: 'https://example.com/manga/demo' },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
-      ok: true,
-      status: 'passed',
-      requiresVerification: false,
-      resultSummary: {
-        verificationRequired: true,
-        source: 'fetch-error',
-        domSource: 'static',
-      },
+      ok: false,
+      status: 'verification_required',
+      requiresVerification: true,
+      domSource: 'handoff-required',
     });
 
     await app.close();
@@ -739,11 +693,11 @@ describe('Adapter routes', () => {
     });
     const fetchHtmlSpy = jest.spyOn(adapter as any, 'fetchHtml').mockRejectedValue(new Error('HTTP 403 for https://example.com/manga/demo'));
     registry.register(adapter);
-    const readCdpPageSnapshot = jest.fn(async (_id: string, _cdpUrl?: string, options?: { settle?: boolean; allowNavigate?: boolean }) => {
+    const readRemotePageSnapshot = jest.fn(async (_id: string, options?: { settle?: boolean; allowNavigate?: boolean }) => {
       expect(options?.settle).toBe(false);
       expect(options?.allowNavigate).toBe(false);
       return {
-        job: { id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222', normalizedUrl: 'https://example.com/manga/demo' },
+        job: { id: 'chal-1', status: 'ready', normalizedUrl: 'https://example.com/manga/demo' },
         page: {
           url: 'https://example.com/manga/demo',
           title: 'Demo',
@@ -753,8 +707,8 @@ describe('Adapter routes', () => {
     });
     setupAdaptersRoutes(app, registry, {
       challengeDiscoveryService: {
-        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222' })),
-        readCdpPageSnapshot,
+        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
+        readRemotePageSnapshot,
       } as any,
     });
 
@@ -800,11 +754,11 @@ describe('Adapter routes', () => {
       promotedAt: '2026-07-09T00:00:00.000Z',
     });
     registry.register(adapter);
-    const readCdpPageSnapshot = jest.fn(async (_id: string, _cdpUrl?: string, options?: { settle?: boolean; expandCatalog?: boolean; allowNavigate?: boolean }) => {
+    const readRemotePageSnapshot = jest.fn(async (_id: string, options?: { settle?: boolean; expandCatalog?: boolean; allowNavigate?: boolean }) => {
       expect(options).toMatchObject({ settle: false, allowNavigate: false });
       expect(options).not.toHaveProperty('expandCatalog');
       return {
-        job: { id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222', normalizedUrl: 'https://example.com/manga/demo' },
+        job: { id: 'chal-1', status: 'ready', normalizedUrl: 'https://example.com/manga/demo' },
         page: {
           url: 'https://example.com/manga/demo',
           title: 'Demo',
@@ -814,8 +768,8 @@ describe('Adapter routes', () => {
     });
     setupAdaptersRoutes(app, registry, {
       challengeDiscoveryService: {
-        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222' })),
-        readCdpPageSnapshot,
+        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
+        readRemotePageSnapshot,
       } as any,
     });
 
@@ -851,7 +805,7 @@ describe('Adapter routes', () => {
       expect.objectContaining({ step: 'extraction' }),
       expect.objectContaining({ step: 'readiness' }),
     ]));
-    expect(readCdpPageSnapshot).toHaveBeenCalledTimes(1);
+    expect(readRemotePageSnapshot).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -876,8 +830,8 @@ describe('Adapter routes', () => {
     registry.register(adapter);
     setupAdaptersRoutes(app, registry, {
       challengeDiscoveryService: {
-        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222' })),
-        readCdpPageSnapshot: jest.fn(async () => ({
+        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
+        readRemotePageSnapshot: jest.fn(async () => ({
           job: { id: 'chal-1', status: 'ready' },
           page: {
             url: 'https://example.com/manga/demo',
@@ -936,8 +890,8 @@ describe('Adapter routes', () => {
     registry.register(adapter);
     setupAdaptersRoutes(app, registry, {
       challengeDiscoveryService: {
-        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready', browserCdpUrl: 'http://127.0.0.1:9222' })),
-        readCdpPageSnapshot: jest.fn(async () => ({
+        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
+        readRemotePageSnapshot: jest.fn(async () => ({
           job: { id: 'chal-1', status: 'ready' },
           page: {
             url: 'https://example.com/mangaread/demo/1',

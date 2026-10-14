@@ -1,4 +1,4 @@
-import type { ComicMetadata, ImageInfo, SearchResult, SearchOptions, Credentials, ComicStatus } from './comic';
+import type { SearchResult, SearchOptions, Credentials, ComicStatus } from './comic';
 import type { ChapterInfo } from './task';
 
 export interface AdapterCapabilities {
@@ -34,7 +34,7 @@ export interface IComicAdapter {
   readonly id: string;
   readonly name: string;
   readonly domains: string[];
-  readonly parseMode: 'static' | 'dynamic' | 'interactive';
+  readonly parseMode: 'playwright';
   readonly capabilities?: AdapterCapabilities;
   readonly common?: CommonCapabilityContract;
   readonly verification?: VerificationCapabilityContract;
@@ -72,7 +72,7 @@ export interface AdapterInfo {
   supportsLogin: boolean;
   supportsSearch: boolean;
   capabilities: AdapterCapabilities;
-  parseMode: 'static' | 'dynamic' | 'interactive';
+  parseMode: 'playwright';
   configSchema?: Record<string, ConfigField>;
 }
 

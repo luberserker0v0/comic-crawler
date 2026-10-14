@@ -10,7 +10,7 @@ const coreBackendTests = [
   'tests/unit/crawler/engine.test.ts',
   'tests/unit/crawler/image-downloader.test.ts',
   'tests/unit/crawler/anti-bot.test.ts',
-  'tests/unit/challenge/cdp-handoff.test.ts',
+  'tests/unit/server/browser-provider-routes.test.ts',
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
   'tests/unit/server/adapter-routes.test.ts',
@@ -27,6 +27,7 @@ const nonCoreBackendTests = [
   'tests/unit/adapter/dynamic-site-adapter.test.ts',
   'tests/unit/adapter/registry.test.ts',
   'tests/unit/adapter/sites/kuronavi/adapter.test.ts',
+  'tests/unit/adapter/sites/comix/adapter.test.ts',
   'tests/unit/adapter/url-resolver.test.ts',
   'tests/unit/crawler/chapter-selection.test.ts',
   'tests/unit/crawler/extraction/dom.test.ts',
@@ -45,9 +46,11 @@ const nonCoreBackendTests = [
   'tests/unit/agent/workspace-factory.test.ts',
   // Challenge / config / server 其餘
   'tests/unit/challenge/registry.test.ts',
+  'tests/unit/challenge/remote-handoff.test.ts',
   'tests/unit/challenge/strategy-loader.test.ts',
   'tests/unit/cli/ui.test.ts',
   'tests/unit/config/runtime.test.ts',
+  'tests/unit/config/manager.test.ts',
   'tests/unit/config/schema.test.ts',
   'tests/unit/server/agent-routes.test.ts',
   'tests/unit/server/api-docs-route.test.ts',
@@ -70,10 +73,11 @@ const nonCoreBackendTests = [
   'tests/unit/selector-discovery/ao-client.test.ts',
   'tests/unit/selector-discovery/bundle-manager.test.ts',
   'tests/unit/selector-discovery/eval-suite.test.ts',
-  'tests/unit/selector-discovery/markdown-candidate.test.ts',
   'tests/unit/selector-discovery/provider-config.test.ts',
   'tests/unit/selector-discovery/service.test.ts',
+  'tests/unit/selector-discovery/service-shell-compose.test.ts',
   'tests/unit/selector-discovery/settings-store.test.ts',
+  'tests/unit/selector-discovery/url-models.test.ts',
 ];
 
 function collectUnitTests(dir) {

@@ -58,7 +58,7 @@ describe('DynamicSiteAdapter capabilities', () => {
     await adapter.dispose();
   });
 
-  it('uses rendered HTML when a headless renderer is configured', async () => {
+  it('uses rendered HTML when a remote renderer is configured', async () => {
     const adapter = new DynamicSiteAdapter({
       adapterId: 'rendered-example',
       name: 'Rendered Example',
@@ -83,7 +83,7 @@ describe('DynamicSiteAdapter capabilities', () => {
     adapter.setHtmlRenderer({ render, dispose: jest.fn(async () => undefined) });
 
     await expect(
-      adapter.withHtmlFetchMode('headless', () => composeChapterImages(adapter, 'https://example.com/manga/demo/chapter-1'))
+      composeChapterImages(adapter, 'https://example.com/manga/demo/chapter-1')
     ).resolves.toEqual([
       { url: 'https://example.com/rendered/1.webp', index: 0, filename: '001.webp' },
     ]);
