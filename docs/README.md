@@ -22,10 +22,12 @@ This directory contains user- and contributor-facing documentation for the
   `AdapterBase` output contract, and AO API lifecycle.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
   forced task order, and adapter lifecycle recovery.
+- `development/` - version-controlled SRS, SDD, TDD, test scenarios, and
+  authentication credential contract.
 
 ## Documentation boundary
 
-- External software development documents such as SRS, SDD, STD, TDD, roadmap,
-  and implementation notes belong in the outer `../../docs/` directory.
+- Current software specifications belong in `development/`.
+- Superseded plans and designs are removed instead of kept as active documents.
 - Contributor workflow belongs in `../CONTRIBUTING.md`, not here.
-- Agent-facing instructions belong in the outer `../../AGENTS.md`.
+- Agent-facing instructions belong in the workspace root `AGENTS.md`.

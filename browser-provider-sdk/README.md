@@ -138,8 +138,9 @@ Chromium profile and reports `persistentContext: false`. Copying a user profile,
 using a specified persistent profile directory, and attaching to an existing
 Chrome process are intentionally not implemented.
 
-The profile belongs to a provider session, not to one crawl task. Multiple
-browser-backed operations may reuse a session. Closing the session,
-letting its TTL expire, or stopping the provider closes the Playwright browser
-server. Playwright owns the temporary profile data; ComicCrawler does not keep a
-named user-data directory or reuse it in a later session.
+The profile belongs to the Playwright session created for a Server-owned Worker
+lease. Related operations may reuse that session, and a verification handoff
+retains it so the task can resume with the same cookies and page state. Releasing
+the lease, letting the session TTL expire, or stopping the Provider closes the
+browser server. Playwright owns the temporary profile data; ComicCrawler does
+not keep a named user-data directory or reuse it in a later session.

@@ -182,6 +182,7 @@ Inspect and test individual adapter functions.
   - [Main flow](docs/ARCHITECTURE.md#main-flow)
   - [Adapters and capabilities](docs/ARCHITECTURE.md#adapters-and-capabilities)
   - [Crawler rendering](docs/ARCHITECTURE.md#crawler-rendering)
+  - [Responsive rendering](docs/ARCHITECTURE.md#responsive-rendering)
   - [Browser Provider boundary](docs/ARCHITECTURE.md#browser-provider-boundary)
   - [Task reliability](docs/ARCHITECTURE.md#task-reliability)
   - [Human verification](docs/ARCHITECTURE.md#human-verification-handoff)
@@ -190,6 +191,8 @@ Inspect and test individual adapter functions.
 - [AO Selector Discovery](docs/AO_SELECTOR_DISCOVERY.md): generated adapter
   workflow.
 - [Reliability](docs/RELIABILITY.md): queue, checkpoint, and resume behavior.
+- [Development specifications](docs/development/README.md): SRS, SDD, TDD,
+  test scenarios, and credential design.
 
 ### Reference
 

@@ -13,6 +13,7 @@ adapter implementation discovery.
 - [Main flow](#main-flow)
 - [Adapters and capabilities](#adapters-and-capabilities)
 - [Crawler rendering](#crawler-rendering)
+- [Responsive rendering](#responsive-rendering)
 - [Browser Provider boundary](#browser-provider-boundary)
 - [Task reliability](#task-reliability)
 - [Human verification handoff](#human-verification-handoff)
@@ -175,6 +176,23 @@ endpoint comes from the task's internal Browser Lease:
 Image downloading remains URL-based. Browser image fallback exists only for
 specific verified-session cases.
 
+### Responsive rendering
+
+The public chapter-images API may create its isolated Playwright Browser
+Context with a caller-supplied viewport and device scale factor. Viewport
+dimensions use CSS pixels. If the request omits them, the effective context is
+`1920 × 1080` at scale `1`.
+
+The rendered responsive DOM is passed to the adapter, so media-query and
+viewport-driven JavaScript layouts can return different mobile and desktop
+image lists. The response reports the effective render context. Adapter
+function execution is isolated so concurrent viewport requests cannot replace
+each other's renderer.
+
+This is viewport emulation, not complete device emulation. ComicCrawler does
+not currently set a mobile user agent, `isMobile`, or `hasTouch`; sites that
+branch on those signals may still return their desktop variant.
+
 ### Browser Provider boundary
 
 The Browser Provider SDK is the stable integration boundary for a desktop GUI,
@@ -288,7 +306,7 @@ frontend, then verifies both services are ready.
 
 This document describes the current high-level architecture.
 
-- Detailed system design: outer `docs/SDD.md`.
+- Detailed system design: [SDD](development/SDD.md).
 - API schema: [OpenAPI](openapi.yaml).
 - Adapter design: [Adapters](ADAPTERS.md).
 - AO operation: [AO Selector Discovery](AO_SELECTOR_DISCOVERY.md).

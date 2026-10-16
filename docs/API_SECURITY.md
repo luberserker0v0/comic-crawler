@@ -153,24 +153,22 @@ credential does not invalidate the user's other Provider instances.
 See the [Browser Provider SDK guide](../browser-provider-sdk/README.md) for the
 client configuration and command.
 
-## Current ownership scope
+## Ownership scope
 
 Provider ownership checks are implemented for listing, session control,
-credential rotation, and revocation.
+credential rotation, and revocation. Browser-backed operations accept a stable
+`browserTarget`; the Server verifies visibility, reserves the Worker, and keeps
+the resulting lease bound to the operation.
 
 Other resource-specific `*-own` permissions remain denied until their resource
 models store an owner. Use their non-`own` permission only when cross-user
 access is acceptable.
 
-## Current integration limits
+## WebUI authentication boundary
 
-- Crawler and selector-discovery jobs persist their selected session and reject
-  silent failover. Interactive Adapter Lab operations and verification handoff
-  still need an explicit session-selection contract.
-- Token mode is available to REST clients and the Browser Provider SDK. The
-  current WebUI does not yet provide sign-in or attach the user authentication
-  headers, so use public mode for the WebUI until that client integration is
-  implemented.
+Token mode is available to REST clients and the Browser Provider SDK. The WebUI
+does not provide sign-in or attach user authentication headers. Use public mode
+for direct WebUI access, or place an authenticated client/proxy in front of it.
 
 ## Secret handling
 

@@ -209,8 +209,7 @@ npm run -w frontend test:coverage -- --runInBand
 npm run -w browser-provider-sdk test:coverage
 ```
 
-See the outer [test strategy](../../docs/TDD.md) for the current coverage
-baseline.
+See the [test strategy](development/TDD.md) for test layers and merge gates.
 
 ## 8. Troubleshooting
 
