@@ -15,8 +15,7 @@ The requested TypeScript file must:
 - not export a class that extends `AdapterBase`;
 - not declare adapter identity, domains, parseMode, capability flags, handler
   fields, constructors, or `super(...)`;
-- implement fine-grained capability functions, not `fetchMetadata()` or
-  `fetchChapterImages()`;
+- implement only the fine-grained functions owned by the requested capability;
 - keep site-specific expansion, filtering, and extraction logic visible in the
   capability source;
 - return full extraction results from capability methods:
@@ -70,7 +69,7 @@ verified browser DOM requirements, and URL mismatch risks.
 - No constructor/super identity object:
 - No this.dom or browser document API:
 - No JSON output:
-- No fetchMetadata/fetchChapterImages implementation:
+- Only requested capability methods implemented:
 - URL matching checked:
 - Metadata functions checked:
 - Chapter image functions checked:

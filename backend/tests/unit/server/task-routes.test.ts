@@ -292,13 +292,13 @@ describe('Task routes persistence', () => {
       browserTarget: { mode: 'any' },
     });
 
-    const legacy = await server.getApp().inject({
+    const unknownField = await server.getApp().inject({
       method: 'POST',
       url: '/api/tasks',
-      payload: { mode: 'chapters', url: chapterUrl, chapterUrls: [chapterUrl], browserSessionId: 'legacy' },
+      payload: { mode: 'chapters', url: chapterUrl, chapterUrls: [chapterUrl], unexpected: true },
     });
-    expect(legacy.statusCode).toBe(400);
-    expect(legacy.json().error).toContain('internal');
+    expect(unknownField.statusCode).toBe(400);
+    expect(unknownField.json()).toEqual({ error: 'Unknown task field "unexpected".' });
   });
 
   it('should reject a specific-chapters task without chapter URLs', async () => {

@@ -22,9 +22,8 @@ before parsing, and there is no static fetch path. Human verification is a
 separate adapter capability (`capabilities.verification`) activated by challenge
 detection, not a parse mode.
 
-Adapters should not expose old large façade functions such as `fetchMetadata()`
-or `fetchChapterImages()` as Agent-facing capabilities. ComicCrawler composes
-metadata and image results internally from the fine-grained functions.
+ComicCrawler composes metadata and image results internally from these
+fine-grained functions.
 
 ## Capabilities
 

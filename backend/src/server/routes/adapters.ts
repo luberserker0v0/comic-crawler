@@ -363,16 +363,6 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     reply.send({ data: result });
   });
 
-  app.post('/api/adapters/register', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as { id: string; name: string; domains: string[] };
-
-    if (!body.id || !body.name || !body.domains) {
-      reply.code(400).send({ error: 'id, name, and domains are required' });
-      return;
-    }
-
-    reply.send({ data: { message: 'Adapter registration endpoint' } });
-  });
 }
 
 const DEFAULT_RENDER_CONTEXT: EffectiveRenderContext = {

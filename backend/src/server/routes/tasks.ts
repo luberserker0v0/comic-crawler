@@ -146,6 +146,22 @@ export function setupTasksRoutes(
   });
 
   app.post('/api/tasks', async (request: FastifyRequest, reply: FastifyReply) => {
+    const requestBody = (request.body ?? {}) as Record<string, unknown>;
+    const allowedFields = new Set([
+      'url',
+      'adapterId',
+      'mode',
+      'chapters',
+      'chapterUrls',
+      'priority',
+      'browserTarget',
+    ]);
+    const unknownField = Object.keys(requestBody).find((field) => !allowedFields.has(field));
+    if (unknownField) {
+      reply.code(400).send({ error: `Unknown task field "${unknownField}".` });
+      return;
+    }
+
     const body = request.body as {
       url: string;
       adapterId?: string;
@@ -159,11 +175,6 @@ export function setupTasksRoutes(
     const principal = options?.apiSecurity
       ? requestPrincipal(request, options.apiSecurity)
       : undefined;
-
-    if ('browserSessionId' in ((request.body ?? {}) as Record<string, unknown>)) {
-      reply.code(400).send({ error: 'browserSessionId is internal. Select browserTarget.workerId instead.' });
-      return;
-    }
 
     if (!body.url) {
       reply.code(400).send({ error: 'URL is required' });

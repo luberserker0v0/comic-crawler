@@ -118,9 +118,8 @@ Adapters identify supported domains and declare capabilities:
 Runtime adapter code is centered on `AdapterBase`. A site adapter declares its
 identity, `parseMode`, capabilities, and fine-grained extraction functions.
 ComicCrawler runtime composes those functions into metadata and image results
-internally. Agent-generated TypeScript should implement the BaseAdapter
-contract and must not expose old runtime facade functions such as
-`fetchMetadata()` or `fetchChapterImages()`.
+internally. Agent-generated TypeScript implements the `AdapterBase` capability
+contract.
 
 `parseMode` is only the DOM acquisition strategy. Its sole value is
 `playwright`, which renders through the remote browser provider before parsing.

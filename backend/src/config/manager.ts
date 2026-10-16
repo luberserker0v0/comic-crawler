@@ -21,11 +21,7 @@ export class ConfigManager {
   async load(): Promise<GlobalConfig> {
     const stored = await this.storage.read<GlobalConfig>(CONFIG_KEY);
     if (stored) {
-      const migration = migrateLegacyBrowserConfig(stored);
-      const validated = validateGlobalConfig(migration.config);
-      if (migration.migrated) {
-        await this.save(validated);
-      }
+      const validated = validateGlobalConfig(stored);
       this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(validated));
     } else {
       this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(this.getDefaultConfig()));
@@ -149,38 +145,6 @@ export class ConfigManager {
       apiSecurity: { ...DEFAULTS.apiSecurity, rules: [] },
     };
   }
-}
-
-function migrateLegacyBrowserConfig(config: unknown): { config: unknown; migrated: boolean } {
-  if (!config || typeof config !== 'object') {
-    return { config, migrated: false };
-  }
-  const record = config as Record<string, unknown>;
-  const browser = record.browser;
-  if (!browser || typeof browser !== 'object') {
-    return { config, migrated: false };
-  }
-  const browserRecord = browser as Record<string, unknown>;
-  if (!['static', 'headless', 'auto'].includes(String(browserRecord.mode))) {
-    return { config, migrated: false };
-  }
-  const {
-    channel: _channel,
-    handoff: _handoff,
-    headless: _headless,
-    userDataDir: _userDataDir,
-    ...supportedBrowserConfig
-  } = browserRecord;
-  return {
-    config: {
-      ...record,
-      browser: {
-        ...supportedBrowserConfig,
-        mode: 'remote',
-      },
-    },
-    migrated: true,
-  };
 }
 
 function resolveRemoteBrowserDefaults(): GlobalConfig['browser']['remote'] {

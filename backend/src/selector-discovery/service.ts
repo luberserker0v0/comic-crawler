@@ -717,8 +717,7 @@ Metadata stage has a strict single-capability boundary:
 - Do not export an AdapterBase shell.
 - Do not implement CommonCapability, VerificationCapability, or
   ChapterImagesCapability in this file.
-- Do not implement extractChapterImageUrls, fetchMetadata, or
-  fetchChapterImages.
+- Do not implement extractChapterImageUrls in this metadata-only stage.
 - Before writing extractStatus or extractChapterList, read the Runtime DTO field
   semantics in contracts/adapter-base-api.md. ChapterInfo requires id, title,
   and absolute url; do not fill status/sourceUrl/placeholder dates.

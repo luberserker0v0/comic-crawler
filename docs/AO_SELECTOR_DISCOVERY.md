@@ -77,9 +77,8 @@ base classes:
 - `MetadataCapability`
 - `ChapterImagesCapability`
 
-AO must implement fine-grained extraction functions. It must not implement
-`fetchMetadata()` or `fetchChapterImages()`; ComicCrawler runtime composes those
-facades internally.
+AO implements fine-grained extraction functions. ComicCrawler runtime composes
+their results into the public response models.
 
 ## Backend AO API lifecycle
 

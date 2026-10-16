@@ -87,17 +87,6 @@ describe('validateAdapterImplementationDraft', () => {
     expect(result.errors).toContain('Filesystem imports are not allowed.');
   });
 
-  it('rejects old adapter facade functions', () => {
-    const result = validateAdapterImplementationDraft(`${VALID_CHAPTER_ONLY_ADAPTER}
-export function fetchMetadata() {
-  return undefined;
-}
-`, { target: 'chapter-only' });
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContain('Implementation must not mention old facade functions fetchMetadata or fetchChapterImages.');
-  });
-
   it('rejects non-AdapterBase DOM APIs and constructor identity objects', () => {
     const result = validateAdapterImplementationDraft(`
 import { AdapterBase, Capability } from 'comiccrawler';

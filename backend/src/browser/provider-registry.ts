@@ -68,8 +68,8 @@ export class BrowserProviderRegistry {
   async initialize(): Promise<void> {
     const records = await this.storage?.read<ProviderRecord[]>(STORAGE_KEY) ?? [];
     for (const record of records) {
-      if (!record.ownerUserId || !record.clientInstanceId || !record.registeredAt) {
-        throw new Error('Legacy Browser Provider records are unsupported. Remove browser-providers/records before startup.');
+      if (!record.providerId || !record.ownerUserId || !record.clientInstanceId || !record.registeredAt) {
+        throw new Error('Invalid Browser Provider record: providerId, ownerUserId, clientInstanceId, and registeredAt are required.');
       }
       this.records.set(record.providerId, record);
     }

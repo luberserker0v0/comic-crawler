@@ -64,8 +64,7 @@ from reviewed capability classes.
 - If a site needs special expansion, filtering, or cleanup, put that logic in
   the relevant capability source so humans can review it.
 - Do not add hidden generic browser actions outside the adapter source.
-- Do not implement `fetchMetadata()` or `fetchChapterImages()`. ComicCrawler
-  composes those internally from fine-grained capability methods.
+- Implement only the fine-grained methods owned by the requested capability.
 - Do not output JSON.
 
 ## Stage Output Files

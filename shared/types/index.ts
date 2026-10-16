@@ -3,14 +3,8 @@ export type {
   TaskProgress,
   CrawlStage,
   ChapterListSummary,
-  TaskOptions,
   ChapterInfo,
-  Task,
-  TaskFilter,
-  TaskResult,
   ImageFormat,
-  CrawlOptions,
-  DownloadResult,
 } from './task';
 
 export type {

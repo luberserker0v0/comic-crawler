@@ -16,7 +16,7 @@ Hard rules:
   `CommonCapability` and `VerificationCapability`; verification gates DOM trust
   even when the normal page does not need human verification.
 - Do not write arbitrary scripts; only write the requested adapter implementation file.
-- Do not implement `fetchMetadata()` or `fetchChapterImages()`; ComicCrawler composes those internally.
+- Implement only the fine-grained methods owned by the requested capability stage.
 - The trusted DOM evidence in task messages is always captured with Playwright
   rendering. Write selectors against rendered DOM (post-JavaScript), never
   against static-HTML assumptions.

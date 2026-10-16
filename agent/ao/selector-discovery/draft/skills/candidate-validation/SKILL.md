@@ -11,7 +11,7 @@ metadata:
 - Required review-note sections are present.
 - Capability scope and intentionally omitted capabilities are understandable.
 - TypeScript does not export an adapter class that extends `AdapterBase`.
-- The implementation uses fine-grained capability functions, not `fetchMetadata()` or `fetchChapterImages()`.
+- The implementation contains only the fine-grained functions owned by its capability stage.
 - For full discovery, metadata functions cover title, author, cover, status, tags, optional description, and chapter list.
 - For chapter-only discovery, metadata and chapter-list behavior are explicitly not implemented.
 - Chapter image extraction is implemented for both full and chapter-only discovery.

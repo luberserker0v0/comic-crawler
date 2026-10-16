@@ -492,8 +492,6 @@ describe('Adapter routes', () => {
 
     expect(response.statusCode).toBe(200);
     const functions = response.json().data.functions as Array<{ id: string; implemented: boolean }>;
-    expect(functions.some((item) => item.id === 'fetchMetadata')).toBe(false);
-    expect(functions.some((item) => item.id === 'fetchChapterImages')).toBe(false);
     expect(functions.find((item) => item.id === 'extractTitle')?.implemented).toBe(false);
     expect(functions.find((item) => item.id === 'extractChapterImageUrls')?.implemented).toBe(true);
 

@@ -78,7 +78,7 @@ response should be a short confirmation after the files are written.
 - Use `CommonCapability` and `VerificationCapability` for every adapter.
 - Use `MetadataCapability` and `ChapterImagesCapability` handlers where the
   requested capability is supported.
-- Do not implement `fetchMetadata()` or `fetchChapterImages()`.
+- Implement only the fine-grained methods owned by the requested capability.
 - Do not use `fs`, `child_process`, `process`, `eval`, `new Function`, or arbitrary network side effects.
 - Helper functions are allowed, but they must stay in the same TypeScript file
   and the supported capability methods must return the correct values.

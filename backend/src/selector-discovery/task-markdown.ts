@@ -142,7 +142,7 @@ Important rules:
 - Do not output JSON.
 - Generate TypeScript only in the requested capability draft files.
 - Do not write an AdapterBase shell; ComicCrawler assembles it after review.
-- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler composes those internally.
+- Implement only the fine-grained functions owned by each requested capability.
 - Implement fine-grained extraction functions through AdapterBase/capability handlers.
 - Use divide-and-conquer. Analyze image containers and lazy-loading attributes separately.
 - Treat image extraction as the same reusable chapter-only unit used by direct
@@ -233,7 +233,7 @@ This target implements only chapter image URL extraction:
 - Do not output JSON.
 - Generate TypeScript only in the requested capability draft files.
 - Do not write an AdapterBase shell; ComicCrawler assembles it after review.
-- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler composes those internally.
+- Implement only the chapter-image capability methods requested by this stage.
 - Use divide-and-conquer. Analyze image containers, repeated image nodes, and lazy-loading attributes separately.
 - This is the reusable image extraction unit used by full discovery after
   metadata/chapter-list discovery chooses a representative chapter URL.
@@ -309,7 +309,7 @@ ${metadataRequirement}
 - Implement chapterImages.extractChapterImageUrls for chapter reader pages when chapterImages capability is true.
 - Use exact method names: extractTitle, extractAuthor, extractDescription, extractCoverUrl, extractTags, extractStatus, extractChapterList, extractChapterImageUrls. Do not rename them to matchTitle, matchChapterList, or matchChapterImageUrls.
 - Every extraction method must accept (document: unknown, sourceUrl: string) and use this.adapter.asCheerio(document) for DOM access.
-- Do not implement fetchMetadata() or fetchChapterImages(); ComicCrawler runtime composes those from fine-grained functions.
+- ComicCrawler runtime composes public results from these fine-grained functions.
 - Keep all site-specific clicking, expansion, filtering, and extraction strategy visible in the adapter source.
 - Helper functions are allowed, but keep them in the same TypeScript source file.
 - Do not import from contracts/adapter-base-api.md, this.dom, browser document APIs, Capability imports, filesystem, child_process, process, eval, new Function, or arbitrary network side effects.

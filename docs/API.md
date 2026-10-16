@@ -397,7 +397,6 @@ normal `200` response with `passed: false`, so test runners can show the diff.
 
 These routes currently exist but should not be used as the normal crawl API:
 
-- `POST /api/adapters/register` - placeholder/test-oriented endpoint.
 - `POST /api/challenge-discovery`
 - `GET /api/challenge-discovery`
 - `DELETE /api/challenge-discovery/:id`

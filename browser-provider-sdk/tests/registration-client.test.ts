@@ -72,7 +72,7 @@ test('registers a provider with user authentication discovered from contract v2'
   }]);
 });
 
-test('rejects a legacy browser provider contract', async (context) => {
+test('rejects an unsupported browser provider contract version', async (context) => {
   const server = createServer((_request, response) => {
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify({ data: {
