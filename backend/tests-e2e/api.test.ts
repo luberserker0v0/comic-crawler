@@ -322,6 +322,63 @@ test.describe('ComicCrawler E2E', () => {
     expect(completed.result.downloadedImages).toBe(1);
   });
 
+  test('ADP-05 依 render context 擷取 responsive 圖片', async ({ request }) => {
+    const chapterUrl = 'http://127.0.0.1:4173/api/fixtures/responsive-chapter';
+    const register = await test.step('1. 註冊 responsive adapter', async () => request.post('/__test/register-fixture-replay-generated-adapter', {
+      data: {
+        adapterId: 'responsive-chapter-e2e',
+        name: 'Responsive Chapter E2E',
+        domains: ['127.0.0.1'],
+        urlPatterns: [chapterUrl],
+        capabilities: { verification: true, metadata: false, chapterImages: true },
+        selectors: {
+          images: {
+            container: '#reader',
+            item: 'img.responsive-page',
+            srcAttr: 'data-src',
+          },
+        },
+        sourceDiscoveryId: 'responsive-chapter-e2e',
+        promotedAt: new Date().toISOString(),
+      },
+    }));
+    expect(register.status()).toBe(200);
+
+    const [mobileResponse, desktopResponse] = await test.step('2. 並行送出不同 viewport', async () => Promise.all([
+      request.post('/api/adapters/chapter-images', {
+        data: {
+          url: chapterUrl,
+          adapterId: 'responsive-chapter-e2e',
+          renderContext: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 },
+        },
+      }),
+      request.post('/api/adapters/chapter-images', {
+        data: {
+          url: chapterUrl,
+          adapterId: 'responsive-chapter-e2e',
+          renderContext: { viewport: { width: 1440, height: 900 } },
+        },
+      }),
+    ]));
+
+    await test.step('3. 驗證 mobile 與 desktop 結果', async () => {
+      expect(mobileResponse.status()).toBe(200);
+      expect(desktopResponse.status()).toBe(200);
+      const mobile = (await mobileResponse.json()).data;
+      const desktop = (await desktopResponse.json()).data;
+      expect(mobile.renderContext).toEqual({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
+      expect(desktop.renderContext).toEqual({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+      expect(mobile.imageUrls).toEqual([
+        'http://127.0.0.1:4173/api/fixtures/responsive-mobile-1.jpg',
+        'http://127.0.0.1:4173/api/fixtures/responsive-mobile-2.jpg',
+      ]);
+      expect(desktop.imageUrls).toEqual([
+        'http://127.0.0.1:4173/api/fixtures/responsive-desktop-1.jpg',
+        'http://127.0.0.1:4173/api/fixtures/responsive-desktop-2.jpg',
+      ]);
+    });
+  });
+
   test('BP-04 建立未知站點 handoff', async ({ request }) => {
     await configureSelectorDiscovery(request);
     const challengeUrl = 'http://127.0.0.1:4173/api/fixtures/challenge-never-clears';

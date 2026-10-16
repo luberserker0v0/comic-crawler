@@ -35,6 +35,23 @@ export interface ChapterImagesRequest {
   adapterId?: string;
   challengeDiscoveryId?: string;
   browserTarget?: BrowserTarget;
+  renderContext?: RenderContext;
+}
+
+export interface RenderContext {
+  viewport: {
+    width: number;
+    height: number;
+  };
+  deviceScaleFactor?: number;
+}
+
+export interface EffectiveRenderContext {
+  viewport: {
+    width: number;
+    height: number;
+  };
+  deviceScaleFactor: number;
 }
 
 export interface ChapterImagesResponse {
@@ -44,6 +61,7 @@ export interface ChapterImagesResponse {
   imageUrls: string[];
   domSource: AdapterDomSource;
   durationMs: number;
+  renderContext: EffectiveRenderContext;
 }
 
 export interface AdapterListItem {

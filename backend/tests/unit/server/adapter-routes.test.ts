@@ -176,9 +176,36 @@ describe('Adapter routes', () => {
         'https://example.com/images/3.webp',
       ],
       domSource: 'rendered',
+      renderContext: {
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+      },
     });
     expect(getBrowserConfig).toHaveBeenCalledTimes(1);
     expect(getNetworkConfig).toHaveBeenCalledTimes(1);
+
+    await app.close();
+  });
+
+  it.each([
+    [{ viewport: { width: 0, height: 800 } }, 'renderContext.viewport.width'],
+    [{ viewport: { width: 600.5, height: 800 } }, 'renderContext.viewport.width'],
+    [{ viewport: { width: 600, height: 10001 } }, 'renderContext.viewport.height'],
+    [{ viewport: { width: 600, height: 800 }, deviceScaleFactor: 0 }, 'renderContext.deviceScaleFactor'],
+  ])('rejects an invalid chapter image render context', async (renderContext, expectedError) => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    registry.register(new RenderedDemoAdapter());
+    setupAdaptersRoutes(app, registry);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/adapters/chapter-images',
+      payload: { url: 'https://example.com/read/1', renderContext },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain(expectedError);
 
     await app.close();
   });

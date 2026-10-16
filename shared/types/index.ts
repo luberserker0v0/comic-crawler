@@ -60,6 +60,8 @@ export type {
   AdapterResolveResponse,
   ChapterImagesRequest,
   ChapterImagesResponse,
+  RenderContext,
+  EffectiveRenderContext,
   AdapterListItem,
   DeletedAdapterListItem,
   DeletedAdapterListResponse,

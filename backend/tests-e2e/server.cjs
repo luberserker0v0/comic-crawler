@@ -272,6 +272,26 @@ async function start() {
       </html>`);
   });
 
+  server.getApp().get('/api/fixtures/responsive-chapter', async (_request, reply) => {
+    reply.type('text/html').send(`<!doctype html>
+      <html>
+        <head><title>Responsive Chapter</title></head>
+        <body>
+          <main id="reader"></main>
+          <script>
+            const layout = window.innerWidth <= 600 ? 'mobile' : 'desktop';
+            const reader = document.querySelector('#reader');
+            for (let page = 1; page <= 2; page += 1) {
+              const image = document.createElement('img');
+              image.className = 'responsive-page';
+              image.setAttribute('data-src', '/api/fixtures/responsive-' + layout + '-' + page + '.jpg');
+              reader.appendChild(image);
+            }
+          </script>
+        </body>
+      </html>`);
+  });
+
   server.getApp().get('/api/fixtures/discovery-image.jpg', async (_request, reply) => {
     reply.header('content-type', 'image/jpeg').send(Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
   });

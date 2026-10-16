@@ -93,6 +93,11 @@ paths:
                     - https://cdn.example/002.jpg
                   domSource: static
                   durationMs: 42
+                  renderContext:
+                    viewport:
+                      width: 390
+                      height: 844
+                    deviceScaleFactor: 3
         "400":
           $ref: "#/components/responses/Error"
         "404":
@@ -1065,9 +1070,38 @@ components:
           type: string
         browserTarget:
           $ref: "#/components/schemas/BrowserTarget"
+        renderContext:
+          $ref: "#/components/schemas/RenderContext"
+    RenderContext:
+      type: object
+      required: [viewport]
+      description: Rendering dimensions for an isolated Playwright browser context. Viewport dimensions use CSS pixels.
+      properties:
+        viewport:
+          type: object
+          required: [width, height]
+          properties:
+            width:
+              type: integer
+              minimum: 1
+              maximum: 10000
+            height:
+              type: integer
+              minimum: 1
+              maximum: 10000
+        deviceScaleFactor:
+          type: number
+          minimum: 0.1
+          maximum: 10
+          default: 1
+    EffectiveRenderContext:
+      allOf:
+        - $ref: "#/components/schemas/RenderContext"
+        - type: object
+          required: [deviceScaleFactor]
     ChapterImagesResponse:
       type: object
-      required: [adapterId, chapterUrl, imageUrlCount, imageUrls, domSource, durationMs]
+      required: [adapterId, chapterUrl, imageUrlCount, imageUrls, domSource, durationMs, renderContext]
       properties:
         adapterId:
           type: string
@@ -1091,6 +1125,8 @@ components:
         durationMs:
           type: integer
           minimum: 0
+        renderContext:
+          $ref: "#/components/schemas/EffectiveRenderContext"
     AdapterFunctionTestRequest:
       type: object
       required: [url]

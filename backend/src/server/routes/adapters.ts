@@ -6,6 +6,8 @@ import type {
   AdapterFunctionTestRequest,
   ChapterImagesRequest,
   ChapterImagesResponse,
+  EffectiveRenderContext,
+  RenderContext,
   DeletedAdapterListResponse,
   DeleteAdapterResponse,
   RestoreAdapterResponse,
@@ -251,16 +253,23 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
+    const renderContext = parseRenderContext(body.renderContext);
+    if (renderContext instanceof Error) {
+      reply.code(400).send({ error: renderContext.message });
+      return;
+    }
+
     const network = await options.getNetworkConfig?.();
     const runExtraction = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
       browser,
       challengeDiscoveryId: body.challengeDiscoveryId,
       challengeDiscoveryService: options.challengeDiscoveryService,
       network,
+      renderContext,
     });
-    const extraction = options.withBrowserConfig
-      ? await options.withBrowserConfig(request, body.browserTarget, runExtraction)
-      : await runExtraction(await options.getBrowserConfig?.());
+    const extraction = await (options.withBrowserConfig
+      ? options.withBrowserConfig(request, body.browserTarget, runExtraction)
+      : runExtraction(await options.getBrowserConfig?.()));
     if (!extraction.ok) {
       reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
         error: extraction.error ?? 'Chapter image extraction failed.',
@@ -279,6 +288,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       imageUrls,
       domSource: extraction.domSource,
       durationMs: extraction.durationMs,
+      renderContext,
     };
     reply.send({ data });
   });
@@ -363,6 +373,35 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
 
     reply.send({ data: { message: 'Adapter registration endpoint' } });
   });
+}
+
+const DEFAULT_RENDER_CONTEXT: EffectiveRenderContext = {
+  viewport: { width: 1920, height: 1080 },
+  deviceScaleFactor: 1,
+};
+
+function parseRenderContext(value: RenderContext | undefined): EffectiveRenderContext | Error {
+  if (value === undefined) {
+    return {
+      viewport: { ...DEFAULT_RENDER_CONTEXT.viewport },
+      deviceScaleFactor: DEFAULT_RENDER_CONTEXT.deviceScaleFactor,
+    };
+  }
+  if (!value || typeof value !== 'object' || !value.viewport || typeof value.viewport !== 'object') {
+    return new Error('renderContext.viewport is required when renderContext is provided.');
+  }
+  const { width, height } = value.viewport;
+  if (!Number.isInteger(width) || width < 1 || width > 10_000) {
+    return new Error('renderContext.viewport.width must be an integer between 1 and 10000 CSS pixels.');
+  }
+  if (!Number.isInteger(height) || height < 1 || height > 10_000) {
+    return new Error('renderContext.viewport.height must be an integer between 1 and 10000 CSS pixels.');
+  }
+  const deviceScaleFactor = value.deviceScaleFactor ?? DEFAULT_RENDER_CONTEXT.deviceScaleFactor;
+  if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor < 0.1 || deviceScaleFactor > 10) {
+    return new Error('renderContext.deviceScaleFactor must be a finite number between 0.1 and 10.');
+  }
+  return { viewport: { width, height }, deviceScaleFactor };
 }
 
 function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>) {

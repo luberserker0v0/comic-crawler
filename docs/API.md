@@ -78,13 +78,21 @@ POST /api/adapters/chapter-images
 
 ```json
 {
-  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}"
+  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
+  "renderContext": {
+    "viewport": { "width": 390, "height": 844 },
+    "deviceScaleFactor": 3
+  }
 }
 ```
 
 The adapter is resolved from the URL. An optional `adapterId` selects a specific
 registered adapter, and an optional `challengeDiscoveryId` reuses a completed
-human-verification handoff. A successful response does not truncate the list.
+human-verification handoff. `renderContext` controls the isolated Playwright
+browser context for responsive pages. Viewport dimensions are CSS pixels from
+`1` through `10000`; `deviceScaleFactor` is optional and ranges from `0.1`
+through `10`. If omitted, the effective context is `1920x1080` at scale `1`.
+A successful response returns that effective context and does not truncate the list.
 `imageUrlCount` always equals `imageUrls.length`; the example below therefore
 contains two URLs and reports a count of `2`:
 
@@ -99,7 +107,11 @@ contains two URLs and reports a count of `2`:
       "https://cdn.example/002.jpg"
     ],
     "domSource": "static",
-    "durationMs": 42
+    "durationMs": 42,
+    "renderContext": {
+      "viewport": { "width": 390, "height": 844 },
+      "deviceScaleFactor": 3
+    }
   }
 }
 ```

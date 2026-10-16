@@ -3,6 +3,8 @@ export interface BrowserPoolConfig {
   timeout: number;
   userAgent?: string;
   proxy?: string;
+  viewport?: { width: number; height: number };
+  deviceScaleFactor?: number;
   remote?: {
     wsEndpoint?: string;
     connectTimeout?: number;

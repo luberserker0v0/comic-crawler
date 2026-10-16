@@ -6,6 +6,7 @@ import type {
   BrowserConfig,
   DomReadinessReport,
   DomReadinessTarget,
+  EffectiveRenderContext,
   NetworkConfig,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
@@ -22,6 +23,15 @@ import type {
 } from './adapter-function-types';
 
 const PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS = 15 * 60 * 1000;
+const adapterFunctionLocks = new WeakMap<object, Promise<void>>();
+
+interface AdapterFunctionTestOptions {
+  browser?: BrowserConfig;
+  challengeDiscoveryId?: string;
+  challengeDiscoveryService?: ChallengeDiscoveryService;
+  network?: NetworkConfig;
+  renderContext?: EffectiveRenderContext;
+}
 
 class TimingCollector {
   private readonly entries: AdapterFunctionTiming[] = [];
@@ -44,12 +54,16 @@ export async function testAdapterFunction(
   adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
   functionId: AdapterFunctionId,
   url: string,
-  options: {
-    browser?: BrowserConfig;
-    challengeDiscoveryId?: string;
-    challengeDiscoveryService?: ChallengeDiscoveryService;
-    network?: NetworkConfig;
-  } = {}
+  options: AdapterFunctionTestOptions = {}
+): Promise<AdapterFunctionTestResponse> {
+  return runWithAdapterFunctionLock(adapter, () => runAdapterFunctionTest(adapter, functionId, url, options));
+}
+
+async function runAdapterFunctionTest(
+  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
+  functionId: AdapterFunctionId,
+  url: string,
+  options: AdapterFunctionTestOptions
 ): Promise<AdapterFunctionTestResponse> {
   const startedAt = Date.now();
   const timings = new TimingCollector();
@@ -61,7 +75,7 @@ export async function testAdapterFunction(
     mode: 'remote',
     challengeAutoAttempt: false,
     challengeWaitMs: 0,
-  }, options.network);
+  }, options.network, undefined, options.renderContext);
   const adapterRenderer = {
     render: async (renderUrl: string): Promise<string> => {
       const html = await renderer.render(renderUrl);
@@ -222,6 +236,21 @@ export async function testAdapterFunction(
       (adapter as unknown as { setHtmlRenderer: (renderer: undefined) => void }).setHtmlRenderer(undefined);
     }
     await renderer.dispose().catch(() => undefined);
+  }
+}
+
+async function runWithAdapterFunctionLock<T>(adapter: object, action: () => Promise<T>): Promise<T> {
+  const previous = adapterFunctionLocks.get(adapter) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => current);
+  adapterFunctionLocks.set(adapter, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (adapterFunctionLocks.get(adapter) === tail) adapterFunctionLocks.delete(adapter);
   }
 }
 

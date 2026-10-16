@@ -1,4 +1,4 @@
-import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserConfig, EffectiveRenderContext, NetworkConfig } from '@comiccrawler/shared';
 import { BrowserPool } from './browser-pool';
 import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
 import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
@@ -19,7 +19,8 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
   constructor(
     private readonly browser: BrowserConfig,
     private readonly network?: NetworkConfig,
-    private readonly resolveRemote?: RemoteBrowserConfigResolver
+    private readonly resolveRemote?: RemoteBrowserConfigResolver,
+    private readonly renderContext?: EffectiveRenderContext
   ) {}
 
   async render(url: string): Promise<string> {
@@ -105,6 +106,8 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
       timeout: this.browser.timeout,
       userAgent: this.network?.userAgent,
       proxy: this.network?.proxy,
+      viewport: this.renderContext?.viewport,
+      deviceScaleFactor: this.renderContext?.deviceScaleFactor,
       remote,
     }, async () => remote);
     this.browserPools.set(endpointKey, pool);

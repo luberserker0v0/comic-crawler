@@ -118,7 +118,8 @@ export class BrowserPool {
     const contextOptions = {
       userAgent: this.config.userAgent,
       proxy: this.config.proxy ? { server: this.config.proxy } : undefined,
-      viewport: { width: 1920, height: 1080 },
+      viewport: this.config.viewport ?? { width: 1920, height: 1080 },
+      deviceScaleFactor: this.config.deviceScaleFactor ?? 1,
     };
 
     const remote = await this.resolveRemote?.() ?? this.config.remote;
