@@ -2,6 +2,18 @@ import { describe, expect, it } from '@jest/globals';
 import { validateGlobalConfig } from '../../../src/config/schema';
 
 describe('global config schema', () => {
+  it('requires a secret path when API security uses token mode', () => {
+    expect(() => validateGlobalConfig({
+      download: { directory: './downloads', concurrency: 5, namingTemplate: '{title}', imageFormat: 'original', imageQuality: 100 },
+      concurrency: { taskLevel: 1, siteLevel: 1 },
+      network: { timeout: 30000, retries: 3, retryDelay: 1000 },
+      server: { port: 4100, host: '127.0.0.1' },
+      log: { level: 'info' },
+      i18n: { language: 'zh-TW', fallback: 'en' },
+      apiSecurity: { mode: 'token', defaultEffect: 'deny', rules: [] },
+    })).toThrow(/secretPath/);
+  });
+
   it('applies the remote browser defaults when browser config is omitted', () => {
     const config = validateGlobalConfig({
       download: {
@@ -37,6 +49,7 @@ describe('global config schema', () => {
       mode: 'remote',
       maxInstances: 2,
       timeout: 30000,
+      workerWaitTimeoutMs: 1800000,
       waitUntil: 'domcontentloaded',
       postLoadDelayMs: 0,
       challengeAutoAttempt: true,
@@ -73,7 +86,6 @@ describe('global config schema', () => {
         postLoadDelayMs: 1000,
         challengeAutoAttempt: true,
         challengeWaitMs: 60000,
-        storageStatePath: 'D:/secrets/storage-state.json',
         remote: {
           connectTimeout: 45000,
           exposeNetwork: '<loopback>',
@@ -93,7 +105,6 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toMatchObject({
-      storageStatePath: 'D:/secrets/storage-state.json',
       remote: {
         connectTimeout: 45000,
         exposeNetwork: '<loopback>',

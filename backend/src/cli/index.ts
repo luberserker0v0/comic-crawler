@@ -7,6 +7,7 @@ import { setupAgentCommand } from './agent-command';
 import { setupConfigCommand, setupDownloadCommand, setupSearchCommand, setupStatusCommand } from './core-commands';
 import { setupDiscoverCommand } from './discovery-command';
 import { setupMaintenanceCommand } from './maintenance-command';
+import { setupFixtureCommand } from './fixture-command';
 
 export { TerminalUI } from './ui';
 export type { CliOptions } from './command-context';
@@ -35,6 +36,7 @@ export class ComicCrawlerCli {
     setupDiscoverCommand(this.ctx);
     setupAgentCommand(this.ctx);
     setupMaintenanceCommand(this.ctx);
+    setupFixtureCommand(this.ctx);
   }
 
   parse(args: string[]): Command {

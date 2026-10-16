@@ -13,8 +13,7 @@ export interface HtmlRenderer {
 }
 
 export class PlaywrightHtmlRenderer implements HtmlRenderer {
-  private browserPool?: BrowserPool;
-  private browserPoolEndpointKey?: string;
+  private readonly browserPools = new Map<string, BrowserPool>();
   private readonly challengeHandler = new BrowserChallengeHandler();
 
   constructor(
@@ -88,27 +87,27 @@ export class PlaywrightHtmlRenderer implements HtmlRenderer {
   }
 
   async dispose(): Promise<void> {
-    await this.browserPool?.dispose();
+    await Promise.all([...this.browserPools.values()].map((pool) => pool.dispose()));
+    this.browserPools.clear();
   }
 
   private async getBrowserPool(_url: string): Promise<BrowserPool> {
     const remote = await this.resolveRemote?.() ?? this.browser.remote;
-    const endpointKey = remote?.wsEndpoint ?? '__remote_unconfigured__';
+    const endpointKey = JSON.stringify({
+      wsEndpoint: remote?.wsEndpoint ?? '__remote_unconfigured__',
+      headers: remote?.headers ?? {},
+    });
+    const existing = this.browserPools.get(endpointKey);
+    if (existing) return existing;
 
-    if (this.browserPool && this.browserPoolEndpointKey === endpointKey) {
-      return this.browserPool;
-    }
-
-    await this.browserPool?.dispose();
-    this.browserPoolEndpointKey = endpointKey;
-    this.browserPool = new BrowserPool({
+    const pool = new BrowserPool({
       maxInstances: this.browser.maxInstances,
       timeout: this.browser.timeout,
       userAgent: this.network?.userAgent,
       proxy: this.network?.proxy,
-      storageStatePath: this.browser.storageStatePath,
       remote,
-    }, this.resolveRemote);
-    return this.browserPool;
+    }, async () => remote);
+    this.browserPools.set(endpointKey, pool);
+    return pool;
   }
 }

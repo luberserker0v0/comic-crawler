@@ -165,7 +165,7 @@ an adapter draft.
 ## Crawler rendering
 
 The crawler always renders pages through a remote Playwright service. The
-endpoint comes from the active Browser Provider session:
+endpoint comes from the task's internal Browser Lease:
 
 - Remote mode opens a Playwright page, waits for rendering, and passes
   `page.content()` into the parser path.
@@ -186,18 +186,19 @@ control and relay protocol.
 flowchart LR
   Client[GUI / extension companion / local process] --> Provider[Browser Provider SDK]
   Provider -->|outbound control + relay WebSockets| Cloud[ComicCrawler backend]
-  Cloud -->|session request over control channel| Provider
+  Cloud -->|task-scoped lease and session request| Provider
   Provider --> Browser[User-side Chromium]
-  Cloud --> Resolver[Active-session resolver]
-  Resolver --> Crawl[Crawl / discovery / handoff / download fallback]
+  Cloud --> Lease[Browser Lease Coordinator]
+  Lease --> Crawl[Crawl / discovery / handoff / download fallback]
 ```
 
-The backend registry persists enrolled identities and tracks one active session.
-The browser-config resolver overlays that session's connection URL at execution
-time, so callers do not need separate compatibility paths for crawling,
-selector discovery, or verification handoff. `reverse-relay` is the only
-transport: user devices need outbound access to ComicCrawler but do not accept
-inbound connections.
+The backend registry persists Worker identities and tracks outbound control
+connections. Jobs persist `browserTarget`, which is either a specific stable
+`workerId` or `any`. The Browser Lease Coordinator reserves one Worker per task,
+creates and renews its internal Playwright session, then closes the session and
+returns the Worker to `idle`. A specific target is never silently replaced by
+another device. `reverse-relay` is the only transport: user devices need
+outbound access to ComicCrawler but do not accept inbound connections.
 
 Profile lifecycle uses inheritance: `BrowserProfileStrategy` is the abstract
 parent and `EphemeralProfileStrategy` is currently its only production child.
@@ -207,6 +208,22 @@ to an existing Chrome process are outside the current implementation.
 
 ## Task reliability
 
+Crawler and adapter-build work use the shared `TaskScheduler`. Dispatch is a
+Strategy: `SchedulingPolicy` is the abstract parent,
+`SequentialSchedulingPolicy` runs one task at a time, and
+`ConcurrentSchedulingPolicy` controls global and per-group concurrency. Crawler
+tasks use task-level concurrency; adapter discovery uses site-level concurrency
+and permits only one active build per hostname.
+
+A crawl task with no matching idle Worker is deferred as
+`waiting_for_browser_worker`. Deferred tasks remain ordered in the queue but do
+not consume a crawler concurrency slot. The scheduler retries on a short timer
+until `browser.workerWaitTimeoutMs` expires.
+
+Domain services own task content and state. The scheduler owns ordering,
+execution slots, pause/resume, cancellation, and dispatch. Waiting for human
+verification or developer review does not occupy a scheduler execution slot.
+
 Tasks persist checkpoint state:
 
 - current chapter
@@ -215,9 +232,9 @@ Tasks persist checkpoint state:
 - failed image counts
 - latest error and update time
 
-Completed images are skipped on resume. `waiting_verification` releases the
-worker slot, so unrelated queued tasks can continue while a user completes
-verification.
+Completed images are skipped on resume. `waiting_verification` keeps the
+selected Browser Worker reserved so the handoff cannot be modified by another
+task. Unrelated tasks may continue on other idle Browser Workers.
 
 Forced task order is stored separately from normal priority and is used by the
 queue when deciding which pending task should run next.

@@ -112,7 +112,7 @@ export function useDraftFlow(options: {
 
   const isDraftMode = Boolean(draft);
   const hasUnsavedDraftChanges = Boolean(draft && draftContent !== savedDraftContent);
-  const canExecuteDraft = draft?.draft.sourceKind === 'dynamic-manifest';
+  const canExecuteDraft = Boolean(draft);
 
   return {
     drafts,

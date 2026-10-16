@@ -1,4 +1,5 @@
 import type { TaskDetail } from '../../../store';
+import { useI18n } from '../../../text/i18n';
 
 export function VerificationHandoffSection(props: {
   detail: TaskDetail;
@@ -18,6 +19,7 @@ export function VerificationHandoffSection(props: {
     isChallengeJobUnavailable,
     openVerificationBrowser,
   } = props;
+  const { text } = useI18n();
 
   if (!detail.result) return null;
 
@@ -27,13 +29,13 @@ export function VerificationHandoffSection(props: {
       data-testid="task-verification-handoff"
     >
       <div>
-        <h3 className="text-lg font-semibold">Human verification required</h3>
+        <h3 className="text-lg font-semibold">{text.taskManager.verificationRequired}</h3>
         <p className="mt-2 text-sm text-purple-800">
-          The adapter matched this URL, but crawling reached a human verification page. Open an isolated browser from here, complete verification as a human, then use Continue to resume this task from its checkpoint.
+          {text.taskManager.verificationDescription}
         </p>
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-          <div className="break-all">Challenge job: {detail.result.challengeDiscoveryId}</div>
-          <div>Status: {challengeJob?.status ?? detail.result.challengeStatus ?? '-'}</div>
+          <div className="break-all">{text.taskManager.challengeJob}: {detail.result.challengeDiscoveryId}</div>
+          <div>{text.taskList.status}: {challengeJob?.status ?? detail.result.challengeStatus ?? '-'}</div>
           <div className="break-all md:col-span-2">URL: {challengeJob?.normalizedUrl ?? detail.task.url}</div>
         </div>
       </div>
@@ -43,7 +45,7 @@ export function VerificationHandoffSection(props: {
           className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
           data-testid="challenge-job-unavailable-message"
         >
-          This verification handoff expired or was removed. Click Continue to recreate the handoff, then open the browser from this task detail page.
+          {text.taskManager.verificationExpired}
         </div>
       ) : challengeError ? (
         <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
@@ -54,11 +56,11 @@ export function VerificationHandoffSection(props: {
       {!isChallengeJobUnavailable && (
       <div className="mt-4 rounded-xl border border-purple-200 bg-white p-4">
         <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
-          ComicCrawler will open this task in the configured remote Playwright service. No browser is launched in the ComicCrawler process or container.
+          {text.taskManager.remoteBrowserNotice}
         </div>
         {shouldReopenVerificationBrowser && (
           <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-            ComicCrawler cannot read the previous remote browser session. Reopen it from here.
+            {text.taskManager.reopenBrowserNotice}
           </p>
         )}
 
@@ -70,10 +72,10 @@ export function VerificationHandoffSection(props: {
           data-testid="open-verification-browser-button"
         >
           {challengeAction === 'open-verification-browser'
-            ? 'Opening browser...'
+            ? text.taskManager.openingBrowser
             : shouldReopenVerificationBrowser
-              ? 'Reopen browser for verification'
-              : 'Open browser for verification'}
+              ? text.taskManager.reopenVerificationBrowser
+              : text.taskManager.openVerificationBrowser}
         </button>
       </div>
       )}

@@ -2,13 +2,18 @@ openapi: 3.1.0
 info:
   title: ComicCrawler REST API
   version: 0.1.0
-  description: Public REST contract for API-only crawl clients.
+  description: REST contract for ComicCrawler clients. Access may be public or protected by the configured API security policy.
 servers:
   - url: http://127.0.0.1:4100
+security:
+  - {}
+  - userBearerAuth: []
+    userIdHeader: []
 paths:
   /api/status:
     get:
       summary: Health and runtime status
+      security: []
       responses:
         "200":
           description: Server status
@@ -422,7 +427,8 @@ paths:
           $ref: "#/components/responses/Error"
   /api/selector-discovery/{id}/promote:
     post:
-      summary: Promote a reviewed TypeScript adapter implementation draft
+      summary: Capture a golden fixture and promote a reviewed TypeScript adapter draft
+      description: Fetches the reviewed rendered page through the active Browser Provider, stores page.html and expected.json, and registers the adapter only after fixture capture succeeds.
       parameters:
         - $ref: "#/components/parameters/DiscoveryId"
       responses:
@@ -436,20 +442,61 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/SelectorDiscoveryJob"
+                        $ref: "#/components/schemas/ActiveImplementationAdapterRecord"
         "400":
           $ref: "#/components/responses/Error"
-  /api/challenge-discovery/remote/test:
+  /api/fixtures/{domain}/{id}/verify-approved-adapter:
     post:
-      summary: Test the active Browser Provider session
+      summary: Replay an approved adapter fixture
+      description: Runs every function recorded in expected.json against page.html and compares the complete normalized result.
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [adapterId]
+              properties:
+                adapterId:
+                  type: string
       responses:
         "200":
-          description: Remote browser connection and page summary
+          description: Fixture replay result; passed is false when output differs
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [fixture, passed, expected, actual]
+                        properties:
+                          fixture:
+                            $ref: "#/components/schemas/FixtureSummary"
+                          passed:
+                            type: boolean
+                          expected:
+                            type: object
+                            additionalProperties: true
+                          actual:
+                            type: object
+                            additionalProperties: true
         "400":
+          $ref: "#/components/responses/Error"
+        "404":
           $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}:
     get:
@@ -469,6 +516,20 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/HandoffJob"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete a human verification handoff job
+      description: Closes its remote browser context and releases the reserved Browser Worker.
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "200":
+          description: Handoff job deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
         "404":
           $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}/open-browser:
@@ -540,6 +601,7 @@ paths:
   /.well-known/comiccrawler-browser-provider:
     get:
       summary: Discover the outbound Browser Provider service contract
+      security: []
       responses:
         "200":
           description: Browser Provider service endpoints
@@ -552,37 +614,19 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/BrowserProviderServiceDiscovery"
-  /api/browser-providers/enrollment-tokens:
+  /api/browser-providers/enroll:
     post:
-      summary: Create a short-lived one-time browser provider enrollment token
+      summary: Register one Browser Provider instance
+      security:
+        - {}
+        - userBearerAuth: []
+          userIdHeader: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                ttlSeconds:
-                  type: integer
-                  minimum: 60
-                  maximum: 3600
-      responses:
-        "201":
-          description: Enrollment token created
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/ApiResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/BrowserProviderEnrollmentToken"
-  /api/browser-providers/enroll:
-    post:
-      summary: Exchange a one-time enrollment token for a provider credential
-      security:
-        - bearerAuth: []
+              $ref: "#/components/schemas/BrowserProviderRegistrationRequest"
       responses:
         "201":
           description: Provider identity and credential created
@@ -594,15 +638,15 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderEnrollment"
+                        $ref: "#/components/schemas/BrowserProviderRegistration"
         "401":
           $ref: "#/components/responses/Error"
   /api/browser-providers:
     get:
-      summary: List registered browser providers and the active session
+      summary: List visible registered Browser Providers
       responses:
         "200":
-          description: Enrolled providers, online state, and active session
+          description: Provider records and online state
           content:
             application/json:
               schema:
@@ -612,77 +656,45 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/BrowserProviderRegistryState"
+  /api/browser-workers:
+    get:
+      summary: List stable Browser Worker targets visible to the current user
+      responses:
+        "200":
+          description: Worker identity, capabilities, and availability
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [workers]
+                        properties:
+                          workers:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/BrowserWorker"
   /api/browser-providers/{providerId}:
     delete:
-      summary: Revoke and remove an enrolled browser provider
+      summary: Revoke one Browser Provider credential and close its resources
       parameters:
         - $ref: "#/components/parameters/BrowserProviderId"
       responses:
         "204":
-          description: Browser provider removed
+          description: Browser provider revoked
         "400":
           $ref: "#/components/responses/Error"
-  /api/browser-providers/sessions/active:
-    get:
-      summary: Read the active browser provider session
-      responses:
-        "200":
-          description: Active browser session
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/ApiResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/BrowserProviderSession"
-        "404":
-          $ref: "#/components/responses/Error"
-  /api/browser-providers/{providerId}/sessions:
+  /api/browser-providers/{providerId}/credentials/rotate:
     post:
-      summary: Create and activate a negotiated browser provider session
+      summary: Rotate one Browser Provider credential
       parameters:
         - $ref: "#/components/parameters/BrowserProviderId"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateBrowserProviderSessionRequest"
-      responses:
-        "201":
-          description: Browser session created and activated
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/ApiResponse"
-                  - type: object
-                    properties:
-                      data:
-                        $ref: "#/components/schemas/BrowserProviderSession"
-        "400":
-          $ref: "#/components/responses/Error"
-  /api/browser-providers/sessions/{sessionId}/heartbeat:
-    post:
-      summary: Extend the active browser provider session expiry
-      parameters:
-        - $ref: "#/components/parameters/BrowserSessionId"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                ttlSeconds:
-                  type: integer
-                  minimum: 30
-                  maximum: 3600
       responses:
         "200":
-          description: Renewed browser session
+          description: Replacement credential issued once
           content:
             application/json:
               schema:
@@ -691,24 +703,19 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderSession"
-        "400":
-          $ref: "#/components/responses/Error"
-  /api/browser-providers/sessions/{sessionId}:
-    delete:
-      summary: Close the active browser provider session
-      parameters:
-        - $ref: "#/components/parameters/BrowserSessionId"
-      responses:
-        "204":
-          description: Browser session closed
+                        $ref: "#/components/schemas/BrowserProviderRegistration"
         "400":
           $ref: "#/components/responses/Error"
 components:
   securitySchemes:
-    bearerAuth:
+    userBearerAuth:
       type: http
       scheme: bearer
+      description: User API token from the Server secret document.
+    userIdHeader:
+      type: apiKey
+      in: header
+      name: X-ComicCrawler-User-Id
   parameters:
     AdapterId:
       name: id
@@ -742,12 +749,6 @@ components:
         type: string
     BrowserProviderId:
       name: providerId
-      in: path
-      required: true
-      schema:
-        type: string
-    BrowserSessionId:
-      name: sessionId
       in: path
       required: true
       schema:
@@ -805,7 +806,7 @@ components:
           type: boolean
     BrowserProviderCapabilities:
       type: object
-      required: [browser, headed, interactive, persistentContext, screenshots, downloads, tracing, fileTransfer]
+      required: [browser, headed, interactive, persistentContext, screenshots, downloads, tracing]
       properties:
         browser:
           type: string
@@ -822,17 +823,18 @@ components:
           type: boolean
         tracing:
           type: boolean
-        fileTransfer:
-          type: boolean
     BrowserProviderDescriptor:
       type: object
-      required: [contractVersion, providerId, providerType, runtimeVersion, capabilities, transports]
+      required: [contractVersion, providerId, processInstanceId, providerType, runtimeVersion, capabilities, transports]
       properties:
         contractVersion:
           type: string
-          const: "1"
+          const: "2"
         providerId:
           type: string
+        processInstanceId:
+          type: string
+          description: Changes on every Browser Worker process start and protects reconnect resumption.
         providerType:
           type: string
           enum: [playwright, cdp]
@@ -845,26 +847,19 @@ components:
           items:
             type: string
             enum: [reverse-relay]
-    BrowserProviderEnrollmentToken:
-      type: object
-      required: [token, expiresAt]
-      properties:
-        token:
-          type: string
-          writeOnly: true
-        expiresAt:
-          type: string
-          format: date-time
     BrowserProviderServiceDiscovery:
       type: object
-      required: [contractVersion, transport, endpoints]
+      required: [contractVersion, transport, apiSecurityMode, endpoints]
       properties:
         contractVersion:
           type: string
-          const: "1"
+          const: "2"
         transport:
           type: string
           const: reverse-relay
+        apiSecurityMode:
+          type: string
+          enum: [public, token]
         endpoints:
           type: object
           required: [enroll, controlWebSocket, relayWebSocketTemplate]
@@ -878,97 +873,61 @@ components:
             relayWebSocketTemplate:
               type: string
               example: /api/browser-providers/relay/{tunnelId}
-    BrowserProviderEnrollment:
+    BrowserProviderRegistrationRequest:
       type: object
-      required: [providerId, credentialId, credential, enrolledAt]
+      required: [clientInstanceId]
+      properties:
+        clientInstanceId:
+          type: string
+          description: Stable UUID or equivalent logical installation identifier. It is not a hardware fingerprint.
+        providerName:
+          type: string
+          description: Optional user-facing display name.
+    BrowserProviderRegistration:
+      type: object
+      required: [providerId, clientInstanceId, credentialId, credential, registeredAt]
       properties:
         providerId:
+          type: string
+        clientInstanceId:
           type: string
         credentialId:
           type: string
         credential:
           type: string
           writeOnly: true
-        enrolledAt:
+        registeredAt:
           type: string
           format: date-time
     BrowserProviderRecord:
       type: object
-      required: [providerId, providerName, enrolledAt, online]
+      required: [providerId, ownerUserId, clientInstanceId, providerName, credentialId, registeredAt, online]
       properties:
         providerId:
           type: string
+        ownerUserId:
+          type: string
+        clientInstanceId:
+          type: string
         providerName:
           type: string
-        enrolledAt:
+        credentialId:
+          type: string
+        registeredAt:
           type: string
           format: date-time
         lastConnectedAt:
           type: string
           format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        connectionId:
+          type: string
         online:
           type: boolean
         descriptor:
           $ref: "#/components/schemas/BrowserProviderDescriptor"
-    CreateBrowserProviderSessionRequest:
-      type: object
-      properties:
-        requestedCapabilities:
-          type: object
-          description: Partial capability requirements; session creation fails when the provider cannot satisfy one.
-          properties:
-            browser:
-              type: string
-              enum: [chromium, firefox, webkit]
-            headed:
-              type: boolean
-            interactive:
-              type: boolean
-            persistentContext:
-              type: boolean
-            screenshots:
-              type: boolean
-            downloads:
-              type: boolean
-            tracing:
-              type: boolean
-            fileTransfer:
-              type: boolean
-        ttlSeconds:
-          type: integer
-          minimum: 30
-          maximum: 3600
-    BrowserProviderSession:
-      type: object
-      required: [sessionId, providerId, protocol, transport, connectUrl, runtimeVersion, capabilities, createdAt, expiresAt]
-      properties:
-        sessionId:
-          type: string
-        providerId:
-          type: string
-        protocol:
-          type: string
-          enum: [playwright, cdp]
-        transport:
-          type: string
-          enum: [reverse-relay]
-        connectUrl:
-          type: string
-          format: uri
-          description: Short-lived WebSocket URL containing a session ticket.
-        viewerUrl:
-          type: string
-          format: uri
-        runtimeVersion:
-          type: string
-        capabilities:
-          $ref: "#/components/schemas/BrowserProviderCapabilities"
-        createdAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
     BrowserProviderRegistryState:
       type: object
       required: [providers]
@@ -977,10 +936,40 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BrowserProviderRecord"
-        activeSession:
-          oneOf:
-            - $ref: "#/components/schemas/BrowserProviderSession"
-            - type: "null"
+    BrowserTarget:
+      oneOf:
+        - type: object
+          required: [mode]
+          properties:
+            mode:
+              const: any
+        - type: object
+          required: [mode, workerId]
+          properties:
+            mode:
+              const: specific
+            workerId:
+              type: string
+    BrowserWorker:
+      type: object
+      required: [workerId, name, status, online]
+      properties:
+        workerId:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [offline, idle, busy]
+        online:
+          type: boolean
+        capabilities:
+          $ref: "#/components/schemas/BrowserProviderCapabilities"
+        activeTaskId:
+          type: string
+        lastConnectedAt:
+          type: string
+          format: date-time
     Adapter:
       type: object
       required: [id, name, domains, parseMode, capabilities]
@@ -1074,6 +1063,8 @@ components:
           type: string
         challengeDiscoveryId:
           type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
     ChapterImagesResponse:
       type: object
       required: [adapterId, chapterUrl, imageUrlCount, imageUrls, domSource, durationMs]
@@ -1109,6 +1100,8 @@ components:
           format: uri
         challengeDiscoveryId:
           type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
     AdapterFunctionTiming:
       type: object
       required: [step, durationMs]
@@ -1178,15 +1171,19 @@ components:
             format: uri
         priority:
           type: number
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
     CreateTaskResponse:
       oneOf:
         - type: object
-          required: [kind, taskId]
+          required: [kind, taskId, browserTarget]
           properties:
             kind:
               const: taskCreated
             taskId:
               type: string
+            browserTarget:
+              $ref: "#/components/schemas/BrowserTarget"
         - type: object
           required: [kind, reason, discoveryId, status, normalizedUrl]
           properties:
@@ -1241,6 +1238,8 @@ components:
           type: string
         error:
           type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
     TaskDetailResponse:
       type: object
       required: [task, checkpoint, preview]
@@ -1291,7 +1290,10 @@ components:
           type: string
         adapterImplementationTs:
           type: string
-          description: Stage 1 AO TypeScript AdapterBase implementation draft.
+        ownerUserId:
+          type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
         reviewNotesMarkdown:
           type: string
           description: Human review notes generated with the implementation draft.
@@ -1300,6 +1302,68 @@ components:
           description: Static validation result for the TypeScript implementation draft.
         error:
           type: string
+    FixtureSummary:
+      type: object
+      required: [id, domain, url, title, htmlLength, capturedAt, path, readiness]
+      properties:
+        id:
+          type: string
+        domain:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        htmlLength:
+          type: integer
+        capturedAt:
+          type: string
+          format: date-time
+        path:
+          type: string
+        expectedPath:
+          type: string
+        adapterId:
+          type: string
+        sourceDiscoveryId:
+          type: string
+        functionIds:
+          type: array
+          items:
+            type: string
+        readiness:
+          type: object
+    ActiveImplementationAdapterRecord:
+      type: object
+      required: [adapterId, name, domains, urlPatterns, parseMode, capabilities, sourceDiscoveryId, adapterImplementationTs, promotedAt]
+      properties:
+        adapterId:
+          type: string
+        name:
+          type: string
+        domains:
+          type: array
+          items:
+            type: string
+        urlPatterns:
+          type: array
+          items:
+            type: string
+        parseMode:
+          type: string
+          const: playwright
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+        sourceDiscoveryId:
+          type: string
+        adapterImplementationTs:
+          type: string
+        promotedAt:
+          type: string
+          format: date-time
+        approvalFixture:
+          $ref: "#/components/schemas/FixtureSummary"
     HandoffJob:
       type: object
       required: [id, normalizedUrl, status]

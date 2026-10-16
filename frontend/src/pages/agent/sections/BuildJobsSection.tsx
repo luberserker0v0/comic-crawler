@@ -233,7 +233,7 @@ function BuildJobAttemptDetails(props: {
       )}
       {Boolean(job.implementationValidation) && (
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          <span className="font-medium">implementationValidation: </span>
+          <span className="font-medium">{text.agent.implementationValidation}: </span>
           <span className="font-mono">{JSON.stringify(job.implementationValidation)}</span>
         </div>
       )}

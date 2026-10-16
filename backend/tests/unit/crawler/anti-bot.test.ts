@@ -72,6 +72,17 @@ describe('anti-bot challenge detection', () => {
     expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).toThrow(ComicError);
   });
 
+  it('detects localized Cloudflare waiting pages', () => {
+    const html = `<!doctype html>
+      <html>
+        <head><title>請稍候...</title></head>
+        <body><div>正在執行安全驗證</div></body>
+      </html>`;
+
+    expect(looksLikeAntiBotChallenge(html)).toBe(true);
+    expect(() => assertNotAntiBotChallenge(html, 'https://comix.to/title/demo')).toThrow(ComicError);
+  });
+
   it('does not flag normal HappyMH comic DOM that only keeps verification words in scripts', () => {
     const html = `<!doctype html>
       <html>

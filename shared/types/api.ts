@@ -34,6 +34,7 @@ export interface ChapterImagesRequest {
   url: string;
   adapterId?: string;
   challengeDiscoveryId?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface ChapterImagesResponse {
@@ -172,6 +173,7 @@ export interface SaveAdapterDraftContentRequest {
 export interface AdapterFunctionTestRequest {
   url: string;
   challengeDiscoveryId?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface AdapterFunctionRevisionRequest {
@@ -217,6 +219,10 @@ export interface FixtureSummary {
   htmlLength: number;
   capturedAt: string;
   path: string;
+  expectedPath?: string;
+  adapterId?: string;
+  sourceDiscoveryId?: string;
+  functionIds?: string[];
   readiness: DomReadinessReport;
 }
 
@@ -282,12 +288,32 @@ export interface CreateTaskRequest {
   chapters?: string[];
   chapterUrls?: string[];
   priority?: number;
+  browserTarget?: BrowserTarget;
 }
+
+export interface BrowserWorkerSummary {
+  workerId: string;
+  name: string;
+  status: 'offline' | 'idle' | 'busy';
+  online: boolean;
+  capabilities?: Record<string, unknown>;
+  activeTaskId?: string;
+  lastConnectedAt?: string;
+}
+
+export interface BrowserWorkerListResponse {
+  workers: BrowserWorkerSummary[];
+}
+
+export type BrowserTarget =
+  | { mode: 'any' }
+  | { mode: 'specific'; workerId: string };
 
 export type CreateTaskResponse =
   | {
       kind: 'taskCreated';
       taskId: string;
+      browserTarget: BrowserTarget;
     }
   | {
       kind: 'discoveryQueued';
@@ -319,6 +345,7 @@ export interface TaskStats {
   total: number;
   pending: number;
   running: number;
+  waitingForBrowserWorker: number;
   waitingVerification: number;
   interrupted: number;
   completed: number;
@@ -336,6 +363,7 @@ export interface TaskSummary {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  browserTarget?: BrowserTarget;
   progress: TaskProgressSummary | null;
   checkpoint: CrawlCheckpointSummary | null;
 }
@@ -450,6 +478,7 @@ export interface CreateSelectorDiscoveryRequest {
   url: string;
   target?: SelectorDiscoveryTarget;
   forceDiscovery?: boolean;
+  browserTarget?: BrowserTarget;
 }
 
 export interface CreateSelectorDiscoverySnapshotRequest extends CreateSelectorDiscoveryRequest {
@@ -482,6 +511,7 @@ export interface SelectorDiscoveryJobSummary {
   retriedFromId?: string;
   adapterId?: string;
   adapterName?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface SelectorDiscoveryFunctionRevisionTask {

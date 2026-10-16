@@ -1,4 +1,4 @@
-export const BROWSER_PROVIDER_CONTRACT_VERSION = '1' as const;
+export const BROWSER_PROVIDER_CONTRACT_VERSION = '2' as const;
 export const BROWSER_PROVIDER_DISCOVERY_PATH = '/.well-known/comiccrawler-browser-provider' as const;
 
 export type BrowserProviderProtocol = 'playwright' | 'cdp';
@@ -12,12 +12,12 @@ export interface BrowserProviderCapabilities {
   screenshots: boolean;
   downloads: boolean;
   tracing: boolean;
-  fileTransfer: boolean;
 }
 
 export interface BrowserProviderDescriptor {
   contractVersion: typeof BROWSER_PROVIDER_CONTRACT_VERSION;
   providerId: string;
+  processInstanceId: string;
   providerType: BrowserProviderProtocol;
   runtimeVersion: string;
   capabilities: BrowserProviderCapabilities;
@@ -46,16 +46,23 @@ export interface BrowserProviderSessionHandle extends Omit<BrowserProviderSessio
   localWsEndpoint: string;
 }
 
-export interface BrowserProviderEnrollmentResponse {
+export interface BrowserProviderRegistrationRequest {
+  clientInstanceId: string;
+  providerName?: string;
+}
+
+export interface BrowserProviderRegistrationResponse {
   providerId: string;
+  clientInstanceId: string;
   credentialId: string;
   credential: string;
-  enrolledAt: string;
+  registeredAt: string;
 }
 
 export interface BrowserProviderServiceDiscovery {
   contractVersion: typeof BROWSER_PROVIDER_CONTRACT_VERSION;
   transport: 'reverse-relay';
+  apiSecurityMode: 'public' | 'token';
   endpoints: {
     enroll: string;
     controlWebSocket: string;
@@ -64,15 +71,16 @@ export interface BrowserProviderServiceDiscovery {
 }
 
 export interface BrowserProviderState {
-  schemaVersion: 1;
+  schemaVersion: 2;
   providerId: string;
+  clientInstanceId: string;
   serverUrl: string;
   credential: {
-    type: 'device-token';
+    type: 'provider-token';
     credentialId: string;
     file: string;
   };
-  enrolledAt: string;
+  registeredAt: string;
 }
 
 export type BrowserProviderControlRequest =

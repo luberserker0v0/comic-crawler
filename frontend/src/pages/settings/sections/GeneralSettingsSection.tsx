@@ -36,8 +36,8 @@ export function GeneralSettingsSection(props: {
               onChange={(e) => handleChange('i18n', 'fallback', e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             >
-              <option value="en">English</option>
-              <option value="zh-TW">繁體中文</option>
+              <option value="en">{text.language['en-US']}</option>
+              <option value="zh-TW">{text.language['zh-TW']}</option>
             </select>
           </div>
         </div>
@@ -60,14 +60,14 @@ export function GeneralSettingsSection(props: {
                 onClick={() => void handleBrowseDownloadDirectory()}
                 className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
-                Browse
+                {text.settings.browse}
               </button>
               <button
                 type="button"
                 onClick={() => void handleOpenDownloadDirectory()}
                 className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
-                Open
+                {text.settings.open}
               </button>
             </div>
             {downloadDirectoryMessage && (

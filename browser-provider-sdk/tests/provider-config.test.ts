@@ -3,20 +3,21 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { loadProviderState, readCredential, writeEnrollmentFiles } from '../src';
+import { loadProviderState, readCredential, writeProviderFiles } from '../src';
 
-test('enrollment writes independently configurable state and credential outputs', async (context) => {
+test('registration writes independently configurable state and credential outputs', async (context) => {
   const root = await fs.mkdtemp(join(tmpdir(), 'comiccrawler-provider-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const stateOutput = join(root, 'state', 'client.json');
   const credentialOutput = join(root, 'secret', 'client.credential');
 
-  const paths = await writeEnrollmentFiles({
-    enrollment: {
+  const paths = await writeProviderFiles({
+    registration: {
       providerId: 'bp_server_assigned',
+      clientInstanceId: 'client-instance-1',
       credentialId: 'cred_server_assigned',
       credential: 'ccbp_secret',
-      enrolledAt: '2026-10-14T00:00:00.000Z',
+      registeredAt: '2026-10-14T00:00:00.000Z',
     },
     serverUrl: 'https://crawler.example',
     stateOutput,
@@ -27,30 +28,32 @@ test('enrollment writes independently configurable state and credential outputs'
   assert.equal(paths.credentialPath, credentialOutput);
   assert.equal(await readCredential(credentialOutput), 'ccbp_secret');
   assert.deepEqual(await loadProviderState(stateOutput), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     providerId: 'bp_server_assigned',
+    clientInstanceId: 'client-instance-1',
     serverUrl: 'https://crawler.example',
     credential: {
-      type: 'device-token',
+      type: 'provider-token',
       credentialId: 'cred_server_assigned',
       file: credentialOutput.replace(/\\/g, '/'),
     },
-    enrolledAt: '2026-10-14T00:00:00.000Z',
+    registeredAt: '2026-10-14T00:00:00.000Z',
   });
 });
 
-test('enrollment does not overwrite existing credential output', async (context) => {
+test('registration does not overwrite existing credential output', async (context) => {
   const root = await fs.mkdtemp(join(tmpdir(), 'comiccrawler-provider-'));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const credentialOutput = join(root, 'provider.credential');
   await fs.writeFile(credentialOutput, 'existing\n');
 
-  await assert.rejects(() => writeEnrollmentFiles({
-    enrollment: {
+  await assert.rejects(() => writeProviderFiles({
+    registration: {
       providerId: 'bp_new',
+      clientInstanceId: 'client-instance-2',
       credentialId: 'cred_new',
       credential: 'ccbp_new',
-      enrolledAt: '2026-10-14T00:00:00.000Z',
+      registeredAt: '2026-10-14T00:00:00.000Z',
     },
     serverUrl: 'https://crawler.example',
     stateOutput: join(root, 'state.json'),

@@ -4,6 +4,8 @@ import { useConfigStore } from '../store/configStore';
 import { enUSText } from './enUS';
 import { uiText, type UIText } from './zhTW';
 
+export { formatText } from './format';
+
 export const SUPPORTED_LOCALES = ['zh-TW', 'en-US'] as const;
 export type LocaleCode = (typeof SUPPORTED_LOCALES)[number];
 
@@ -85,11 +87,4 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export function useI18n(): I18nContextValue {
   return useContext(I18nContext);
-}
-
-export function formatText(template: string, values: Record<string, string | number>): string {
-  return Object.entries(values).reduce(
-    (result, [key, value]) => result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value)),
-    template
-  );
 }

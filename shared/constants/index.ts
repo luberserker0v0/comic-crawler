@@ -57,6 +57,7 @@ export const DEFAULTS = {
     mode: 'remote' as const,
     maxInstances: 2,
     timeout: 30000,
+    workerWaitTimeoutMs: 30 * 60 * 1000,
     waitUntil: 'domcontentloaded' as const,
     postLoadDelayMs: 0,
     challengeAutoAttempt: true,
@@ -68,6 +69,11 @@ export const DEFAULTS = {
   server: {
     port: 4100,
     host: '127.0.0.1',
+  },
+  apiSecurity: {
+    mode: 'public' as const,
+    defaultEffect: 'deny' as const,
+    rules: [],
   },
   i18n: {
     language: 'zh-TW',

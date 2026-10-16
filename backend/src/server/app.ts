@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type { BrowserConfig, BrowserTarget } from '@comiccrawler/shared';
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
@@ -14,6 +16,8 @@ import type { FixtureCaptureService } from '../fixtures/fixture-capture-service'
 import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
 import type { BrowserProviderRegistry } from '../browser/provider-registry';
+import type { BrowserLeaseCoordinator } from '../browser/lease-coordinator';
+import { ApiSecurityService } from '../security/api-security';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -27,6 +31,8 @@ import { setupMaintenanceRoutes } from './routes/maintenance';
 import { setupBrowserProviderRoutes } from './routes/browser-providers';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
+import { setupApiSecurity } from './middleware/api-security';
+import { requestPrincipal } from './middleware/api-security';
 import { logger } from '../utils/logger';
 
 export interface ServerOptions {
@@ -45,20 +51,28 @@ export interface ServerOptions {
   fixtureCaptureService?: FixtureCaptureService;
   maintenanceService?: MaintenanceService;
   browserProviderRegistry?: BrowserProviderRegistry;
+  browserLeaseCoordinator?: BrowserLeaseCoordinator;
   storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
-  auth?: { username: string; password: string };
+  apiSecurity?: ApiSecurityService;
 }
 
 export class ComicCrawlerServer {
   private app: FastifyInstance;
   private options: ServerOptions;
   private httpServer?: import('node:http').Server;
+  private readonly apiSecurity: ApiSecurityService;
 
   constructor(options: ServerOptions) {
     this.options = options;
+    this.apiSecurity = options.apiSecurity ?? ApiSecurityService.fromSecretDocument({
+      mode: 'public',
+      defaultEffect: 'deny',
+      rules: [],
+    });
     this.app = this.createApp();
+    setupApiSecurity(this.app, this.apiSecurity);
     this.setupRoutes();
     this.setupApiDocs();
     this.setupHealthCheck();
@@ -88,7 +102,7 @@ export class ComicCrawlerServer {
     const address = this.httpServer.address();
     const port = typeof address === 'object' && address ? address.port : this.options.port;
     this.options.browserProviderRegistry?.setRelayBaseUrl(`http://127.0.0.1:${port}`);
-    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserProviderRegistry);
+    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserProviderRegistry, this.apiSecurity);
 
     logger.info({ host: this.options.host, port: this.options.port }, 'Server started');
   }
@@ -97,7 +111,10 @@ export class ComicCrawlerServer {
     await this.app.close();
     await this.options.taskManager.dispose();
     await this.options.crawlerEngine.dispose();
+    await this.options.challengeDiscoveryService?.dispose();
+    await this.options.browserLeaseCoordinator?.dispose();
     this.options.browserProviderRegistry?.dispose();
+    this.options.selectorDiscoveryService?.dispose();
 
     await Promise.all(
       this.options.adapterRegistry.getAll().map(async (adapter) => {
@@ -121,15 +138,18 @@ export class ComicCrawlerServer {
       this.options.challengeDiscoveryService,
       {
         downloadDir: async () => (await this.options.configManager.get()).download.directory,
+        browserLeaseCoordinator: this.options.browserLeaseCoordinator,
+        apiSecurity: this.apiSecurity,
       }
     );
     setupConfigRoutes(this.app, this.options.configManager);
     if (this.options.browserProviderRegistry) {
-      setupBrowserProviderRoutes(this.app, this.options.browserProviderRegistry);
+      setupBrowserProviderRoutes(this.app, this.options.browserProviderRegistry, this.apiSecurity, this.options.browserLeaseCoordinator);
     }
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
       getBrowserConfig: async () => this.resolveBrowserConfig(),
+      withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
     });
@@ -139,6 +159,7 @@ export class ComicCrawlerServer {
       setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
         challengeDiscoveryService: this.options.challengeDiscoveryService,
         getBrowserConfig: async () => this.resolveBrowserConfig(),
+        withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
         getNetworkConfig: async () => (await this.options.configManager.get()).network,
       });
     }
@@ -152,7 +173,10 @@ export class ComicCrawlerServer {
           challengeDiscoveryService: this.options.challengeDiscoveryService,
           adapterDraftService: this.options.adapterDraftService,
           getBrowserConfig: async () => this.resolveBrowserConfig(),
+          withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
           getNetworkConfig: async () => (await this.options.configManager.get()).network,
+          browserLeaseCoordinator: this.options.browserLeaseCoordinator,
+          apiSecurity: this.apiSecurity,
         }
       );
     }
@@ -160,7 +184,8 @@ export class ComicCrawlerServer {
       setupChallengeDiscoveryRoutes(
         this.app,
         this.options.challengeDiscoveryService,
-        this.options.selectorDiscoveryService
+        this.options.selectorDiscoveryService,
+        { apiSecurity: this.apiSecurity }
       );
     }
     if (this.options.agentAdminService) {
@@ -174,6 +199,28 @@ export class ComicCrawlerServer {
   private async resolveBrowserConfig() {
     const browser = (await this.options.configManager.get()).browser;
     return this.options.browserProviderRegistry?.resolveBrowserConfig(browser) ?? browser;
+  }
+
+  private async withBrowserConfig<T>(
+    request: FastifyRequest,
+    target: BrowserTarget | undefined,
+    action: (browser: BrowserConfig) => Promise<T>
+  ): Promise<T> {
+    const browser = (await this.options.configManager.get()).browser;
+    if (!this.options.browserLeaseCoordinator) return action(browser);
+    const principal = requestPrincipal(request, this.apiSecurity);
+    const lease = await this.options.browserLeaseCoordinator.acquire({
+      taskId: `operation:${randomUUID()}`,
+      ownerUserId: principal.userId,
+      target,
+      baseBrowserConfig: browser,
+      timeoutMs: browser.workerWaitTimeoutMs,
+    });
+    try {
+      return await action(lease.browserConfig);
+    } finally {
+      await lease.release();
+    }
   }
 
   private setupStaticFiles(): void {

@@ -3,7 +3,6 @@ export interface BrowserPoolConfig {
   timeout: number;
   userAgent?: string;
   proxy?: string;
-  storageStatePath?: string;
   remote?: {
     wsEndpoint?: string;
     connectTimeout?: number;
@@ -12,7 +11,7 @@ export interface BrowserPoolConfig {
   };
 }
 
-export type RemoteBrowserConfigResolver = () => Promise<BrowserPoolConfig['remote'] | undefined>;
+export type RemoteBrowserConfigResolver = (sessionId?: string) => Promise<BrowserPoolConfig['remote'] | undefined>;
 
 export interface BrowserInstance {
   id: string;

@@ -9,9 +9,10 @@
 
 ## 2. Local setup
 
-Run commands from the repository root:
+Enter the source-of-truth repository root, then run the workspace commands:
 
 ```bash
+cd repo
 npm install
 npm run dev
 ```
@@ -110,6 +111,8 @@ Environment variables override persisted deployment settings.
 | AO bundle | `AO_BUNDLE_PATH` | `agent/ao/selector-discovery` |
 | Browser timeout | `COMICCRAWLER_BROWSER_CONNECT_TIMEOUT` | `30000` |
 | Browser network exposure | `COMICCRAWLER_BROWSER_EXPOSE_NETWORK` | unset |
+| API security mode | `COMICCRAWLER_API_SECURITY_MODE` | `public` |
+| API security secret | `COMICCRAWLER_API_SECURITY_SECRET_PATH` | unset |
 | Static frontend | `STATIC_DIR` | unset |
 
 Example:

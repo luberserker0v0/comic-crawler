@@ -1,5 +1,6 @@
 import { useI18n } from '../../../text/i18n';
 import { DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON } from '../provider-template';
+import { formatText } from '../../../text/format';
 
 export function SelectorDiscoverySection(props: {
   aoBaseUrl: string;
@@ -24,6 +25,7 @@ export function SelectorDiscoverySection(props: {
   handleRefreshSelectorDiscoveryAoModels: () => void;
 }) {
   const { text } = useI18n();
+  const t = text.settings.selector;
   const {
     aoBaseUrl,
     setAoBaseUrl,
@@ -54,25 +56,25 @@ export function SelectorDiscoverySection(props: {
   const bundleEvalDryRunCommand = `${bundleEvalCommand} --dry-run`;
   const bundleFreezeCommand = latestPassedEvaluation
     ? `comiccrawler agent bundle-freeze --eval-bundle-hash ${latestPassedEvaluation.hash}`
-    : 'Run bundle-eval first; no passing evaluation artifact is available yet.';
+    : t.runEvalFirst;
 
   return (
     <div className="space-y-4 rounded-lg bg-white p-6 shadow">
       <div>
-        <h2 className="text-lg font-semibold">Selector Discovery (AO)</h2>
+        <h2 className="text-lg font-semibold">{t.title}</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Settings save automatically once AO URL, model, and provider JSON are filled in. Provider secrets are accepted here but are not returned by the API. Refresh AO models only needs the AO URL, so you can discover models before everything is filled in.
+          {t.description}
         </p>
         <p className="mt-1 text-sm text-slate-500">
           {text.settings.selectorDiscoveryIndependentSave}
         </p>
         <p className="mt-1 text-sm text-amber-700">
-          Token file references must be readable by AO/OpenCode, not just by ComicCrawler. If AO runs in Docker, use a mounted AO-visible path.
+          {t.tokenPathHelp}
         </p>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
-          <label className="block text-sm font-medium text-gray-700">AO URL</label>
+          <label className="block text-sm font-medium text-gray-700">{t.aoUrl}</label>
           <input
             type="text"
             value={aoBaseUrl}
@@ -82,7 +84,7 @@ export function SelectorDiscoverySection(props: {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Model</label>
+          <label className="block text-sm font-medium text-gray-700">{t.model}</label>
           <div className="mt-1 flex gap-2">
             <input
               type="text"
@@ -95,35 +97,35 @@ export function SelectorDiscoverySection(props: {
               type="button"
               onClick={handleRefreshSelectorDiscoveryAoModels}
               disabled={!aoBaseUrl.trim() || selectorDiscoveryAoModelsLoading}
-              title={aoBaseUrl.trim() ? 'List providers/models from the AO URL above (no save needed)' : 'Enter an AO URL first'}
+              title={aoBaseUrl.trim() ? t.modelRefreshHelp : t.enterAoFirst}
               className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
             >
-              {selectorDiscoveryAoModelsLoading ? 'Loading...' : 'Refresh AO models'}
+              {selectorDiscoveryAoModelsLoading ? t.loading : t.refreshModels}
             </button>
           </div>
           <datalist id="selector-discovery-ao-models">
             {aoModelOptions.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.name ? `${item.name} (${item.status ?? 'unknown'})` : item.status ?? item.providerId}
+                {item.name ? `${item.name} (${item.status ?? t.unknown})` : item.status ?? item.providerId}
               </option>
             ))}
           </datalist>
           {aoModelOptions.length > 0 && (
             <p className="mt-1 text-xs text-slate-500">
-              AO listed {selectorDiscoveryAoModels?.providers.length ?? 0} providers and {aoModelOptions.length} models from a temporary conversation.
+              {formatText(t.modelsListed, { providers: selectorDiscoveryAoModels?.providers.length ?? 0, models: aoModelOptions.length })}
             </p>
           )}
         </div>
       </div>
       <div>
         <div className="flex items-center justify-between gap-3">
-          <label className="block text-sm font-medium text-gray-700">Provider JSON</label>
+          <label className="block text-sm font-medium text-gray-700">{t.providerJson}</label>
           <button
             type="button"
             onClick={handleLoadDefaultSelectorDiscoveryProvider}
             className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
           >
-            Load default provider template
+            {t.loadTemplate}
           </button>
         </div>
         <textarea
@@ -135,30 +137,30 @@ export function SelectorDiscoverySection(props: {
         />
         {selectorDiscoveryConfig?.configured && !providerJson.trim() && (
           <p className="mt-1 text-xs text-slate-500">
-            The saved provider JSON is intentionally hidden because it may contain secrets. Use the template button to replace it, then save.
+            {t.hiddenProvider}
           </p>
         )}
       </div>
       <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-600">
-        <div>Configured: {selectorDiscoveryConfig?.configured ? 'yes' : 'no'}</div>
-        <div>Providers: {(selectorDiscoveryConfig?.providerIds ?? []).join(', ') || '-'}</div>
-        <div>Models: {(selectorDiscoveryConfig?.modelIds ?? []).join(', ') || '-'}</div>
-        <div>Fingerprint: {selectorDiscoveryConfig?.providerFingerprint ?? '-'}</div>
+        <div>{t.configured}: {selectorDiscoveryConfig?.configured ? t.yes : t.no}</div>
+        <div>{t.providers}: {(selectorDiscoveryConfig?.providerIds ?? []).join(', ') || '-'}</div>
+        <div>{t.models}: {(selectorDiscoveryConfig?.modelIds ?? []).join(', ') || '-'}</div>
+        <div>{t.fingerprint}: {selectorDiscoveryConfig?.providerFingerprint ?? '-'}</div>
       </div>
       {selectorDiscoveryAoModels && (
         <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-          <div className="font-medium">AO available providers/models</div>
+          <div className="font-medium">{t.availableModels}</div>
           <div className="mt-1 text-xs">
-            Source: temporary AO conversation. Provider options and secrets are not displayed.
+            {t.availableModelsSource}
           </div>
           <div className="mt-2 max-h-52 overflow-auto rounded bg-white">
             <table className="min-w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-2 py-1 font-medium">Provider</th>
-                  <th className="px-2 py-1 font-medium">Model</th>
-                  <th className="px-2 py-1 font-medium">Name</th>
-                  <th className="px-2 py-1 font-medium">Status</th>
+                  <th className="px-2 py-1 font-medium">{t.provider}</th>
+                  <th className="px-2 py-1 font-medium">{t.model}</th>
+                  <th className="px-2 py-1 font-medium">{t.name}</th>
+                  <th className="px-2 py-1 font-medium">{t.status}</th>
                 </tr>
               </thead>
               <tbody>
@@ -174,25 +176,25 @@ export function SelectorDiscoverySection(props: {
             </table>
             {aoModelOptions.length > 80 && (
               <div className="border-t border-slate-100 px-2 py-1 text-xs text-slate-500">
-                Showing first 80 of {aoModelOptions.length} models.
+                {formatText(t.showingModels, { count: aoModelOptions.length })}
               </div>
             )}
           </div>
           {aoModelOptions.length > 0 && !aoModelOptions.some((item) => item.id === model) && (
             <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-              The current model is not in AO's provider list. Pick one from the datalist above before saving.
+              {t.modelMissingAo}
             </div>
           )}
         </div>
       )}
       {selectorDiscoveryConfig?.configured && !(selectorDiscoveryConfig.modelIds ?? []).includes(model) && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          The selected model is not present in the saved provider summary. Refresh AO models or save an updated provider document before running adapter builds.
+          {t.modelMissingSaved}
         </div>
       )}
       {(selectorDiscoveryConfig?.warnings ?? []).length > 0 && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          <div className="font-medium">Provider diagnostics</div>
+          <div className="font-medium">{t.providerDiagnostics}</div>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             {selectorDiscoveryConfig.warnings.map((warning: string) => (
               <li key={warning}>{warning}</li>
@@ -203,9 +205,9 @@ export function SelectorDiscoverySection(props: {
       <div className="rounded-md border border-slate-200 bg-white p-3 text-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="font-medium text-slate-800">AO Bundle Release</div>
+            <div className="font-medium text-slate-800">{t.bundleRelease}</div>
             <p className="mt-1 text-xs text-slate-500">
-              Runtime uses draft while no active release is frozen. Frozen releases are verified by SHA-256 before use.
+              {t.bundleReleaseHelp}
             </p>
           </div>
           <button
@@ -213,49 +215,49 @@ export function SelectorDiscoverySection(props: {
             onClick={refreshSelectorDiscoveryBundleStatus}
             className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
           >
-            Refresh
+            {t.refresh}
           </button>
         </div>
         <dl className="mt-3 grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
           <div>
-            <dt className="text-slate-400">Mode</dt>
+            <dt className="text-slate-400">{t.mode}</dt>
             <dd className="font-medium">{selectorDiscoveryBundleStatus?.mode ?? '-'}</dd>
           </div>
           <div>
-            <dt className="text-slate-400">Verified</dt>
+            <dt className="text-slate-400">{t.verified}</dt>
             <dd className={selectorDiscoveryBundleStatus?.verified ? 'font-medium text-emerald-700' : 'font-medium text-amber-700'}>
-              {selectorDiscoveryBundleStatus?.verified ? 'yes' : 'no'}
+              {selectorDiscoveryBundleStatus?.verified ? t.yes : t.no}
             </dd>
           </div>
           <div>
-            <dt className="text-slate-400">Release</dt>
+            <dt className="text-slate-400">{t.release}</dt>
             <dd>{selectorDiscoveryBundleStatus?.release ?? '-'}</dd>
           </div>
           <div>
-            <dt className="text-slate-400">Frozen at</dt>
+            <dt className="text-slate-400">{t.frozenAt}</dt>
             <dd>{selectorDiscoveryBundleStatus?.activeRelease?.frozenAt ?? '-'}</dd>
           </div>
           <div className="md:col-span-2">
-            <dt className="text-slate-400">Expected SHA-256</dt>
+            <dt className="text-slate-400">{t.expectedSha}</dt>
             <dd className="break-all font-mono">{selectorDiscoveryBundleStatus?.expectedSha256 ?? '-'}</dd>
           </div>
           <div className="md:col-span-2">
-            <dt className="text-slate-400">Actual SHA-256</dt>
+            <dt className="text-slate-400">{t.actualSha}</dt>
             <dd className="break-all font-mono">{selectorDiscoveryBundleStatus?.actualSha256 ?? '-'}</dd>
           </div>
           <div className="md:col-span-2">
-            <dt className="text-slate-400">Active root</dt>
+            <dt className="text-slate-400">{t.activeRoot}</dt>
             <dd className="break-all font-mono">{selectorDiscoveryBundleStatus?.activeRoot ?? '-'}</dd>
           </div>
           {selectorDiscoveryBundleStatus?.activeRelease?.evalBundleHash && (
             <div className="md:col-span-2">
-              <dt className="text-slate-400">Eval bundle hash</dt>
+              <dt className="text-slate-400">{t.evalHash}</dt>
               <dd className="break-all font-mono">{selectorDiscoveryBundleStatus.activeRelease.evalBundleHash}</dd>
             </div>
           )}
           {selectorDiscoveryBundleStatus?.error && (
             <div className="md:col-span-2">
-              <dt className="text-slate-400">Status note</dt>
+              <dt className="text-slate-400">{t.statusNote}</dt>
               <dd className="text-amber-700">{selectorDiscoveryBundleStatus.error}</dd>
             </div>
           )}
@@ -264,9 +266,9 @@ export function SelectorDiscoverySection(props: {
       <div className="rounded-md border border-indigo-100 bg-indigo-50 p-3 text-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="font-medium text-indigo-900">Release operation guide</div>
+            <div className="font-medium text-indigo-900">{t.operationGuide}</div>
             <p className="mt-1 text-xs text-indigo-800">
-              Long-running AO eval and release freeze stay in CLI for now. The UI shows safe command templates and recent artifacts.
+              {t.operationGuideHelp}
             </p>
           </div>
           <button
@@ -274,49 +276,49 @@ export function SelectorDiscoverySection(props: {
             onClick={refreshSelectorDiscoveryBundleEvaluations}
             className="rounded-md border border-indigo-200 bg-white px-3 py-1 text-xs font-medium text-indigo-700 shadow-sm hover:bg-indigo-50"
           >
-            Refresh evals
+            {t.refreshEvals}
           </button>
         </div>
         <div className="mt-3 space-y-3">
           <div>
-            <div className="text-xs font-medium text-indigo-900">-1. List eval cases</div>
+            <div className="text-xs font-medium text-indigo-900">{t.listCases}</div>
             <pre className="mt-1 overflow-auto rounded bg-white p-2 text-xs text-slate-800">{bundleListCasesCommand}</pre>
           </div>
           <div>
-            <div className="text-xs font-medium text-indigo-900">0. Preview eval plan</div>
+            <div className="text-xs font-medium text-indigo-900">{t.previewPlan}</div>
             <pre className="mt-1 overflow-auto rounded bg-white p-2 text-xs text-slate-800">{bundleEvalDryRunCommand}</pre>
           </div>
           <div>
-            <div className="text-xs font-medium text-indigo-900">1. Run bundle evaluation</div>
+            <div className="text-xs font-medium text-indigo-900">{t.runEvaluation}</div>
             <pre className="mt-1 overflow-auto rounded bg-white p-2 text-xs text-slate-800">{bundleEvalCommand}</pre>
           </div>
           <div>
-            <div className="text-xs font-medium text-indigo-900">2. Freeze passing evaluation</div>
+            <div className="text-xs font-medium text-indigo-900">{t.freezeEvaluation}</div>
             <pre className="mt-1 overflow-auto rounded bg-white p-2 text-xs text-slate-800">{bundleFreezeCommand}</pre>
           </div>
           {selectorDiscoveryBundleEvaluations.length > 0 ? (
             <div>
-              <div className="text-xs font-medium text-indigo-900">Recent bundle evaluations</div>
+              <div className="text-xs font-medium text-indigo-900">{t.recentEvaluations}</div>
               <div className="mt-2 max-h-56 overflow-auto rounded bg-white">
                 <table className="min-w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
-                      <th className="px-2 py-1 font-medium">Result</th>
-                      <th className="px-2 py-1 font-medium">Policy</th>
-                      <th className="px-2 py-1 font-medium">Hash</th>
-                      <th className="px-2 py-1 font-medium">Runs</th>
-                      <th className="px-2 py-1 font-medium">Created</th>
-                      <th className="px-2 py-1 font-medium">Job</th>
+                      <th className="px-2 py-1 font-medium">{t.result}</th>
+                      <th className="px-2 py-1 font-medium">{t.policy}</th>
+                      <th className="px-2 py-1 font-medium">{t.hash}</th>
+                      <th className="px-2 py-1 font-medium">{t.runs}</th>
+                      <th className="px-2 py-1 font-medium">{t.created}</th>
+                      <th className="px-2 py-1 font-medium">{t.job}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectorDiscoveryBundleEvaluations.map((evaluation) => (
                       <tr key={evaluation.hash} className="border-t border-slate-100">
                         <td className={evaluation.passed ? 'px-2 py-1 text-emerald-700' : 'px-2 py-1 text-red-700'}>
-                          {evaluation.passed ? 'passed' : 'failed'}
+                          {evaluation.passed ? t.passed : t.failed}
                         </td>
                         <td className={evaluation.policy?.passed ? 'px-2 py-1 text-emerald-700' : 'px-2 py-1 text-amber-700'}>
-                          {evaluation.policy?.passed ? 'passed' : 'failed'}
+                          {evaluation.policy?.passed ? t.passed : t.failed}
                         </td>
                         <td className="px-2 py-1 font-mono">
                           <span title={evaluation.hash}>{evaluation.hash.slice(0, 12)}</span>
@@ -333,13 +335,13 @@ export function SelectorDiscoverySection(props: {
               </div>
               {latestPassedEvaluation && (
                 <div className="mt-2 text-xs text-indigo-800">
-                  Latest passing eval artifact: <span className="font-mono">{latestPassedEvaluation.path}</span>
+                  {t.latestPassing}: <span className="font-mono">{latestPassedEvaluation.path}</span>
                 </div>
               )}
             </div>
           ) : (
             <div className="text-xs text-indigo-800">
-              No bundle evaluation artifacts found under data/agent-workspaces/bundle-evaluations.
+              {t.noEvaluations}
             </div>
           )}
         </div>
@@ -351,7 +353,7 @@ export function SelectorDiscoverySection(props: {
       )}
       {selectorDiscoveryPreflight?.steps?.length > 0 && (
         <div className="rounded-md border border-slate-200 bg-white p-3 text-sm">
-          <div className="font-medium text-slate-800">AO preflight steps</div>
+          <div className="font-medium text-slate-800">{t.preflightSteps}</div>
           <ol className="mt-2 space-y-2">
             {selectorDiscoveryPreflight.steps.map((step: any, index: number) => (
               <li key={`${step.name}-${index}`} className={step.ok ? 'text-emerald-700' : 'text-red-700'}>
@@ -377,23 +379,23 @@ export function SelectorDiscoverySection(props: {
                 : 'text-sm text-slate-500'
           }
         >
-          {selectorDiscoverySaveState.state === 'saving' && 'Saving…'}
-          {selectorDiscoverySaveState.state === 'saved' && `Saved ✓ ${selectorDiscoverySaveState.at}`}
+          {selectorDiscoverySaveState.state === 'saving' && t.saving}
+          {selectorDiscoverySaveState.state === 'saved' && formatText(t.savedAt, { time: selectorDiscoverySaveState.at })}
           {selectorDiscoverySaveState.state === 'error' && selectorDiscoverySaveState.message}
-          {selectorDiscoverySaveState.state === 'idle' && 'Changes save automatically once AO URL, model, and provider JSON are filled in.'}
+          {selectorDiscoverySaveState.state === 'idle' && t.autoSaveIdle}
         </span>
         <button
           onClick={handleSelectorDiscoveryTest}
           disabled={!selectorDiscoveryConfig?.configured}
           className="inline-flex justify-center rounded-md border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 shadow-sm hover:bg-indigo-50 disabled:opacity-50"
         >
-          Test AO
+          {t.testAo}
         </button>
         <button
           onClick={handleSelectorDiscoveryClear}
           className="inline-flex justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
         >
-          Clear provider
+          {t.clearProvider}
         </button>
       </div>
     </div>

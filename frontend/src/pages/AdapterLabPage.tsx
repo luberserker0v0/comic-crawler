@@ -19,8 +19,11 @@ import { useDraftFlow } from './lab/useDraftFlow';
 import { ResolveSection } from './lab/sections/ResolveSection';
 import { AdapterSelectSection } from './lab/sections/AdapterSelectSection';
 import { ImplementationTestSection } from './lab/sections/ImplementationTestSection';
+import { useI18n } from '../text/i18n';
+import { formatText } from '../text/format';
 
 export const AdapterLabPage: React.FC = () => {
+  const { text } = useI18n();
   const [url, setUrl] = useState('');
   const [resolveResult, setResolveResult] = useState<AdapterResolveResponse | null>(null);
   const [adapterChoices, setAdapterChoices] = useState<AdapterChoice[]>([]);
@@ -162,30 +165,22 @@ export const AdapterLabPage: React.FC = () => {
 
   async function runTest(challengeId?: string) {
     if (!selectedAdapterId || !selectedFunctionId) {
-      setError('Select an adapter and function before running the test.');
+      setError(text.lab.selectAdapterFunction);
       return;
     }
     if (!selectedFunctionAllowed) {
-      setError(urlKind === 'manga'
-        ? 'This is a manga catalog URL. Use a chapter URL to test Chapter Images.'
-        : urlKind === 'chapter'
-          ? 'This is a chapter URL. Use a manga catalog URL to test Metadata.'
-          : 'Enter a manga catalog URL or chapter URL before testing adapter functions.');
+      setError(urlKindDescription(urlKind, text.lab));
       return;
     }
-    if (draft && !canExecuteDraft) {
-      setError('Project-source TypeScript draft execution is not supported yet. Save the draft, then test the active adapter or wait for TS draft sandbox support.');
-      return;
-    }
-    const adapterDomStrategy = 'Playwright render';
+    const adapterDomStrategy = text.lab.playwrightRender;
     const challengeIdForTest = challengeId ?? verifiedChallengeId ?? undefined;
     setError(null);
     setLoading('test');
     setTestStatusMessage(challengeIdForTest
-      ? 'Continuing with the verified browser page, then running the selected extraction function...'
+      ? text.lab.continueVerifiedTest
       : draft
-        ? 'Testing the saved dynamic manifest draft. Unsaved changes will be saved before the test.'
-        : `Using adapter DOM strategy: ${adapterDomStrategy}. If verification is detected, handoff will be shown here.`);
+        ? text.lab.saveAndTestDraft
+        : formatText(text.lab.strategyTestStatus, { strategy: adapterDomStrategy }));
     setTestResult(null);
     try {
       let draftIdForTest = draft?.draft.draftId;
@@ -257,7 +252,7 @@ export const AdapterLabPage: React.FC = () => {
 
   function handleCapabilityChange(capability: AdapterFunctionCapability) {
     if (!isCapabilityAllowedForUrlKind(capability, urlKind)) {
-      setError(urlKindDescription(urlKind));
+      setError(urlKindDescription(urlKind, text.lab));
       return;
     }
     setSelectedCapability(capability);
@@ -269,7 +264,7 @@ export const AdapterLabPage: React.FC = () => {
   function handleFunctionChange(functionId: string) {
     const fn = capabilityDetail?.functions.find((item) => item.id === functionId);
     if (fn && !isCapabilityAllowedForUrlKind(fn.capability, urlKind)) {
-      setError(urlKindDescription(urlKind));
+      setError(urlKindDescription(urlKind, text.lab));
       return;
     }
     setSelectedFunctionId(functionId);
@@ -279,10 +274,10 @@ export const AdapterLabPage: React.FC = () => {
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div className="mb-6">
-        <p className="text-sm font-medium uppercase tracking-wide text-blue-600">Adapter Lab</p>
-        <h1 className="text-2xl font-bold text-gray-900">Adapter test lab</h1>
+        <p className="text-sm font-medium uppercase tracking-wide text-blue-600">{text.lab.title}</p>
+        <h1 className="text-2xl font-bold text-gray-900">{text.lab.pageTitle}</h1>
         <p className="mt-2 text-sm text-gray-600">
-          Enter a URL, resolve the matching adapter, inspect its fine-grained capability functions, and run a live test.
+          {text.lab.description}
         </p>
       </div>
 

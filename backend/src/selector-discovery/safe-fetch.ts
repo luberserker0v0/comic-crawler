@@ -177,7 +177,6 @@ async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { 
   const contextOptions = {
     userAgent: options.network?.userAgent,
     proxy: options.network?.proxy ? { server: options.network.proxy } : undefined,
-    storageState: browserOptions.storageStatePath,
     viewport: { width: 1920, height: 1080 },
   };
   const browser = await connectRemoteBrowser({

@@ -27,12 +27,12 @@ export const BrowserConfigSchema = z.object({
   mode: z.literal('remote').default('remote'),
   maxInstances: z.number().min(1).max(10).default(DEFAULTS.browser.maxInstances),
   timeout: z.number().min(1000).default(DEFAULTS.browser.timeout),
+  workerWaitTimeoutMs: z.number().min(1000).default(DEFAULTS.browser.workerWaitTimeoutMs),
   waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).default(DEFAULTS.browser.waitUntil),
   waitForSelector: z.string().optional(),
   postLoadDelayMs: z.number().min(0).default(DEFAULTS.browser.postLoadDelayMs),
   challengeAutoAttempt: z.boolean().default(DEFAULTS.browser.challengeAutoAttempt),
   challengeWaitMs: z.number().min(0).default(DEFAULTS.browser.challengeWaitMs),
-  storageStatePath: z.string().optional(),
   remote: z.object({
     connectTimeout: z.number().min(1000).default(30000),
     exposeNetwork: z.string().optional(),
@@ -43,12 +43,22 @@ export const BrowserConfigSchema = z.object({
 export const ServerConfigSchema = z.object({
   port: z.number().min(1).max(65535).default(DEFAULTS.server.port),
   host: z.string().default(DEFAULTS.server.host),
-  auth: z
-    .object({
-      username: z.string(),
-      password: z.string(),
-    })
-    .optional(),
+});
+
+export const ApiSecurityPolicySchema = z.object({
+  mode: z.enum(['public', 'token']).default('public'),
+  defaultEffect: z.literal('deny').default('deny'),
+  secretPath: z.string().min(1).optional(),
+  rules: z.array(z.object({
+    id: z.string().min(1),
+    methods: z.array(z.string().min(1)).min(1),
+    path: z.string().startsWith('/'),
+    permission: z.string().min(1),
+  })).default([]),
+}).superRefine((value, context) => {
+  if (value.mode === 'token' && !value.secretPath) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['secretPath'], message: 'secretPath is required in token mode.' });
+  }
 });
 
 export const LogConfigSchema = z.object({
@@ -79,6 +89,7 @@ export const GlobalConfigSchema = z.object({
   log: LogConfigSchema,
   i18n: I18nConfigSchema,
   maintenance: MaintenanceConfigSchema.default({}),
+  apiSecurity: ApiSecurityPolicySchema.default({ ...DEFAULTS.apiSecurity, rules: [] }),
 });
 
 export const SiteConfigSchema = z.object({

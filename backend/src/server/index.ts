@@ -9,7 +9,6 @@ export { setupSelectorDiscoveryRoutes } from './routes/selector-discovery';
 export { setupWebSocket } from './websocket';
 export { setupCors } from './middleware/cors';
 export { setupBrowserProviderRoutes } from './routes/browser-providers';
-export { setupAuth } from './middleware/auth';
+export { setupApiSecurity, requestPrincipal } from './middleware/api-security';
 export type { ServerOptions } from './app';
 export type { CorsOptions } from './middleware/cors';
-export type { AuthOptions } from './middleware/auth';

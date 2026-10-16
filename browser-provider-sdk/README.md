@@ -11,8 +11,20 @@ traffic over additional outbound WebSocket connections. The ComicCrawler
 container never launches a browser.
 
 The SDK first reads `GET /.well-known/comiccrawler-browser-provider`. That
-service document advertises the current enroll endpoint, control WebSocket, and
+service document advertises the registration endpoint, control WebSocket, and
 relay WebSocket template; wrappers do not hard-code those operational paths.
+
+## Command working directory
+
+Run the npm commands in this guide from the ComicCrawler repository root, not
+from `browser-provider-sdk/`. In the complete workspace layout:
+
+```bash
+cd repo
+```
+
+Paths passed to `--config`, `--state`, and `--credential` are resolved from this
+working directory unless absolute paths are used.
 
 ## Configuration
 
@@ -21,6 +33,11 @@ Create a client config such as `browser-provider.json`:
 ```json
 {
   "serverUrl": "https://crawler.example.com",
+  "providerName": "Alice PC",
+  "authentication": {
+    "userId": "alice",
+    "tokenFile": "./alice.token"
+  },
   "browser": {
     "headless": false,
     "channel": "chrome"
@@ -32,37 +49,28 @@ Create a client config such as `browser-provider.json`:
 }
 ```
 
+Omit `authentication` when the Server uses `public` API security mode. In
+`token` mode, the token file contains the user API token configured in the
+Server secret document. The user token is used only for first registration;
+later connections use the Provider's own credential.
+
 Use HTTPS for a remote production server. Plain HTTP is intended only for a
 trusted local development connection.
 
-## Enroll once
+## Connect and register automatically
 
-An administrator first creates a short-lived, one-time enrollment token:
-
-```http
-POST /api/browser-providers/enrollment-tokens
-Content-Type: application/json
-
-{ "ttlSeconds": 600 }
-```
-
-On the user machine, build the workspace and enroll the client. A token file is
-recommended because an inline token can appear in the process list:
+On the user machine, build the workspace and start the outbound client:
 
 ```bash
 npm run build:browser-provider-sdk
 npm exec -w browser-provider-sdk comiccrawler-browser-provider -- \
-  enroll \
-  --config ./browser-provider.json \
-  --enrollment-token-file ./enrollment-token.txt \
-  --state-output ./client-state.json \
-  --credential-output ./client.credential
+  connect --config ./browser-provider.json
 ```
 
-`--enrollment-token <token>` is also supported. ComicCrawler assigns the
-`providerId`, `credentialId`, and provider display name. The enrollment command
-writes non-secret state and the credential to separate files and refuses to
-overwrite either output.
+If no Provider state exists, `connect` generates a `clientInstanceId`, registers
+the Provider, writes state and credential files, and connects immediately. The
+Server assigns `providerId` and `credentialId`. Existing state skips
+registration and reconnects with the stored Provider credential.
 
 When output options are omitted, state is written to the OS state directory:
 
@@ -72,18 +80,8 @@ When output options are omitted, state is written to the OS state directory:
   `~/.local/state/comiccrawler/browser-provider/provider-state.json`
 
 The default credential file is `provider.credential` beside the state file.
-
-## Connect
-
-Start the outbound client and leave it running:
-
-```bash
-npm exec -w browser-provider-sdk comiccrawler-browser-provider -- \
-  connect --config ./browser-provider.json
-```
-
-Without `--state`, connect reads the default state path used by enroll. Custom
-files can be supplied explicitly:
+Custom paths can be supplied explicitly. The same paths are used for initial
+output and later input:
 
 ```bash
 npm exec -w browser-provider-sdk comiccrawler-browser-provider -- \
@@ -93,35 +91,39 @@ npm exec -w browser-provider-sdk comiccrawler-browser-provider -- \
   --credential ./client.credential
 ```
 
-The configured server must match the server recorded during enrollment, which
+The configured server must match the server recorded during registration, which
 prevents accidentally sending a credential to another host. The client
 reconnects with bounded exponential backoff.
 
 Useful connect overrides are `--headed`, `--headless`, `--channel`,
-`--max-sessions`, and `--default-ttl`. The only environment override is
-`COMICCRAWLER_BROWSER_PROVIDER_SERVER_URL`; identity and names are server-owned.
+`--max-sessions`, `--default-ttl`, `--provider-name`, `--user-id`,
+`--user-token-file`, and `--user-token`. Prefer a token file because an inline
+token can appear in the process list. The server URL may be overridden with
+`COMICCRAWLER_BROWSER_PROVIDER_SERVER_URL`.
 
-## Create and use a session
+## Select the Worker from a task
 
-After the client is online, list providers and create the active session:
+After the client is online, list the user's stable Worker targets:
 
 ```http
-GET /api/browser-providers
+GET /api/browser-workers
 ```
 
 ```http
-POST /api/browser-providers/{providerId}/sessions
+POST /api/tasks
 Content-Type: application/json
 
 {
-  "requestedCapabilities": { "interactive": true },
-  "ttlSeconds": 1800
+  "url": "https://example.com/chapter/1",
+  "mode": "chapters",
+  "chapterUrls": ["https://example.com/chapter/1"],
+  "browserTarget": { "mode": "specific", "workerId": "bp_..." }
 }
 ```
 
-The active session automatically supplies the remote Playwright endpoint for
-crawling, selector discovery, human-verification handoff, and browser-assisted
-downloads.
+The Server reserves the Worker and owns the short-lived session lifecycle. The
+task API does not accept a session ID. Use `{ "mode": "any" }` when the
+Scheduler may choose any idle Worker owned by the same user.
 
 ## Embedding
 
@@ -135,3 +137,9 @@ Browser profile lifecycle is isolated behind the abstract
 Chromium profile and reports `persistentContext: false`. Copying a user profile,
 using a specified persistent profile directory, and attaching to an existing
 Chrome process are intentionally not implemented.
+
+The profile belongs to a provider session, not to one crawl task. Multiple
+browser-backed operations may reuse a session. Closing the session,
+letting its TTL expire, or stopping the provider closes the Playwright browser
+server. Playwright owns the temporary profile data; ComicCrawler does not keep a
+named user-data directory or reuse it in a later session.

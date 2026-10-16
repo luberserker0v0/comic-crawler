@@ -14,6 +14,12 @@ Requirements:
 - npm 9 or newer
 - Git
 
+Enter the source-of-truth repository before running workspace commands:
+
+```bash
+cd repo
+```
+
 Install dependencies and start the local development environment:
 
 ```bash

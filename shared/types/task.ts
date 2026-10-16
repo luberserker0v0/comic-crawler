@@ -2,6 +2,7 @@ export type TaskStatus =
   | 'pending'
   | 'running'
   | 'paused'
+  | 'waiting_for_browser_worker'
   | 'waiting_verification'
   | 'interrupted'
   | 'completed'

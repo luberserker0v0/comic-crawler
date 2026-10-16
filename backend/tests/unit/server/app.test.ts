@@ -29,7 +29,7 @@ describe('Server', () => {
     const middlewareDir = join(srcDir, 'middleware');
     const files = await fs.readdir(middlewareDir);
     expect(files).toContain('cors.ts');
-    expect(files).toContain('auth.ts');
+    expect(files).toContain('api-security.ts');
   });
 
   it('should have index.ts', async () => {

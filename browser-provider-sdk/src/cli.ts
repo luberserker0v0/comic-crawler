@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { PlaywrightBrowserProvider } from './playwright-provider';
 import {
@@ -8,46 +9,50 @@ import {
   loadProviderConfig,
   loadProviderState,
   readCredential,
-  writeEnrollmentFiles,
+  writeProviderFiles,
 } from './provider-config';
-import { enrollBrowserProvider, ReverseRelayBrowserProviderClient } from './reverse-relay-client';
+import { registerBrowserProvider, ReverseRelayBrowserProviderClient } from './reverse-relay-client';
 
 type Arguments = Record<string, string | boolean | undefined> & { command?: string };
 
 async function main(): Promise<void> {
   const args = parseArguments(process.argv.slice(2));
-  if (!args.command || !['enroll', 'connect'].includes(args.command)) {
-    throw new Error('Usage: comiccrawler-browser-provider <enroll|connect> --config <path> [options]');
+  if (args.command !== 'connect') {
+    throw new Error('Usage: comiccrawler-browser-provider connect --config <path> [options]');
   }
   const config = await loadProviderConfig(requiredString(args, 'config'));
   const serverUrl = stringArg(args, 'server-url')
     ?? process.env.COMICCRAWLER_BROWSER_PROVIDER_SERVER_URL
     ?? config.serverUrl;
 
-  if (args.command === 'enroll') {
-    const inlineToken = stringArg(args, 'enrollment-token');
-    const tokenFile = stringArg(args, 'enrollment-token-file');
-    if (Boolean(inlineToken) === Boolean(tokenFile)) {
-      throw new Error('Specify exactly one of --enrollment-token or --enrollment-token-file.');
-    }
-    const enrollmentToken = inlineToken ?? (await fs.readFile(resolve(tokenFile!), 'utf8')).trim();
-    const enrollment = await enrollBrowserProvider({ serverUrl, enrollmentToken });
-    const written = await writeEnrollmentFiles({
-      enrollment,
-      serverUrl,
-      stateOutput: stringArg(args, 'state-output'),
-      credentialOutput: stringArg(args, 'credential-output'),
-    });
-    process.stdout.write(`Browser provider enrolled as ${enrollment.providerId}.\nState: ${written.statePath}\nCredential: ${written.credentialPath}\n`);
-    return;
-  }
-
   const statePath = stringArg(args, 'state') ?? defaultProviderStatePath();
-  const state = await loadProviderState(statePath).catch((error) => {
-    throw new Error(`Browser provider state is unavailable. Run enroll first. ${errorMessage(error)}`);
-  });
+  let state = await loadProviderStateIfPresent(statePath);
+  if (!state) {
+    const inlineToken = stringArg(args, 'user-token');
+    const tokenFile = stringArg(args, 'user-token-file') ?? config.authentication?.tokenFile;
+    if (inlineToken && tokenFile) throw new Error('Use only one of --user-token or --user-token-file.');
+    const userToken = inlineToken ?? (tokenFile ? (await fs.readFile(resolve(tokenFile), 'utf8')).trim() : undefined);
+    const userId = stringArg(args, 'user-id') ?? config.authentication?.userId;
+    const registration = await registerBrowserProvider({
+      serverUrl,
+      registration: {
+        clientInstanceId: randomUUID(),
+        providerName: stringArg(args, 'provider-name') ?? config.providerName,
+      },
+      userId,
+      userToken,
+    });
+    const written = await writeProviderFiles({
+      registration,
+      serverUrl,
+      stateOutput: statePath,
+      credentialOutput: stringArg(args, 'credential'),
+    });
+    state = await loadProviderState(written.statePath);
+    process.stdout.write(`Browser provider registered as ${registration.providerId}.\nState: ${written.statePath}\nCredential: ${written.credentialPath}\n`);
+  }
   if (normalizeServerUrl(serverUrl) !== normalizeServerUrl(state.serverUrl)) {
-    throw new Error(`Configured server URL does not match the enrolled server in ${statePath}. Re-enroll for this server before connecting.`);
+    throw new Error(`Configured server URL does not match the registered server in ${statePath}. Use separate state and credential files for this server.`);
   }
   const credentialPath = stringArg(args, 'credential') ?? state.credential.file ?? defaultCredentialPath(statePath);
   const credential = await readCredential(credentialPath);
@@ -85,6 +90,15 @@ async function main(): Promise<void> {
       await delay(retryMs);
       retryMs = Math.min(30_000, retryMs * 2);
     }
+  }
+}
+
+async function loadProviderStateIfPresent(path: string) {
+  try {
+    return await loadProviderState(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return undefined;
+    throw error;
   }
 }
 

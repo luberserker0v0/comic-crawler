@@ -137,6 +137,12 @@ export class AdapterDraftService {
     await rm(this.draftDir(draftId), { recursive: true, force: true });
   }
 
+  getProjectSourcePath(adapterId: string): string {
+    const relativePath = PROJECT_ADAPTER_SOURCE[adapterId];
+    if (!relativePath) throw new Error(`Project source is not registered for adapter "${adapterId}".`);
+    return resolveAllowlistedSourcePath(relativePath);
+  }
+
   private async requireMeta(draftId: string): Promise<AdapterDraftMeta> {
     const meta = await this.readMeta(draftId).catch(() => undefined);
     if (!meta || meta.status === 'discarded') throw new Error(`Adapter draft "${draftId}" was not found.`);

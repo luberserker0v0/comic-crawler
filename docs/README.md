@@ -10,7 +10,9 @@ This directory contains user- and contributor-facing documentation for the
 - `DEVELOPER_GUIDE.md` - local setup, runtime settings, troubleshooting, test
   gates, and Browser Provider development.
 - `API.md` - concise reference for the currently implemented backend routes.
-- `openapi.yaml` - machine-readable contract for the public REST crawl flow;
+- `API_SECURITY.md` - public/token modes, roles, permissions, secret setup, and
+  Browser Provider credential behavior.
+- `openapi.yaml` - machine-readable contract for the REST crawl flow;
   the running backend serves Swagger UI at `GET /api-docs`.
 - `ARCHITECTURE.md` - system context, startup responsibilities, components,
   Browser Provider boundary, and runtime data flow.

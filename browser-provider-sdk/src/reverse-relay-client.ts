@@ -2,7 +2,8 @@ import WebSocket from 'ws';
 import type {
   BrowserProvider,
   BrowserProviderControlRequest,
-  BrowserProviderEnrollmentResponse,
+  BrowserProviderRegistrationRequest,
+  BrowserProviderRegistrationResponse,
   BrowserProviderSessionHandle,
   BrowserProviderServiceDiscovery,
 } from './contracts';
@@ -18,22 +19,35 @@ export async function discoverBrowserProviderService(serverUrl: string): Promise
   return body.data;
 }
 
-export async function enrollBrowserProvider(input: {
+export async function registerBrowserProvider(input: {
   serverUrl: string;
-  enrollmentToken: string;
-}): Promise<BrowserProviderEnrollmentResponse> {
+  registration: BrowserProviderRegistrationRequest;
+  userId?: string;
+  userToken?: string;
+}): Promise<BrowserProviderRegistrationResponse> {
   const discovery = await discoverBrowserProviderService(input.serverUrl);
+  if (Boolean(input.userId) !== Boolean(input.userToken)) {
+    throw new Error('userId and userToken must be provided together.');
+  }
+  if (discovery.apiSecurityMode === 'token' && (!input.userId || !input.userToken)) {
+    throw new Error('The ComicCrawler Server requires a user ID and user API token for Provider registration.');
+  }
+  const userAuthentication: Record<string, string> = {};
+  if (discovery.apiSecurityMode === 'token') {
+    userAuthentication['x-comiccrawler-user-id'] = input.userId!;
+    userAuthentication.authorization = `Bearer ${input.userToken!}`;
+  }
   const response = await fetch(new URL(discovery.endpoints.enroll, input.serverUrl), {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${input.enrollmentToken}`,
+      ...userAuthentication,
       'content-type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify(input.registration),
   });
-  const body = await response.json() as { data?: BrowserProviderEnrollmentResponse; error?: string };
+  const body = await response.json() as { data?: BrowserProviderRegistrationResponse; error?: string };
   if (!response.ok || !body.data) {
-    throw new Error(body.error ?? `Browser provider enrollment failed (${response.status}).`);
+    throw new Error(body.error ?? `Browser provider registration failed (${response.status}).`);
   }
   return body.data;
 }

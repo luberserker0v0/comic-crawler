@@ -56,7 +56,6 @@ class TestProfileStrategy extends BrowserProfileStrategy {
       screenshots: true,
       downloads: true,
       tracing: true,
-      fileTransfer: false,
     };
   }
 

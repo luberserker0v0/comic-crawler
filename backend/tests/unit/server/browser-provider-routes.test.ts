@@ -11,9 +11,13 @@ import {
   type BrowserProviderSessionHandle,
 } from '@comiccrawler/browser-provider-sdk';
 import { BrowserProviderRegistry } from '../../../src/browser/provider-registry';
+import { BrowserLeaseCoordinator } from '../../../src/browser/lease-coordinator';
 import { EventBus } from '../../../src/events/bus';
 import { setupBrowserProviderRoutes } from '../../../src/server/routes/browser-providers';
 import { setupWebSocket } from '../../../src/server/websocket';
+import { ApiSecurityService } from '../../../src/security/api-security';
+
+const publicSecurity = ApiSecurityService.fromSecretDocument({ mode: 'public', defaultEffect: 'deny', rules: [] });
 
 describe('browser provider routes', () => {
   let app: FastifyInstance | undefined;
@@ -26,35 +30,30 @@ describe('browser provider routes', () => {
     if (echoServer) await new Promise<void>((resolve) => echoServer?.close(() => resolve()));
   });
 
-  it('enrolls a provider with a one-time token and assigns its identity on the server', async () => {
+  it('registers a provider instance and assigns its identity on the server', async () => {
     const registry = new BrowserProviderRegistry();
+    const coordinator = new BrowserLeaseCoordinator(registry);
     app = fastify();
-    setupBrowserProviderRoutes(app, registry);
+    setupBrowserProviderRoutes(app, registry, publicSecurity, coordinator);
 
     const discovery = await app.inject({ method: 'GET', url: '/.well-known/comiccrawler-browser-provider' });
     expect(discovery.statusCode).toBe(200);
     expect(discovery.json().data).toMatchObject({
-      contractVersion: '1',
+      contractVersion: '2',
       transport: 'reverse-relay',
+      apiSecurityMode: 'public',
       endpoints: { controlWebSocket: '/api/browser-providers/connect' },
     });
-
-    const tokenResponse = await app.inject({
-      method: 'POST',
-      url: '/api/browser-providers/enrollment-tokens',
-      payload: { ttlSeconds: 300 },
-    });
-    expect(tokenResponse.statusCode).toBe(201);
-    const token = tokenResponse.json().data.token as string;
 
     const enrolled = await app.inject({
       method: 'POST',
       url: '/api/browser-providers/enroll',
-      headers: { authorization: `Bearer ${token}` },
+      payload: { clientInstanceId: 'client-instance-1', providerName: 'Alice PC' },
     });
     expect(enrolled.statusCode).toBe(201);
     expect(enrolled.json().data).toMatchObject({
       providerId: expect.stringMatching(/^bp_/),
+      clientInstanceId: 'client-instance-1',
       credentialId: expect.stringMatching(/^cred_/),
       credential: expect.stringMatching(/^ccbp_/),
     });
@@ -62,9 +61,9 @@ describe('browser provider routes', () => {
     const reused = await app.inject({
       method: 'POST',
       url: '/api/browser-providers/enroll',
-      headers: { authorization: `Bearer ${token}` },
+      payload: { clientInstanceId: 'client-instance-1' },
     });
-    expect(reused.statusCode).toBe(401);
+    expect(reused.statusCode).toBe(409);
 
     const listed = await app.inject({ method: 'GET', url: '/api/browser-providers' });
     expect(listed.json().data.providers).toEqual([
@@ -74,39 +73,92 @@ describe('browser provider routes', () => {
       }),
     ]);
 
-    const created = await app.inject({
+    const workers = await app.inject({ method: 'GET', url: '/api/browser-workers' });
+    expect(workers.statusCode).toBe(200);
+    expect(workers.json().data.workers).toEqual([
+      expect.objectContaining({
+        workerId: enrolled.json().data.providerId,
+        name: 'Alice PC',
+        status: 'offline',
+      }),
+    ]);
+
+    const removedSessionApi = await app.inject({
       method: 'POST',
       url: `/api/browser-providers/${enrolled.json().data.providerId}/sessions`,
-      payload: { requestedCapabilities: { interactive: true } },
     });
-    expect(created.statusCode).toBe(400);
-    expect(created.json().error).toContain('offline');
+    expect(removedSessionApi.statusCode).toBe(404);
 
     const removed = await app.inject({
       method: 'DELETE',
       url: `/api/browser-providers/${enrolled.json().data.providerId}`,
     });
     expect(removed.statusCode).toBe(204);
-    expect(registry.list()).toEqual([]);
+    expect(registry.list()).toEqual([expect.objectContaining({ revokedAt: expect.any(String) })]);
   });
 
-  it('requires a Bearer enrollment token', async () => {
+  it('rejects registration without a client instance identity', async () => {
     app = fastify();
-    setupBrowserProviderRoutes(app, new BrowserProviderRegistry());
+    setupBrowserProviderRoutes(app, new BrowserProviderRegistry(), publicSecurity);
     const response = await app.inject({ method: 'POST', url: '/api/browser-providers/enroll' });
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(409);
+  });
+
+  it('rotates and revokes one provider credential without affecting another instance', async () => {
+    const registry = new BrowserProviderRegistry();
+    const principal = publicSecurity.publicPrincipal();
+    const first = await registry.register(principal, { clientInstanceId: 'instance-a' });
+    const second = await registry.register(principal, { clientInstanceId: 'instance-b' });
+
+    const rotated = await registry.rotateCredential(first.providerId);
+    expect(registry.authenticateCredential(first.credential)).toBeUndefined();
+    expect(registry.authenticateCredential(rotated.credential)?.providerId).toBe(first.providerId);
+    expect(registry.authenticateCredential(second.credential)?.providerId).toBe(second.providerId);
+
+    await registry.revokeProvider(first.providerId);
+    expect(registry.authenticateCredential(rotated.credential)).toBeUndefined();
+    expect(registry.authenticateCredential(second.credential)?.providerId).toBe(second.providerId);
+  });
+
+  it('keeps multiple Provider instances for the same user online concurrently', async () => {
+    const registry = new BrowserProviderRegistry();
+    const principal = publicSecurity.publicPrincipal();
+    const first = await registry.register(principal, { clientInstanceId: 'alice-pc' });
+    const second = await registry.register(principal, { clientInstanceId: 'alice-phone' });
+    httpServer = createServer();
+    setupWebSocket(httpServer, new EventBus(), registry, publicSecurity);
+    httpServer.listen(0, '127.0.0.1');
+    await once(httpServer, 'listening');
+    const address = httpServer.address();
+    if (!address || typeof address === 'string') throw new Error('Test server has no TCP address.');
+    const endpoint = `ws://127.0.0.1:${address.port}/api/browser-providers/connect`;
+
+    const pc = new WebSocket(endpoint, { headers: { authorization: `Bearer ${first.credential}` } });
+    const phone = new WebSocket(endpoint, { headers: { authorization: `Bearer ${second.credential}` } });
+    await Promise.all([once(pc, 'open'), once(phone, 'open')]);
+    pc.send(JSON.stringify({ type: 'hello', descriptor: descriptor(first.providerId) }));
+    phone.send(JSON.stringify({ type: 'hello', descriptor: descriptor(second.providerId) }));
+    await waitUntil(() => registry.list().filter((record) => record.online && record.descriptor).length === 2);
+
+    expect(registry.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerId: first.providerId, ownerUserId: 'public', online: true }),
+      expect.objectContaining({ providerId: second.providerId, ownerUserId: 'public', online: true }),
+    ]));
+    pc.close();
+    phone.close();
+    registry.dispose();
   });
 
   it('creates sessions through the outbound provider control connection', async () => {
     const registry = new BrowserProviderRegistry();
-    const token = registry.createEnrollmentToken().token;
-    const enrollment = await registry.enroll(token);
+    const enrollment = await registry.register(publicSecurity.publicPrincipal(), { clientInstanceId: 'control-test' });
     httpServer = createServer((request, response) => {
       if (request.url !== '/.well-known/comiccrawler-browser-provider') return response.writeHead(404).end();
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ data: {
-        contractVersion: '1',
+        contractVersion: '2',
         transport: 'reverse-relay',
+        apiSecurityMode: 'public',
         endpoints: {
           enroll: '/api/browser-providers/enroll',
           controlWebSocket: '/api/browser-providers/connect',
@@ -129,12 +181,11 @@ describe('browser provider routes', () => {
     await waitUntil(() => registry.list()[0]?.online === true && Boolean(registry.list()[0]?.descriptor));
     control.on('message', (data) => {
       const request = JSON.parse(data.toString()) as { type: string; requestId: string };
-      if (request.type !== 'create-session') return;
       control.send(JSON.stringify({
         type: 'response',
         requestId: request.requestId,
         ok: true,
-        data: session(enrollment.providerId),
+        data: request.type === 'create-session' ? session(enrollment.providerId) : undefined,
       }));
     });
 
@@ -144,6 +195,21 @@ describe('browser provider routes', () => {
       transport: 'reverse-relay',
     });
     expect(created.connectUrl).toMatch(new RegExp(`^ws://127\\.0\\.0\\.1:${address.port}/api/browser-providers/sessions/`));
+    expect(new URL(created.connectUrl).search).toBe('');
+    const resolved = registry.resolveBrowserConfig({
+      mode: 'remote',
+      maxInstances: 1,
+      timeout: 30_000,
+      waitUntil: 'domcontentloaded',
+    }, created.sessionId);
+    expect(resolved.remote?.wsEndpoint).toBe(created.connectUrl);
+    await registry.closeSession(created.sessionId);
+    expect(() => registry.resolveBrowserConfig({
+      mode: 'remote',
+      maxInstances: 1,
+      timeout: 30_000,
+      waitUntil: 'domcontentloaded',
+    }, created.sessionId)).toThrow('will not switch sessions automatically');
     control.close();
     registry.dispose();
   });
@@ -156,13 +222,14 @@ describe('browser provider routes', () => {
     echoServer.on('connection', (socket) => socket.on('message', (data, binary) => socket.send(data, { binary })));
 
     const registry = new BrowserProviderRegistry();
-    const enrollment = await registry.enroll(registry.createEnrollmentToken().token);
+    const enrollment = await registry.register(publicSecurity.publicPrincipal(), { clientInstanceId: 'relay-test' });
     httpServer = createServer((request, response) => {
       if (request.url !== '/.well-known/comiccrawler-browser-provider') return response.writeHead(404).end();
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify({ data: {
-        contractVersion: '1',
+        contractVersion: '2',
         transport: 'reverse-relay',
+        apiSecurityMode: 'public',
         endpoints: {
           enroll: '/api/browser-providers/enroll',
           controlWebSocket: '/api/browser-providers/connect',
@@ -184,7 +251,13 @@ describe('browser provider routes', () => {
     await waitUntil(() => Boolean(registry.list()[0]?.descriptor));
     const session = await registry.createSession(enrollment.providerId);
 
-    const browser = new WebSocket(session.connectUrl);
+    const resolved = registry.resolveBrowserConfig({
+      mode: 'remote',
+      maxInstances: 1,
+      timeout: 30_000,
+      waitUntil: 'domcontentloaded',
+    }, session.sessionId);
+    const browser = new WebSocket(session.connectUrl, { headers: resolved.remote?.headers });
     const localConnection = once(echoServer, 'connection');
     await once(browser, 'open');
     const echoed = once(browser, 'message');
@@ -217,8 +290,9 @@ function fakeProvider(providerId: string, localWsEndpoint: string): BrowserProvi
 
 function descriptor(providerId: string): BrowserProviderDescriptor {
   return {
-    contractVersion: '1',
+    contractVersion: '2',
     providerId,
+    processInstanceId: 'process-test',
     providerType: 'playwright',
     runtimeVersion: '1.64.0',
     capabilities: capabilities(),
@@ -249,7 +323,6 @@ function capabilities(): BrowserProviderCapabilities {
     screenshots: true,
     downloads: true,
     tracing: true,
-    fileTransfer: false,
   };
 }
 

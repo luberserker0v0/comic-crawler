@@ -1,6 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('ComicCrawler E2E', () => {
+  test.beforeEach(async ({ request }) => {
+    const response = await request.put('/api/config', {
+      data: { i18n: { language: 'en-US', fallback: 'en' } },
+    });
+    expect(response.ok()).toBeTruthy();
+  });
+
   test('API-01 服務狀態', async ({ request }) => {
     const response = await request.get('/api/status');
     expect(response.ok()).toBeTruthy();
@@ -333,6 +340,7 @@ test.describe('ComicCrawler E2E', () => {
     const job = await waitForChallengeDiscovery(request, body.data.challengeDiscoveryId, 'challenge_required');
     expect(job.candidateSource).toBeUndefined();
     expect(job.diagnosisMarkdown).toContain('human verification handoff');
+    expect((await request.delete(`/api/challenge-discovery/${job.id}`)).status()).toBe(200);
   });
 
   test.describe.serial('matched adapter handoff', () => {
@@ -409,7 +417,7 @@ test.describe('ComicCrawler E2E', () => {
       });
     });
 
-    test('WEB-04 顯示遺失的 handoff', async ({ page }) => {
+    test('WEB-04 顯示遺失的 handoff', async ({ page, request }) => {
       await test.step('1. 模擬 handoff 遺失', async () => {
         await page.route(`**/api/challenge-discovery/${challengeDiscoveryId}`, async (route) => {
           await route.fulfill({
@@ -425,8 +433,12 @@ test.describe('ComicCrawler E2E', () => {
       });
 
       await test.step('3. 檢查恢復提示', async () => {
-        await expect(page.getByTestId('challenge-job-unavailable-message')).toContainText('Click Continue to recreate the handoff');
+        await expect(page.getByTestId('challenge-job-unavailable-message')).toContainText('Continue to recreate it');
         await expect(page.getByTestId('open-verification-browser-button')).toHaveCount(0);
+      });
+
+      await test.step('4. 清理 handoff', async () => {
+        expect((await request.delete(`/api/challenge-discovery/${challengeDiscoveryId}`)).status()).toBe(200);
       });
     });
   });
@@ -466,17 +478,24 @@ test.describe('ComicCrawler E2E', () => {
       expect(completed3.checkpoint.completedImages).toBe(2);
       expect(completed3.checkpoint.resumable).toBe(false);
     });
+
+    await test.step('6. 清理 handoff', async () => {
+      expect((await request.delete(`/api/challenge-discovery/${waiting1.result.challengeDiscoveryId}`)).status()).toBe(200);
+      expect((await request.delete(`/api/challenge-discovery/${waiting2.result.challengeDiscoveryId}`)).status()).toBe(200);
+    });
   });
 
   test('REL-02 從 checkpoint 恢復', async ({ request, page }) => {
     test.setTimeout(90000);
     const challengeUrl = 'http://localhost:4173/api/fixtures/reliability-challenge-chapter-resume';
+    let challengeDiscoveryId = '';
     const taskId = await test.step('1. 建立 challenge 工作', async () => (
       createReliabilityTask(request, challengeUrl, 10)
     ));
 
     await test.step('2. 檢查 checkpoint UI', async () => {
-      await waitForTask(request, taskId, 'waiting_verification');
+      const waiting = await waitForTask(request, taskId, 'waiting_verification');
+      challengeDiscoveryId = waiting.result.challengeDiscoveryId;
       await page.goto(`/tasks/${taskId}`);
       await expect(page.getByTestId('task-verification-handoff')).toBeVisible();
       await expect(page.getByText('Resume checkpoint')).toBeVisible();
@@ -506,9 +525,13 @@ test.describe('ComicCrawler E2E', () => {
       await expect(page.getByText('This task can continue from the last saved image checkpoint.')).not.toBeVisible();
       await expect(page.locator('img[alt$=".jpg"], img[alt$=".png"]').first()).toBeVisible();
     });
+
+    await test.step('6. 清理 handoff', async () => {
+      expect((await request.delete(`/api/challenge-discovery/${challengeDiscoveryId}`)).status()).toBe(200);
+    });
   });
 
-  test('WEB-02 顯示 handoff 狀態', async ({ page }) => {
+  test('WEB-02 顯示 handoff 狀態', async ({ page, request }) => {
     await page.goto('/');
     await page.getByTestId('task-mode-chapters').click();
     await page.getByTestId('chapter-url-input-0').fill('http://127.0.0.1:4173/api/fixtures/challenge-never-clears');
@@ -518,13 +541,21 @@ test.describe('ComicCrawler E2E', () => {
     await expect(status).toBeVisible();
     await expect(status).toContainText('Human verification handoff job created.');
     await expect(status).toContainText('challenge_required');
-    await expect(status).toContainText('Create Task only queues challenge/discovery work.');
+    await expect(status).toContainText('Create Task only queues challenge or discovery work.');
     await expect(status).not.toContainText('Promote strategy');
     await expect(status).not.toContainText('Open headed browser');
     await expect(status).not.toContainText('Open in my browser');
     await expect(status).not.toContainText('Browser executable path');
     await expect(status).not.toContainText('Create adapter from attached browser page');
     await expect(status).not.toContainText('HTML snapshot from your browser');
+
+    const jobsResponse = await request.get('/api/challenge-discovery');
+    const jobsBody = await jobsResponse.json();
+    const job = jobsBody.data.jobs.find((candidate: { normalizedUrl: string }) =>
+      candidate.normalizedUrl.includes('/api/fixtures/challenge-never-clears')
+    );
+    expect(job?.id).toBeDefined();
+    expect((await request.delete(`/api/challenge-discovery/${job.id}`)).status()).toBe(200);
   });
 
   test.describe.serial('challenge 後建立 adapter', () => {
@@ -593,7 +624,6 @@ test.describe('ComicCrawler E2E', () => {
     await page.getByTestId('browser-timeout-input').fill('45000');
     await page.getByTestId('browser-wait-selector-input').fill('#reader img');
     await page.getByTestId('browser-challenge-wait-input').fill('60000');
-    await page.getByTestId('browser-storage-state-input').fill('D:/tmp/comiccrawler-storage-state.json');
     await page.getByTestId('settings-save-button').click();
 
     await expect.poll(async () => {
@@ -607,7 +637,6 @@ test.describe('ComicCrawler E2E', () => {
       waitForSelector: '#reader img',
       challengeAutoAttempt: true,
       challengeWaitMs: 60000,
-      storageStatePath: 'D:/tmp/comiccrawler-storage-state.json',
     });
   });
 

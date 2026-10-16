@@ -120,6 +120,7 @@ export class ConfigManager {
         mode: DEFAULTS.browser.mode,
         maxInstances: DEFAULTS.browser.maxInstances,
         timeout: DEFAULTS.browser.timeout,
+        workerWaitTimeoutMs: DEFAULTS.browser.workerWaitTimeoutMs,
         waitUntil: DEFAULTS.browser.waitUntil,
         postLoadDelayMs: DEFAULTS.browser.postLoadDelayMs,
         challengeAutoAttempt: DEFAULTS.browser.challengeAutoAttempt,
@@ -145,6 +146,7 @@ export class ConfigManager {
         deleteFiles: true,
         batchLimit: 100,
       },
+      apiSecurity: { ...DEFAULTS.apiSecurity, rules: [] },
     };
   }
 }

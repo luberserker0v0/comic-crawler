@@ -22,6 +22,7 @@ import type {
   CreateSelectorDiscoverySnapshotRequest,
   CreateTaskRequest,
   CreateTaskResponse,
+  BrowserWorkerListResponse,
   FixtureCaptureRequest,
   FixtureCaptureResponse,
   FixtureDetailResponse,
@@ -45,6 +46,7 @@ const API_TIMEOUT_MS = 15 * 60 * 1000;
 
 const API_ENDPOINTS = {
   tasks: '/api/tasks',
+  browserWorkers: '/api/browser-workers',
   adapters: '/api/adapters',
   agentAdapters: '/api/agent/adapters',
   config: '/api/config',
@@ -102,6 +104,11 @@ export class ApiClient {
 
   async getTasks(): Promise<ApiResponse<TaskListResponse>> {
     const response = await this.client.get(API_ENDPOINTS.tasks);
+    return response.data;
+  }
+
+  async getBrowserWorkers(): Promise<ApiResponse<BrowserWorkerListResponse>> {
+    const response = await this.client.get(API_ENDPOINTS.browserWorkers);
     return response.data;
   }
 
@@ -448,11 +455,6 @@ export class ApiClient {
 
   async openChallengeDiscoveryBrowser(id: string): Promise<ApiResponse<any>> {
     const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/open-browser`);
-    return response.data;
-  }
-
-  async testChallengeDiscoveryRemote(): Promise<ApiResponse<any>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/remote/test`);
     return response.data;
   }
 

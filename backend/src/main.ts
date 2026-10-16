@@ -22,6 +22,10 @@ import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import { MaintenanceService } from './maintenance/service';
 import { logger } from './utils/logger';
 import { BrowserProviderRegistry } from './browser/provider-registry';
+import { BrowserLeaseCoordinator, type BrowserLease } from './browser/lease-coordinator';
+import { fetchSafeHtml } from './selector-discovery/safe-fetch';
+import { ConcurrentSchedulingPolicy, TaskDeferredError } from './scheduler';
+import { ApiSecurityService, resolveApiSecurityPolicy } from './security/api-security';
 
 async function main(): Promise<void> {
   try {
@@ -37,35 +41,89 @@ async function main(): Promise<void> {
     await configManager.load();
     const config = await configManager.get();
     const runtime = resolveRuntimeConfig(config);
+    const apiSecurity = await ApiSecurityService.create(resolveApiSecurityPolicy(config.apiSecurity));
     timing.mark('config load');
 
     const adapterRegistry = new AdapterRegistry(eventBus);
     const browserProviderRegistry = new BrowserProviderRegistry(storage);
     await browserProviderRegistry.initialize();
+    const browserLeaseCoordinator = new BrowserLeaseCoordinator(browserProviderRegistry);
     timing.mark('browser provider registry initialize');
-    const getBrowserConfig = async () => browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser);
+    const getBrowserConfig = async (sessionId?: string) =>
+      browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser, sessionId);
 
     await registerProjectAdapters(storage, (adapter) => adapterRegistry.register(adapter));
 
-    const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
-    const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-      getBrowserConfig,
-      getNetworkConfig: async () => (await configManager.get()).network,
-    });
     const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
       workspaceRoot: runtime.agentWorkspacePath,
       getBrowserConfig,
       getNetworkConfig: async () => (await configManager.get()).network,
+      acquireBrowserSession: async ({ jobId, ownerUserId, browserTarget }) => {
+        const browser = (await configManager.get()).browser;
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `challenge:${jobId}`,
+          ownerUserId,
+          target: browserTarget,
+          baseBrowserConfig: browser,
+          timeoutMs: browser.workerWaitTimeoutMs,
+        });
+        return { sessionId: lease.sessionId, release: () => lease.release() };
+      },
     });
     const adapterDraftService = new AdapterDraftService(runtime.dataLayout.userPath, adapterRegistry);
     const fixtureCaptureService = new FixtureCaptureService(challengeDiscoveryService, runtime.agentWorkspacePath);
+    const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
+    const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
+      getBrowserConfig,
+      acquireBrowserSession: async ({ job, browserTarget }) => {
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `selector:${job.id}`,
+          ownerUserId: job.ownerUserId ?? 'public',
+          target: browserTarget,
+          baseBrowserConfig: (await configManager.get()).browser,
+          timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
+        });
+        return { sessionId: lease.sessionId, release: () => lease.release() };
+      },
+      getNetworkConfig: async () => (await configManager.get()).network,
+      captureApprovalFixture: async ({ job, adapter }) => {
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `selector-fixture:${job.id}`,
+          ownerUserId: job.ownerUserId ?? 'public',
+          target: job.browserTarget,
+          baseBrowserConfig: (await configManager.get()).browser,
+          timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
+        });
+        try {
+          const page = await fetchSafeHtml(job.normalizedUrl, {
+            browser: await getBrowserConfig(lease.sessionId),
+            network: (await configManager.get()).network,
+            renderFirst: true,
+          });
+          return fixtureCaptureService.captureApprovedAdapterFixture({
+            sourceDiscoveryId: job.id,
+            adapter,
+            target: job.target ?? 'full',
+            url: page.finalUrl,
+            html: page.html,
+          });
+        } finally {
+          await lease.release();
+        }
+      },
+      schedulingPolicy: new ConcurrentSchedulingPolicy({
+        maxConcurrency: config.concurrency.siteLevel,
+        maxConcurrencyPerGroup: 1,
+        groupBy: (task) => new URL(task.data.url).hostname,
+      }),
+    });
 
     const crawlerEngine = new CrawlerEngine({
       downloadDir: config.download.directory,
       concurrency: config.download.concurrency,
       browser: config.browser,
       network: config.network,
-      resolveRemoteBrowser: async () => (await getBrowserConfig()).remote,
+      resolveRemoteBrowser: async (sessionId) => (await getBrowserConfig(sessionId)).remote,
       eventBus,
     });
 
@@ -75,14 +133,48 @@ async function main(): Promise<void> {
         throw new ComicError(`Adapter "${task.data.adapterId}" not found`, ErrorType.ADAPTER_ERROR);
       }
 
+      let browserLease: BrowserLease | undefined;
+      let retainLeaseForVerification = false;
+      let reconnectAttempts = 0;
+
       try {
-        await crawlerEngine.crawl(adapter as any, task.data.url, {
-          chapters: task.data.chapters,
-          chapterUrls: task.data.chapterUrls,
+        const browserConfig = (await configManager.get()).browser;
+        browserLease = await browserLeaseCoordinator.tryAcquire({
           taskId: task.id,
-          checkpoint: taskManager.getCheckpoint(task.id),
-          onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
+          ownerUserId: task.data.ownerUserId ?? 'public',
+          target: task.data.browserTarget,
+          baseBrowserConfig: browserConfig,
         });
+        if (!browserLease) {
+          const targetMessage = task.data.browserTarget?.mode === 'specific'
+            ? `Waiting for browser worker "${task.data.browserTarget.workerId}".`
+            : 'Waiting for an available browser worker.';
+          await taskManager.markWaitingForBrowserWorker(task.id, targetMessage);
+          const waitStartedAt = Date.parse(task.data.browserWaitStartedAt ?? new Date().toISOString());
+          const waitTimeoutMs = browserConfig.workerWaitTimeoutMs ?? 30 * 60 * 1000;
+          const remainingMs = waitTimeoutMs - (Date.now() - waitStartedAt);
+          if (remainingMs <= 0) throw new Error(targetMessage.replace(/^Waiting/, 'Timed out waiting'));
+          throw new TaskDeferredError(targetMessage, Math.min(5_000, remainingMs));
+        }
+        await taskManager.markBrowserWorkerAcquired(task.id);
+        while (true) {
+          try {
+            await crawlerEngine.crawl(adapter as any, task.data.url, {
+              chapters: task.data.chapters,
+              chapterUrls: task.data.chapterUrls,
+              taskId: task.id,
+              browserSessionId: browserLease.sessionId,
+              checkpoint: taskManager.getCheckpoint(task.id),
+              onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
+            });
+            break;
+          } catch (error) {
+            if (!isBrowserTransportDisconnect(error) || reconnectAttempts >= 3) throw error;
+            reconnectAttempts += 1;
+            await taskManager.markWaitingForBrowserWorker(task.id, `Browser worker disconnected; waiting to resume (${reconnectAttempts}/3).`);
+            if (!await browserLeaseCoordinator.waitForReconnect(browserLease, 120_000)) throw error;
+          }
+        }
       } catch (error) {
         if (isHumanVerificationRequiredError(error)) {
           const errorUrl = error instanceof ComicError && typeof error.context.url === 'string'
@@ -100,7 +192,14 @@ async function main(): Promise<void> {
               currentChapter: 'human verification detected; queued verification handoff',
             },
           });
-          const challengeJob = await challengeDiscoveryService.createDeferred({ url: verificationUrl });
+          retainLeaseForVerification = true;
+          const challengeJob = await challengeDiscoveryService.createDeferred({
+            url: verificationUrl,
+            browserLease,
+            ownerUserId: task.data.ownerUserId,
+            browserTarget: task.data.browserTarget,
+          });
+          browserLease = undefined;
           throw new ComicError(
             `Human verification is required before crawling can continue. Challenge discovery job: ${challengeJob.id}`,
             ErrorType.AUTH_ERROR,
@@ -115,6 +214,8 @@ async function main(): Promise<void> {
           );
         }
         throw error;
+      } finally {
+        if (!retainLeaseForVerification) await browserLease?.release();
       }
     };
 
@@ -127,6 +228,7 @@ async function main(): Promise<void> {
     timing.mark('agent trigger monitor initialize');
     const agentAdminService = new AgentAdminService(runtime.agentWorkspacePath, storage, eventBus, agentNotifier, agentTriggerMonitor);
     await selectorDiscoveryService.loadActiveDynamicAdapters();
+    await selectorDiscoveryService.initializeScheduler();
     timing.mark('dynamic adapter load');
     await challengeDiscoveryService.loadActiveStrategies();
     timing.mark('challenge strategy load');
@@ -162,8 +264,10 @@ async function main(): Promise<void> {
       fixtureCaptureService,
       maintenanceService,
       browserProviderRegistry,
+      browserLeaseCoordinator,
       storage,
       staticDir: runtime.staticDir,
+      apiSecurity,
     });
 
     await server.start();
@@ -266,4 +370,9 @@ function hasHumanVerificationContext(value: unknown): boolean {
     context.humanVerificationProfileUnavailable === true
   ) return true;
   return Object.values(context).some((entry) => hasHumanVerificationContext(entry));
+}
+
+function isBrowserTransportDisconnect(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /websocket|browser has been closed|browser closed|connection closed|target page, context or browser has been closed|econnreset|socket hang up/i.test(message);
 }

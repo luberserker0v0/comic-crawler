@@ -105,6 +105,7 @@ export interface TaskStats {
   total: number;
   pending: number;
   running: number;
+  waitingForBrowserWorker: number;
   waitingVerification: number;
   interrupted: number;
   completed: number;
@@ -148,7 +149,7 @@ interface TaskState {
 
   fetchTasks: () => Promise<void>;
   applyRealtimeEvent: (message: TaskRealtimeMessage) => void;
-  createTask: (url: string, options?: { adapterId?: string; mode?: 'all' | 'chapters'; chapters?: string[]; chapterUrls?: string[]; priority?: number }) => Promise<CreateTaskResult>;
+  createTask: (url: string, options?: { adapterId?: string; mode?: 'all' | 'chapters'; chapters?: string[]; chapterUrls?: string[]; priority?: number; browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string } }) => Promise<CreateTaskResult>;
   pauseTask: (id: string) => Promise<void>;
   resumeTask: (id: string) => Promise<void>;
   cancelTask: (id: string) => Promise<void>;
@@ -161,6 +162,7 @@ function calculateStats(tasks: Task[]): TaskStats {
     total: tasks.length,
     pending: tasks.filter((task) => task.status === 'pending').length,
     running: tasks.filter((task) => task.status === 'running').length,
+    waitingForBrowserWorker: tasks.filter((task) => task.status === 'waiting_for_browser_worker').length,
     waitingVerification: tasks.filter((task) => task.status === 'waiting_verification').length,
     interrupted: tasks.filter((task) => task.status === 'interrupted').length,
     completed: tasks.filter((task) => task.status === 'completed').length,
@@ -311,6 +313,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                   currentItems: message ?? task.progress.currentItems,
                 }
               : task.progress,
+          }));
+        }
+      }
+
+      if (event === 'task:waiting_for_browser_worker') {
+        const taskId = typeof data.taskId === 'string' ? data.taskId : null;
+        const message = typeof data.message === 'string' ? data.message : undefined;
+        if (taskId) {
+          tasks = updateTask(tasks, taskId, (task) => ({
+            ...task,
+            status: 'waiting_for_browser_worker',
+            completedAt: undefined,
+            error: message,
           }));
         }
       }

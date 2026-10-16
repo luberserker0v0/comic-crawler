@@ -58,6 +58,9 @@ export interface SelectorDiscoveryJob {
   reviewNotesMarkdown?: string;
   functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: AdapterImplementationValidation;
+  ownerUserId?: string;
+  browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string };
+  browserSessionId?: string;
 }
 
 export interface SelectorDiscoveryFunctionRevisionTask {
@@ -109,4 +112,7 @@ export interface DiscoveryInput {
     finalUrl?: string;
     pageType?: 'chapter';
   };
+  ownerUserId?: string;
+  browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string };
+  browserSessionId?: string;
 }

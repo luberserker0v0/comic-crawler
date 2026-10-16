@@ -1,4 +1,8 @@
-import { connectRemoteBrowser, requireRemoteBrowserEndpoint } from '../browser/remote-browser-provider';
+import {
+  connectRemoteBrowser,
+  requireRemoteBrowserEndpoint,
+  type RemoteBrowserConnectionOptions,
+} from '../browser/remote-browser-provider';
 import type { BrowserContext } from 'playwright';
 
 export interface RemotePageSummary {
@@ -13,9 +17,10 @@ export interface RemoteConnectionSummary {
   pages: RemotePageSummary[];
 }
 
-export async function inspectRemoteBrowser(wsEndpoint: string): Promise<RemoteConnectionSummary> {
-  const endpoint = requireRemoteBrowserEndpoint({ wsEndpoint });
-  const browser = await connectRemoteBrowser({ wsEndpoint: endpoint });
+export async function inspectRemoteBrowser(input: string | RemoteBrowserConnectionOptions): Promise<RemoteConnectionSummary> {
+  const options = typeof input === 'string' ? { wsEndpoint: input } : input;
+  const endpoint = requireRemoteBrowserEndpoint(options);
+  const browser = await connectRemoteBrowser({ ...options, wsEndpoint: endpoint });
   try {
     const pages = browser.contexts().flatMap((context) => context.pages());
     const summaries = await Promise.all(pages.map(async (page) => ({

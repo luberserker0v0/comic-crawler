@@ -21,12 +21,20 @@ export const NewTaskForm: React.FC = () => {
   const [chapterUrls, setChapterUrls] = useLocalStorage<string[]>('task-form:chapter-urls', ['']);
   const [priority, setPriority] = useLocalStorage('task-form:priority', 0);
   const [showAdvanced, setShowAdvanced] = useLocalStorage('task-form:advanced', false);
+  const [browserWorkerId, setBrowserWorkerId] = useLocalStorage('task-form:browser-worker', 'any');
+  const [browserWorkers, setBrowserWorkers] = React.useState<Array<{ workerId: string; name: string; status: string }>>([]);
   const [createdTaskId, setCreatedTaskId] = React.useState<string | null>(null);
   const [adapterBuildTask, setAdapterBuildTask] = React.useState<AdapterBuildTaskResult | null>(null);
   const [challengeBuildTask, setChallengeBuildTask] = React.useState<ChallengeBuildTaskResult | null>(null);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const { createTask, loading, error } = useTaskStore();
   const { text } = useI18n();
+
+  React.useEffect(() => {
+    void api.getBrowserWorkers()
+      .then((response) => setBrowserWorkers(response.data.workers))
+      .catch(() => setBrowserWorkers([]));
+  }, []);
 
   const normalizedChapterUrls = chapterUrls.map((chapterUrl) => chapterUrl.trim()).filter(Boolean);
   const firstChapterUrl = normalizedChapterUrls[0] ?? '';
@@ -86,6 +94,9 @@ export const NewTaskForm: React.FC = () => {
         mode,
         chapterUrls: mode === 'chapters' ? normalizedChapterUrls : undefined,
         priority,
+        browserTarget: browserWorkerId === 'any'
+          ? { mode: 'any' }
+          : { mode: 'specific', workerId: browserWorkerId },
       });
 
       if (result.kind === 'discoveryQueued') {
@@ -133,7 +144,7 @@ export const NewTaskForm: React.FC = () => {
   const requiredMetadata = adapterBuildTask?.requiredCapabilities?.metadata === true;
   const requiredImages = adapterBuildTask?.requiredCapabilities?.chapterImages === true;
   const challengeStatusMessage = challengeBuildTask
-    ? getChallengeStatusMessage(challengeBuildTask.status)
+    ? getChallengeStatusMessage(challengeBuildTask.status, text.taskForm)
     : null;
 
   return (
@@ -159,7 +170,7 @@ export const NewTaskForm: React.FC = () => {
           role="status"
           data-testid="adapter-build-task-status"
         >
-          <div className="font-medium">Adapter build task created.</div>
+          <div className="font-medium">{text.taskForm.adapterBuildCreated}</div>
           <div className="mt-1 break-all">{adapterBuildTask.normalizedUrl}</div>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
             <div>Target: {adapterBuildTask.target === 'chapter-only' ? 'Chapter-only adapter' : 'Full adapter'}</div>
@@ -223,13 +234,13 @@ export const NewTaskForm: React.FC = () => {
           role="status"
           data-testid="challenge-build-task-status"
         >
-          <div className="font-medium">Human verification handoff job created.</div>
+          <div className="font-medium">{text.taskForm.verificationJobCreated}</div>
           <div className="mt-1 break-all">{challengeBuildTask.normalizedUrl}</div>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
-            <div>Status: {challengeBuildTask.status}</div>
-            <div className="break-all">Job ID: {challengeBuildTask.challengeDiscoveryId}</div>
-            <div className="break-all">Handoff: {challengeBuildTask.challengeDiscoveryId}</div>
-            <div>Validation: {challengeBuildTask.validation?.valid === true ? 'passed' : '-'}</div>
+            <div>{text.taskForm.status}: {challengeBuildTask.status}</div>
+            <div className="break-all">{text.taskForm.jobId}: {challengeBuildTask.challengeDiscoveryId}</div>
+            <div className="break-all">{text.taskForm.handoff}: {challengeBuildTask.challengeDiscoveryId}</div>
+            <div>{text.taskForm.validation}: {challengeBuildTask.validation?.valid === true ? text.taskForm.passed : '-'}</div>
           </div>
 
           <div className="mt-2 rounded border border-purple-200 bg-white p-2">
@@ -237,8 +248,7 @@ export const NewTaskForm: React.FC = () => {
           </div>
 
           <div className="mt-2 rounded border border-purple-200 bg-white p-2 text-purple-800">
-            Create Task only queues challenge/discovery work. Human verification is handled from Task Details when a crawl task reaches
-            <span className="font-medium"> waiting_verification</span>.
+            {text.taskForm.verificationTaskBoundary}
           </div>
 
           {challengeBuildTask.error && (
@@ -357,6 +367,23 @@ export const NewTaskForm: React.FC = () => {
 
           {showAdvanced && (
             <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-4">
+              <label htmlFor="browser-worker" className="block text-sm font-medium text-gray-700">
+                {text.taskForm.browserWorkerLabel}
+              </label>
+              <select
+                id="browser-worker"
+                value={browserWorkerId}
+                onChange={(event) => setBrowserWorkerId(event.target.value)}
+                className="mt-1 mb-4 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              >
+                <option value="any">{text.taskForm.anyBrowserWorker}</option>
+                {browserWorkers.map((worker) => (
+                  <option key={worker.workerId} value={worker.workerId}>
+                    {worker.name} ({worker.status})
+                  </option>
+                ))}
+              </select>
+              <p className="-mt-3 mb-4 text-xs text-slate-500">{text.taskForm.browserWorkerHelp}</p>
               <label htmlFor="priority" className="block text-sm font-medium text-gray-700">
                 {text.taskForm.priorityLabel}
               </label>

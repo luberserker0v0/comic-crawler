@@ -4,6 +4,7 @@ import type {
   AdapterFunctionTestRequest,
   AdapterImplementationResponse,
   BrowserConfig,
+  BrowserTarget,
   NetworkConfig,
 } from '@comiccrawler/shared';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
@@ -21,6 +22,7 @@ export function setupDiscoveryDraftFunctionRoutes(
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
     getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   } = {}
 ): void {
@@ -81,16 +83,16 @@ export function setupDiscoveryDraftFunctionRoutes(
         return;
       }
       const adapter = await instantiateDiscoveryDraftAdapter(discoveryService, id);
-      const [browser, network] = await Promise.all([
-        options.getBrowserConfig?.(),
-        options.getNetworkConfig?.(),
-      ]);
-      const result = await testAdapterFunction(adapter as any, functionId, body.url, {
-        browser,
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-      });
+      const network = await options.getNetworkConfig?.();
+      const runTest = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter as any, functionId, body.url, {
+          browser,
+          challengeDiscoveryId: body.challengeDiscoveryId,
+          challengeDiscoveryService: options.challengeDiscoveryService,
+          network,
+        });
+      const result = options.withBrowserConfig
+        ? await options.withBrowserConfig(request, body.browserTarget, runTest)
+        : await runTest(await options.getBrowserConfig?.());
       reply.send({
         data: {
           ...result,

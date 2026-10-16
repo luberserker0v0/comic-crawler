@@ -1,6 +1,7 @@
 import React from 'react';
 import { useConfigStore } from '../store';
 import { useI18n } from '../text/i18n';
+import { formatText } from '../text/format';
 import { api } from '../api/client';
 import { useConfigForm } from './settings/useConfigForm';
 import { useSelectorDiscoverySettings } from './settings/useSelectorDiscoverySettings';
@@ -33,19 +34,8 @@ export const SettingsPage: React.FC = () => {
     handleSelectorDiscoveryTest,
     handleRefreshSelectorDiscoveryAoModels,
   } = useSelectorDiscoverySettings({ fetchConfig });
-  const [remoteTestMessage, setRemoteTestMessage] = React.useState<string | null>(null);
   const [downloadDirectoryMessage, setDownloadDirectoryMessage] = React.useState<string | null>(null);
   const { text } = useI18n();
-
-  const handleRemoteTest = async () => {
-    setRemoteTestMessage(null);
-    try {
-      const response = await api.testChallengeDiscoveryRemote();
-      setRemoteTestMessage(`Connected. Pages: ${response.data.pageCount}. ${response.data.pages?.[0]?.title ?? response.data.pages?.[0]?.url ?? ''}`);
-    } catch (err: any) {
-      setRemoteTestMessage(err.response?.data?.error ?? err.message);
-    }
-  };
 
   const handleBrowseDownloadDirectory = async () => {
     setDownloadDirectoryMessage(null);
@@ -64,7 +54,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const directory = (form as any).download?.directory;
       const response = await api.openDownloadDirectory(directory);
-      setDownloadDirectoryMessage(`Opened ${response.data.directory}`);
+      setDownloadDirectoryMessage(formatText(text.settings.openedDirectory, { directory: response.data.directory }));
     } catch (err: any) {
       setDownloadDirectoryMessage(err.response?.data?.error ?? err.message);
     }
@@ -100,8 +90,6 @@ export const SettingsPage: React.FC = () => {
       <BrowserSettingsSection
         form={form}
         handleChange={handleChange}
-        remoteTestMessage={remoteTestMessage}
-        handleRemoteTest={handleRemoteTest}
       />
 
       <SelectorDiscoverySection

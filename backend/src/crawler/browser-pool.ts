@@ -119,7 +119,6 @@ export class BrowserPool {
       userAgent: this.config.userAgent,
       proxy: this.config.proxy ? { server: this.config.proxy } : undefined,
       viewport: { width: 1920, height: 1080 },
-      storageState: this.config.storageStatePath,
     };
 
     const remote = await this.resolveRemote?.() ?? this.config.remote;

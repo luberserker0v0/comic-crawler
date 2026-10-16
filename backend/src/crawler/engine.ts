@@ -1,5 +1,6 @@
 import type { BrowserConfig, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult } from '@comiccrawler/shared';
 import { join } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AdapterBase } from '../adapter/base';
 import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import type { EventBus } from '../events/bus';
@@ -54,6 +55,11 @@ interface CrawlOptions {
   taskId?: string;
   checkpoint?: CrawlCheckpoint;
   onCheckpoint?: (checkpoint: CrawlCheckpoint) => Promise<void> | void;
+  browserSessionId?: string;
+}
+
+interface CrawlBrowserContext {
+  sessionId?: string;
 }
 
 export class CrawlerEngine {
@@ -67,6 +73,7 @@ export class CrawlerEngine {
   private eventBus?: EventBus;
   private downloadDir: string;
   private concurrency: number;
+  private readonly browserContext = new AsyncLocalStorage<CrawlBrowserContext>();
 
   constructor(options: CrawlerEngineOptions) {
     this.parser = new HtmlParser();
@@ -83,10 +90,23 @@ export class CrawlerEngine {
       waitUntil: 'domcontentloaded',
       postLoadDelayMs: 0,
     };
-    this.htmlRenderer = new PlaywrightHtmlRenderer(this.browserConfig, options.network, options.resolveRemoteBrowser);
+    this.htmlRenderer = new PlaywrightHtmlRenderer(
+      this.browserConfig,
+      options.network,
+      options.resolveRemoteBrowser
+        ? () => options.resolveRemoteBrowser!(this.browserContext.getStore()?.sessionId)
+        : undefined
+    );
   }
 
   async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
+    return this.browserContext.run(
+      { sessionId: options?.browserSessionId },
+      () => this.crawlWithBrowserContext(adapter, url, options)
+    );
+  }
+
+  private async crawlWithBrowserContext(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
     const taskId = options?.taskId ?? url;
     const checkpoint = options?.checkpoint ?? createEmptyCheckpoint(taskId);
     const saveCheckpoint = async () => {

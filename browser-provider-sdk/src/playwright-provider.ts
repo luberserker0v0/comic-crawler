@@ -28,6 +28,7 @@ interface ActiveSession {
 export class PlaywrightBrowserProvider implements BrowserProvider {
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly profileStrategy: BrowserProfileStrategy;
+  private readonly processInstanceId = `process_${randomUUID()}`;
 
   constructor(private readonly options: PlaywrightBrowserProviderOptions = {}) {
     this.profileStrategy = options.profileStrategy ?? new EphemeralProfileStrategy({
@@ -40,6 +41,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     return {
       contractVersion: BROWSER_PROVIDER_CONTRACT_VERSION,
       providerId: this.options.providerId ?? 'local-playwright',
+      processInstanceId: this.processInstanceId,
       providerType: 'playwright',
       runtimeVersion: require('playwright/package.json').version as string,
       capabilities: this.profileStrategy.capabilities,

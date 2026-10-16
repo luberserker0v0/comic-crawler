@@ -24,12 +24,12 @@ export interface GlobalConfig {
     mode: 'remote';
     maxInstances: number;
     timeout: number;
+    workerWaitTimeoutMs?: number;
     waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
     waitForSelector?: string;
     postLoadDelayMs?: number;
     challengeAutoAttempt?: boolean;
     challengeWaitMs?: number;
-    storageStatePath?: string;
     remote?: {
       connectTimeout?: number;
       exposeNetwork?: string;

@@ -152,7 +152,7 @@ export function ReviewPanel(props: {
             <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">{text.agent.reviewJobSummary}</h3>
             <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-slate-400">Job ID</dt>
+                <dt className="text-slate-400">{text.agent.jobId}</dt>
                 <dd className="mt-1 break-all font-medium text-slate-900">{reviewJob.id}</dd>
               </div>
               <div>
@@ -292,9 +292,9 @@ export function ReviewPanel(props: {
                     <div className="mt-2 font-medium">{task.functionId}</div>
                     {(task.model || task.aoBaseUrl || task.conversationId) && (
                       <div className="mt-1 space-y-0.5 text-[11px] text-slate-500">
-                        {task.model && <div>Model: <span className="font-mono">{task.model}</span></div>}
-                        {task.aoBaseUrl && <div>AO URL: <span className="font-mono">{task.aoBaseUrl}</span></div>}
-                        {task.conversationId && <div>AO conversation: <span className="font-mono">{task.conversationId}</span></div>}
+                        {task.model && <div>{text.agent.buildJobModel}: <span className="font-mono">{task.model}</span></div>}
+                        {task.aoBaseUrl && <div>{text.agent.buildJobAoUrl}: <span className="font-mono">{task.aoBaseUrl}</span></div>}
+                        {task.conversationId && <div>{text.agent.aoConversation}: <span className="font-mono">{task.conversationId}</span></div>}
                       </div>
                     )}
                     <div className="mt-1 whitespace-pre-wrap break-words">{task.instruction}</div>

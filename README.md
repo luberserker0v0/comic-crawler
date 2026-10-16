@@ -3,6 +3,17 @@
 ComicCrawler is a multi-site comic crawler with a WebUI, REST API, adapter
 discovery, and user-side browser handoff.
 
+## Command working directory
+
+The source-of-truth repository is the outer workspace's `repo/` directory.
+Run Docker and npm commands from there:
+
+```bash
+cd repo
+```
+
+The command examples below assume the current directory is `repo/`.
+
 ## Quick start
 
 ### Docker
@@ -109,9 +120,9 @@ A user-side Browser Provider supplies short-lived Playwright sessions.
 
 Setup requires three actions:
 
-1. Enroll the client once.
-2. Start the outbound client.
-3. Create an active session.
+1. Configure the client.
+2. Run `connect` to register and connect it.
+3. Create a task and select the Worker, or choose any available Worker.
 
 See the [Browser Provider SDK guide](browser-provider-sdk/README.md) for CLI and
 embedding instructions.
@@ -154,9 +165,11 @@ Inspect and test individual adapter functions.
 
 - [User Guide](docs/USER_GUIDE.md): installation, WebUI workflows, downloads,
   and verification handoff.
-- [Browser Provider SDK](browser-provider-sdk/README.md): enroll, connect, and
+- [Browser Provider SDK](browser-provider-sdk/README.md): register, connect, and
   provide a user-side browser.
 - [API Reference](docs/API.md): REST endpoints and automation flow.
+- [API Security](docs/API_SECURITY.md): authentication policy, roles,
+  permissions, and credential handling.
 - [Swagger UI](http://127.0.0.1:4100/api-docs): live API documentation.
 
 ### For developers

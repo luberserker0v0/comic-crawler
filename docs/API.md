@@ -129,6 +129,24 @@ Specific-chapter task:
 }
 ```
 
+To run the task on a particular connected computer, select its stable Worker ID:
+
+```json
+{
+  "browserTarget": {
+    "mode": "specific",
+    "workerId": "bp_server_assigned_id"
+  }
+}
+```
+
+Use `GET /api/browser-workers` to list the requesting user's Workers. Omit
+`browserTarget`, or use `{ "mode": "any" }`, to let the scheduler choose one.
+If no matching Worker is idle, the task enters `waiting_for_browser_worker`
+until a Worker becomes available or the acquisition timeout expires. Session
+IDs are internal lease data and are not accepted by task APIs.
+Configure the timeout with `browser.workerWaitTimeoutMs` (default: 1,800,000 ms).
+
 Possible outcomes:
 
 - `201` with `kind: "taskCreated"` - crawl task was queued.
@@ -147,6 +165,7 @@ GET /api/tasks/:id
 Important task statuses:
 
 - `pending`
+- `waiting_for_browser_worker`
 - `running`
 - `waiting_verification`
 - `completed`
@@ -156,7 +175,8 @@ Important task statuses:
 
 `GET /api/tasks/:id` returns the task, progress, result, checkpoint summary, and
 preview metadata. `waiting_verification` is resumable and is not a failed state.
-While a task is waiting for verification, it does not occupy a worker slot.
+It does not occupy a scheduler execution slot, but it keeps its Browser Worker
+reserved so another task cannot modify the browser during verification.
 
 ### 4. Human verification handoff
 
@@ -196,6 +216,12 @@ If the handoff is not ready, resume returns `409` with the current handoff job.
 If the handoff expired or was removed, resume recreates a handoff job and
 returns `409` with the new job so the caller can open the browser again.
 
+Delete or abandon a handoff and release its Browser Worker:
+
+```http
+DELETE /api/challenge-discovery/:id
+```
+
 ### 5. AO adapter discovery and review
 
 When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
@@ -206,12 +232,19 @@ GET /api/selector-discovery/:id
 
 Stage 1 AO discovery produces a TypeScript `AdapterBase` implementation draft
 and Markdown review notes. Review those artifacts before any runtime promotion.
+Adapter discovery jobs use the same stable `browserTarget` selection as crawler
+tasks. The server creates and closes the short-lived browser session.
 
 After human review, approve the TypeScript implementation draft:
 
 ```http
 POST /api/selector-discovery/:id/promote
 ```
+
+Promotion first fetches the reviewed page through the active Browser Provider.
+It runs the draft, stores `page.html` and `expected.json`, and only then enables
+the adapter. A fixture or extraction failure leaves the discovery job in
+`awaiting_review` and does not register the adapter.
 
 Then create the crawl task again.
 
@@ -228,61 +261,56 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 
 ### Browser Provider registration and sessions
 
-Browser-backed operations use an enrolled user-side Browser Provider. An
+Browser-backed operations use a registered user-side Browser Provider. An
 SDK client first reads the service document:
 
 ```http
 GET /.well-known/comiccrawler-browser-provider
 ```
 
-It contains the contract version, `reverse-relay` transport, enrollment
-endpoint, control WebSocket endpoint, and relay endpoint template. An
-administrator then creates a short-lived, one-time enrollment token:
+It contains the contract version, API security mode, `reverse-relay` transport,
+registration endpoint, control WebSocket endpoint, and relay endpoint template.
+
+Register one logical Provider instance:
 
 ```http
-POST /api/browser-providers/enrollment-tokens
-Content-Type: application/json
-
-{ "ttlSeconds": 600 }
-```
-
-The user-side CLI submits that token to `POST /api/browser-providers/enroll` as
-`Authorization: Bearer <token>`. ComicCrawler returns the server-assigned
-`providerId`, `credentialId`, and credential once. The CLI stores state and the
-credential in separate files, then uses the credential for an outbound
-WebSocket connection to `/api/browser-providers/connect`. Neither the user
-machine nor its browser exposes an inbound port.
-
-Create the active browser session:
-
-```http
-POST /api/browser-providers/{providerId}/sessions
+POST /api/browser-providers/enroll
+X-ComicCrawler-User-Id: alice
+Authorization: Bearer <user-api-token>
 Content-Type: application/json
 
 {
-  "requestedCapabilities": {
-    "interactive": true
-  },
-  "ttlSeconds": 1800
+  "clientInstanceId": "0ecf4a52-2003-4586-8c90-31fbc426b2a8",
+  "providerName": "Alice PC"
 }
 ```
 
-ComicCrawler automatically resolves the active session's relay `connectUrl` for
-all browser-backed work. Only one active session is supported by the current
-registry. Enrollment records persist across backend restarts; the client
-reconnects outbound and sessions remain short-lived.
+The user headers are omitted in `public` mode. ComicCrawler returns the
+server-assigned `providerId`, `credentialId`, and provider credential once. The
+CLI stores state and credential in separate files, then uses the Provider
+credential for outbound WebSocket connections. Neither the user machine nor
+its browser exposes an inbound port.
 
-Use these lifecycle endpoints to inspect, renew, or close it:
+List the user's Workers before creating a task:
+
+```http
+GET /api/browser-workers
+```
+
+ComicCrawler reserves one idle Worker when a task starts. It creates the
+Playwright session, renews it while the task owns the lease, and closes it when
+the task completes. One Worker executes one task at a time in this version.
+
+Use these lifecycle endpoints to inspect Workers or manage credentials:
 
 ```http
 GET /api/browser-providers
-GET /api/browser-providers/sessions/active
-POST /api/browser-providers/sessions/{sessionId}/heartbeat
-DELETE /api/browser-providers/sessions/{sessionId}
+GET /api/browser-workers
+POST /api/browser-providers/{providerId}/credentials/rotate
 ```
 
 The only transport is `reverse-relay`. Protect ComicCrawler's administrative
-API, provider credential files, and active session URLs. Use HTTPS/WSS for
+API, provider credential files, and browser session URLs. Use HTTPS/WSS for
 remote deployments.
 
 | Method | Path | Purpose |
@@ -303,7 +331,7 @@ remote deployments.
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
 | `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |
 | `POST` | `/api/adapter-drafts/:id/reset` | Reset draft content from the active adapter. |
-| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest draft with a temporary adapter. Project-source TS drafts are not executed. |
+| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest, generated TypeScript, or project-source TypeScript draft with a temporary adapter. |
 | `DELETE` | `/api/adapter-drafts/:id` | Discard a draft. |
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |
@@ -316,14 +344,11 @@ remote deployments.
 | `GET` | `/api/config/selector-discovery` | Read selector discovery settings without provider secrets. |
 | `PUT` | `/api/config/selector-discovery` | Save AO URL, provider document, and selected model. |
 | `POST` | `/api/config/selector-discovery/test` | Test selector discovery settings. |
-| `POST` | `/api/browser-providers/enrollment-tokens` | Create a short-lived one-time enrollment token. |
-| `POST` | `/api/browser-providers/enroll` | Exchange an enrollment token for server-assigned provider state and a credential. |
-| `GET` | `/api/browser-providers` | List registered providers and the active session. |
-| `DELETE` | `/api/browser-providers/:providerId` | Revoke and remove an enrolled provider that has no active session. |
-| `GET` | `/api/browser-providers/sessions/active` | Read the active browser session. |
-| `POST` | `/api/browser-providers/:providerId/sessions` | Create and activate a negotiated browser session. |
-| `POST` | `/api/browser-providers/sessions/:sessionId/heartbeat` | Extend the active session expiry. |
-| `DELETE` | `/api/browser-providers/sessions/:sessionId` | Close the active session and its user-side browser. |
+| `POST` | `/api/browser-providers/enroll` | Register a Provider instance and return its credential once. |
+| `GET` | `/api/browser-providers` | List visible registered Provider identities and online state. |
+| `GET` | `/api/browser-workers` | List stable Worker targets and their `offline`, `idle`, or `busy` state. |
+| `DELETE` | `/api/browser-providers/:providerId` | Revoke one Provider credential and close its resources. |
+| `POST` | `/api/browser-providers/:providerId/credentials/rotate` | Rotate one Provider credential and return the replacement once. |
 
 Adapter Lab function tests are diagnostic support APIs. The WebUI locks
 metadata tests to manga catalog URLs and chapter image tests to chapter URLs;
@@ -331,6 +356,9 @@ API callers should follow the same input contract. `extractChapterImageUrls`
 returns the full `imageUrls` list plus `imageUrlCount`; it does not return a
 shortened `firstImageUrls` preview. Test responses may include timing breakdown
 entries such as `dom_acquisition`, `extraction`, and `readiness`.
+Browser-backed test and chapter-image requests may use the same
+`browserTarget` object as crawl tasks. The Server owns and releases their
+short-lived browser lease when the request finishes.
 
 Verified fixture routes also exist for diagnostics:
 
@@ -340,6 +368,18 @@ Verified fixture routes also exist for diagnostics:
 | `POST` | `/api/fixtures/capture` | Capture verified DOM from a ready handoff browser session. |
 | `GET` | `/api/fixtures/:domain/:id` | Read captured fixture metadata, optionally with HTML. |
 | `POST` | `/api/fixtures/:domain/:id/test-adapter-function` | Test an adapter function against a captured fixture. |
+| `POST` | `/api/fixtures/:domain/:id/verify-approved-adapter` | Replay all approved functions and compare them with `expected.json`. |
+
+Approved-fixture verification accepts this request body:
+
+```json
+{
+  "adapterId": "comix"
+}
+```
+
+The response includes `passed`, `expected`, and `actual`. A mismatch returns a
+normal `200` response with `passed: false`, so test runners can show the diff.
 
 ## Internal or diagnostic endpoints
 
@@ -348,9 +388,9 @@ These routes currently exist but should not be used as the normal crawl API:
 - `POST /api/adapters/register` - placeholder/test-oriented endpoint.
 - `POST /api/challenge-discovery`
 - `GET /api/challenge-discovery`
+- `DELETE /api/challenge-discovery/:id`
 - `POST /api/challenge-discovery/:id/retry`
 - `POST /api/challenge-discovery/:id/promote`
-- `POST /api/challenge-discovery/remote/test`
 - `POST /api/challenge-discovery/:id/inspect-remote-page`
 - `POST /api/challenge-discovery/:id/create-selector-discovery-from-remote`
 - `/api/agent/adapters/*` - adapter review/admin routes.

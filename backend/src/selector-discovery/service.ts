@@ -5,7 +5,7 @@ import {
   ACTIVE_DYNAMIC_ADAPTERS_KEY,
   ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
 } from '../adapter/runtime-state';
-import type { AdapterCapabilities, BrowserConfig, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
+import type { AdapterCapabilities, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
 import { AoClient } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
@@ -43,6 +43,8 @@ import {
   type SelectorDiscoveryJob,
   type SelectorDiscoveryCapabilityDraft,
 } from './types';
+import { ConcurrentSchedulingPolicy, TaskScheduler, type SchedulingPolicy } from '../scheduler';
+import type { TaskItem } from '../task/types';
 
 const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
@@ -62,6 +64,7 @@ export interface ActiveImplementationAdapterRecord {
   sourceDiscoveryId: string;
   adapterImplementationTs: string;
   promotedAt: string;
+  approvalFixture?: FixtureSummary;
 }
 
 export type SelectorDiscoveryPromotionResult = ActiveImplementationAdapterRecord;
@@ -69,16 +72,28 @@ export type SelectorDiscoveryPromotionResult = ActiveImplementationAdapterRecord
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
   private readonly bundleManager: SelectorDiscoveryBundleManager;
-  private readonly getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+  private readonly getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
+  private readonly acquireBrowserSession?: (input: {
+    job: SelectorDiscoveryJob;
+    browserTarget?: DiscoveryInput['browserTarget'];
+  }) => Promise<{ sessionId: string; release(): Promise<void> }>;
   private readonly getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  private readonly captureApprovalFixture?: (input: {
+    job: SelectorDiscoveryJob;
+    adapter: IComicAdapter;
+  }) => Promise<FixtureSummary>;
+  private readonly scheduler: TaskScheduler<DiscoveryInput>;
 
   constructor(
     private readonly storage: IStorage,
     private readonly adapterRegistry: AdapterRegistry,
     bundleManagerOrOptions?: SelectorDiscoveryBundleManager | {
       bundleManager?: SelectorDiscoveryBundleManager;
-      getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+      getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
+      acquireBrowserSession?: (input: { job: SelectorDiscoveryJob; browserTarget?: DiscoveryInput['browserTarget'] }) => Promise<{ sessionId: string; release(): Promise<void> }>;
       getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+      captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }) => Promise<FixtureSummary>;
+      schedulingPolicy?: SchedulingPolicy<DiscoveryInput>;
     }
   ) {
     if (bundleManagerOrOptions instanceof SelectorDiscoveryBundleManager) {
@@ -86,11 +101,49 @@ export class SelectorDiscoveryService {
     } else {
       this.bundleManager = bundleManagerOrOptions?.bundleManager ?? new SelectorDiscoveryBundleManager();
       this.getBrowserConfig = bundleManagerOrOptions?.getBrowserConfig;
+      this.acquireBrowserSession = bundleManagerOrOptions?.acquireBrowserSession;
       this.getNetworkConfig = bundleManagerOrOptions?.getNetworkConfig;
+      this.captureApprovalFixture = bundleManagerOrOptions?.captureApprovalFixture;
+    }
+    const schedulingPolicy = bundleManagerOrOptions instanceof SelectorDiscoveryBundleManager
+      ? undefined
+      : bundleManagerOrOptions?.schedulingPolicy;
+    this.scheduler = new TaskScheduler(
+      (task) => this.executeScheduledDiscovery(task),
+      { autoStart: true, concurrency: 1 },
+      schedulingPolicy ?? new ConcurrentSchedulingPolicy({
+        maxConcurrency: 2,
+        maxConcurrencyPerGroup: 1,
+        groupBy: (task) => new URL(task.data.url).hostname,
+      })
+    );
+  }
+
+  async initializeScheduler(): Promise<void> {
+    const resumable = (await this.list()).filter((job) => job.status === 'queued' || job.status === 'running');
+    for (const job of resumable) {
+      await this.updateJob(job.id, { status: 'queued' });
+      await this.scheduleDiscovery(job, {
+        url: job.normalizedUrl,
+        target: job.target,
+        forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId),
+        stopAfterStage: job.stopAfterStage,
+        ownerUserId: job.ownerUserId,
+        browserTarget: job.browserTarget,
+        browserSessionId: job.browserSessionId,
+      });
     }
   }
 
+  dispose(): void {
+    this.scheduler.stop();
+  }
+
   async create(input: DiscoveryInput): Promise<SelectorDiscoveryJob> {
+    const browserSessionId = input.browserSessionId;
+    const boundInput = browserSessionId === input.browserSessionId
+      ? input
+      : { ...input, browserSessionId };
     const normalizedUrl = normalizeAndValidateUrl(input.url);
     const parsedUrl = new URL(normalizedUrl);
     const matchedAdapter = this.adapterRegistry.findByUrl(normalizedUrl);
@@ -118,17 +171,20 @@ export class SelectorDiscoveryService {
         phase: 'known_adapter',
         createdAt: now,
         updatedAt: now,
+        ownerUserId: input.ownerUserId,
+        browserTarget: input.browserTarget,
+        browserSessionId,
       };
       await this.saveJob(job);
       return job;
     }
 
-    if (this.inFlightHosts.has(parsedUrl.hostname)) {
-      const existing = (await this.list()).find((job) =>
-        job.hostname === parsedUrl.hostname && ['queued', 'running'].includes(job.status)
-      );
-      if (existing) return existing;
-    }
+    const existing = (await this.list()).find((job) =>
+      job.hostname === parsedUrl.hostname
+      && job.ownerUserId === input.ownerUserId
+      && ['queued', 'running'].includes(job.status)
+    );
+    if (existing) return existing;
 
     const settingsStore = new SelectorDiscoverySettingsStore(this.storage);
     const hasInlineConfiguration = Boolean(input.providerDocument && input.aoBaseUrl && input.model);
@@ -147,6 +203,9 @@ export class SelectorDiscoveryService {
           error: 'Selector discovery is not configured. Configure AO URL, provider JSON, and model in Settings before this adapter build task can run.',
           createdAt: now,
           updatedAt: now,
+          ownerUserId: input.ownerUserId,
+          browserTarget: input.browserTarget,
+          browserSessionId,
         };
         await this.saveJob(job);
         return job;
@@ -168,25 +227,27 @@ export class SelectorDiscoveryService {
       inputSource: input.htmlSnapshot ? 'html-snapshot' : 'live-fetch',
       createdAt: now,
       updatedAt: now,
+      ownerUserId: input.ownerUserId,
+      browserTarget: input.browserTarget,
+      browserSessionId,
     };
     await this.saveJob(job);
 
-    void this.run(job.id, input).catch(async (error) => {
-      const failed = await this.get(job.id);
-      if (failed) {
-        failed.status = 'failed';
-        failed.error = error instanceof Error ? error.message : String(error);
-        failed.updatedAt = new Date().toISOString();
-        await this.saveJob(failed);
-      }
-    });
+    await this.scheduleDiscovery(job, boundInput);
 
     return job;
   }
 
   async retry(id: string): Promise<SelectorDiscoveryJob> {
     const job = await this.getRequiredJob(id);
-    const replacement = await this.create({ url: job.normalizedUrl, target: job.target, forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId) });
+    const replacement = await this.create({
+      url: job.normalizedUrl,
+      target: job.target,
+      forceDiscovery: job.promotionMode === 'augment' || Boolean(job.baseAdapterId),
+      ownerUserId: job.ownerUserId,
+      browserTarget: job.browserTarget,
+      browserSessionId: job.browserSessionId,
+    });
     if (replacement.id !== job.id) {
       await this.updateJob(replacement.id, { retriedFromId: job.id });
     }
@@ -373,7 +434,7 @@ export class SelectorDiscoveryService {
       const aoBaseUrl = input.aoBaseUrl ?? configured.settings.aoBaseUrl;
       const model = input.model ?? configured.settings.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL;
       const providerDocument = input.providerDocument ?? configured.providerDocument;
-      const safeFetchOptions = await this.getSafeFetchOptions();
+      const safeFetchOptions = await this.getSafeFetchOptions(input.browserSessionId);
       if (input.htmlSnapshot) {
         await this.runFromHtmlSnapshot(job, input, {
           aoBaseUrl,
@@ -442,6 +503,39 @@ export class SelectorDiscoveryService {
       await this.finalizeImplementationDraft(job, implementation);
     } finally {
       this.inFlightHosts.delete(job.hostname);
+    }
+  }
+
+  private async scheduleDiscovery(job: SelectorDiscoveryJob, input: DiscoveryInput): Promise<void> {
+    await this.scheduler.add({
+      id: job.id,
+      status: 'pending',
+      priority: 0,
+      createdAt: new Date(job.createdAt),
+      data: input,
+    });
+  }
+
+  private async executeScheduledDiscovery(task: TaskItem<DiscoveryInput>): Promise<void> {
+    let acquired: { sessionId: string; release(): Promise<void> } | undefined;
+    try {
+      const job = await this.getRequiredJob(task.id);
+      acquired = task.data.htmlSnapshot ? undefined : await this.acquireBrowserSession?.({
+        job,
+        browserTarget: task.data.browserTarget,
+      });
+      await this.run(task.id, acquired ? { ...task.data, browserSessionId: acquired.sessionId } : task.data);
+    } catch (error) {
+      const failed = await this.get(task.id);
+      if (failed) {
+        failed.status = 'failed';
+        failed.error = error instanceof Error ? error.message : String(error);
+        failed.updatedAt = new Date().toISOString();
+        await this.saveJob(failed);
+      }
+      throw error;
+    } finally {
+      await acquired?.release();
     }
   }
 
@@ -983,9 +1077,9 @@ ${finalUrl}
     return `disc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private async getSafeFetchOptions(): Promise<{ browser?: BrowserConfig; network?: NetworkConfig; renderFirst: boolean }> {
+  private async getSafeFetchOptions(sessionId?: string): Promise<{ browser?: BrowserConfig; network?: NetworkConfig; renderFirst: boolean }> {
     const [browser, network] = await Promise.all([
-      this.getBrowserConfig?.(),
+      this.getBrowserConfig?.(sessionId),
       this.getNetworkConfig?.(),
     ]);
     // Selector discovery always uses Playwright-rendered DOM so AO evidence
@@ -1012,17 +1106,22 @@ ${finalUrl}
       throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapterId}".`);
     }
 
-    if (this.adapterRegistry.has(adapterId)) {
-      if (job.promotionMode === 'augment' && job.baseAdapterId === adapterId) {
-        this.adapterRegistry.replace(adapter);
-      } else {
-        throw new Error(`Adapter "${adapterId}" is already registered.`);
-      }
+    const registeredAdapter = this.adapterRegistry.get(adapterId);
+    if (registeredAdapter && !(job.promotionMode === 'augment' && job.baseAdapterId === adapterId)) {
+      throw new Error(`Adapter "${adapterId}" is already registered.`);
+    }
+    const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
+    if (!registeredAdapter && existingDomainAdapter && existingDomainAdapter.id !== adapterId) {
+      throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
+    }
+
+    const approvalFixture = this.captureApprovalFixture
+      ? await this.captureApprovalFixture({ job, adapter })
+      : undefined;
+
+    if (registeredAdapter) {
+      this.adapterRegistry.replace(adapter);
     } else {
-      const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
-      if (existingDomainAdapter && existingDomainAdapter.id !== adapterId) {
-        throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
-      }
       this.adapterRegistry.register(adapter);
     }
 
@@ -1036,6 +1135,7 @@ ${finalUrl}
       sourceDiscoveryId: job.id,
       adapterImplementationTs: job.adapterImplementationTs,
       promotedAt: new Date().toISOString(),
+      approvalFixture,
     };
     const records = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
     await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [

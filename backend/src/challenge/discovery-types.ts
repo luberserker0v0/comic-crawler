@@ -1,4 +1,5 @@
 import type { ChallengeDecision, ChallengeStrategyValidation } from './types';
+import type { BrowserTarget } from '@comiccrawler/shared';
 
 export type ChallengeDiscoveryStatus =
   | 'queued'
@@ -18,6 +19,9 @@ export interface ChallengeDiscoveryJob {
   normalizedUrl: string;
   hostname: string;
   status: ChallengeDiscoveryStatus;
+  browserSessionId?: string;
+  ownerUserId?: string;
+  browserTarget?: BrowserTarget;
   createdAt: string;
   updatedAt: string;
   diagnosisMarkdown?: string;

@@ -116,6 +116,27 @@ class GeneratedChapterImagesCapability extends ChapterImagesCapability {
 
 describe('SelectorDiscoveryService adapter strategies', () => {
 
+  it('persists the stable browser worker target on an adapter discovery job', async () => {
+    const storage = new MemoryStorage();
+    const service = new SelectorDiscoveryService(storage, new AdapterRegistry());
+
+    const job = await service.create({
+      url: 'https://affinity.example/manga/demo',
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+    });
+
+    expect(job).toMatchObject({
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+      status: 'configuration_required',
+    });
+    expect(await service.get(job.id)).toMatchObject({
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+    });
+  });
+
   it('creates augment jobs for full discovery when only a same-domain chapter-only adapter exists', async () => {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
@@ -271,6 +292,84 @@ describe('SelectorDiscoveryService adapter strategies', () => {
       adapterId: 'generated-adapter',
       adapterName: 'Generated Adapter',
     });
+  });
+
+  it('captures a golden fixture before registering an approved adapter', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const captureOrder: string[] = [];
+    const service = new SelectorDiscoveryService(storage, registry, {
+      captureApprovalFixture: async ({ adapter }) => {
+        captureOrder.push(`capture:${registry.has(adapter.id)}`);
+        return {
+          id: 'fixture-1',
+          domain: 'generated.test',
+          url: 'https://generated.test/manga/title',
+          title: '',
+          htmlLength: 10,
+          capturedAt: '2026-06-25T00:00:00.000Z',
+          path: '/fixtures/page.html',
+          expectedPath: '/fixtures/expected.json',
+          readiness: {
+            status: 'ready',
+            target: 'metadata',
+            confidence: 1,
+            reasons: [],
+            recommendedAction: 'continue',
+          },
+        };
+      },
+    });
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-fixture',
+      url: 'https://generated.test/manga/title',
+      normalizedUrl: 'https://generated.test/manga/title',
+      hostname: 'generated.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource(),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-fixture', job);
+    await storage.write('selector-discovery-index', ['disc-fixture']);
+
+    const promoted = await service.promote('disc-fixture');
+
+    expect(captureOrder).toEqual(['capture:false']);
+    expect(promoted.approvalFixture?.id).toBe('fixture-1');
+    expect(registry.has('generated-adapter')).toBe(true);
+  });
+
+  it('does not register an adapter when golden fixture capture fails', async () => {
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    const service = new SelectorDiscoveryService(storage, registry, {
+      captureApprovalFixture: async () => {
+        throw new Error('fixture capture failed');
+      },
+    });
+    const job: SelectorDiscoveryJob = {
+      id: 'disc-fixture-failed',
+      url: 'https://generated.test/manga/title',
+      normalizedUrl: 'https://generated.test/manga/title',
+      hostname: 'generated.test',
+      status: 'awaiting_review',
+      target: 'full',
+      promotionMode: 'create',
+      createdAt: '2026-06-25T00:00:00.000Z',
+      updatedAt: '2026-06-25T00:00:00.000Z',
+      adapterImplementationTs: createImplementationDraftSource(),
+      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    };
+    await storage.write('selector-discovery-job-disc-fixture-failed', job);
+    await storage.write('selector-discovery-index', ['disc-fixture-failed']);
+
+    await expect(service.promote('disc-fixture-failed')).rejects.toThrow('fixture capture failed');
+    expect(registry.has('generated-adapter')).toBe(false);
+    await expect(service.get('disc-fixture-failed')).resolves.toMatchObject({ status: 'awaiting_review' });
   });
 
   it('rejects invalid TypeScript implementation draft promotion', async () => {

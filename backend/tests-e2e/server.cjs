@@ -12,7 +12,9 @@ const { ChallengeDiscoveryService } = require('../dist/challenge');
 const { DynamicSiteAdapter } = require('../dist/adapter/dynamic-site-adapter');
 const { ComicError, ErrorType, errorToLogObject } = require('../dist/error/types');
 const { BrowserProviderRegistry } = require('../dist/browser/provider-registry');
+const { BrowserLeaseCoordinator } = require('../dist/browser/lease-coordinator');
 const { ReverseRelayBrowserProviderClient } = require('../../browser-provider-sdk/dist/src');
+const { ApiSecurityService } = require('../dist/security/api-security');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
 
@@ -38,7 +40,12 @@ async function start() {
   });
   const browserProviderRegistry = new BrowserProviderRegistry(storage);
   await browserProviderRegistry.initialize();
-  const getBrowserConfig = async () => browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser);
+  const browserLeaseCoordinator = new BrowserLeaseCoordinator(browserProviderRegistry, 10_000);
+  const apiSecurity = ApiSecurityService.fromSecretDocument({ mode: 'public', defaultEffect: 'deny', rules: [] });
+  const getBrowserConfig = async (sessionId) => browserProviderRegistry.resolveBrowserConfig(
+    (await configManager.get()).browser,
+    sessionId
+  );
 
   const adapterRegistry = new AdapterRegistry(eventBus);
   adapterRegistry.register({
@@ -118,7 +125,7 @@ async function start() {
         connectTimeout: 30000,
       },
     },
-    resolveRemoteBrowser: async () => (await getBrowserConfig()).remote,
+    resolveRemoteBrowser: async (sessionId) => (await getBrowserConfig(sessionId)).remote,
   });
 
   const taskManager = new TaskManager(async (task) => {
@@ -126,18 +133,34 @@ async function start() {
     if (!adapter) {
       throw new Error(`Adapter ${task.data.adapterId} not found`);
     }
+    const lease = await browserLeaseCoordinator.acquire({
+      taskId: task.id,
+      ownerUserId: task.data.ownerUserId || 'public',
+      target: task.data.browserTarget,
+      baseBrowserConfig: (await configManager.get()).browser,
+      timeoutMs: 10_000,
+      onWaiting: (message) => taskManager.markWaitingForBrowserWorker(task.id, message),
+    });
+    let leaseTransferred = false;
     try {
       await crawlerEngine.crawl(adapter, task.data.url, {
         chapters: task.data.chapters,
         chapterUrls: task.data.chapterUrls,
         taskId: task.id,
+        browserSessionId: lease.sessionId,
         checkpoint: taskManager.getCheckpoint(task.id),
         onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
       });
     } catch (error) {
       if (isHumanVerificationRequiredError(error)) {
         const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
-        const challengeJob = await challengeDiscoveryService.create({ url: verificationUrl });
+        const challengeJob = await challengeDiscoveryService.create({
+          url: verificationUrl,
+          browserLease: lease,
+          ownerUserId: task.data.ownerUserId,
+          browserTarget: task.data.browserTarget,
+        });
+        leaseTransferred = true;
         throw new ComicError(
           `Human verification is required before crawling can continue. Challenge discovery job: ${challengeJob.id}`,
           ErrorType.AUTH_ERROR,
@@ -152,18 +175,40 @@ async function start() {
         );
       }
       throw error;
+    } finally {
+      if (!leaseTransferred) await lease.release();
     }
   }, { eventBus, storage });
   await taskManager.initialize();
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
     getBrowserConfig,
+    acquireBrowserSession: async ({ job, browserTarget }) => {
+      const lease = await browserLeaseCoordinator.acquire({
+        taskId: `selector:${job.id}`,
+        ownerUserId: job.ownerUserId || 'public',
+        target: browserTarget,
+        baseBrowserConfig: (await configManager.get()).browser,
+        timeoutMs: 10_000,
+      });
+      return { sessionId: lease.sessionId, release: () => lease.release() };
+    },
     getNetworkConfig: async () => (await configManager.get()).network,
   });
   const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
     workspaceRoot: path.resolve(__dirname, '../../test-results/e2e-agent-workspaces'),
     getBrowserConfig,
     getNetworkConfig: async () => (await configManager.get()).network,
+    acquireBrowserSession: async ({ jobId, ownerUserId, browserTarget }) => {
+      const lease = await browserLeaseCoordinator.acquire({
+        taskId: `challenge:${jobId}`,
+        ownerUserId,
+        target: browserTarget,
+        baseBrowserConfig: (await configManager.get()).browser,
+        timeoutMs: 10_000,
+      });
+      return { sessionId: lease.sessionId, release: () => lease.release() };
+    },
   });
 
   const server = new ComicCrawlerServer({
@@ -178,7 +223,9 @@ async function start() {
     selectorDiscoverySettingsStore,
     challengeDiscoveryService,
     browserProviderRegistry,
+    browserLeaseCoordinator,
     staticDir: path.resolve(__dirname, '../../frontend/dist'),
+    apiSecurity,
   });
 
   installFakeAo(server.getApp());
@@ -323,20 +370,30 @@ async function start() {
 
   await server.start();
 
-  const enrollment = await browserProviderRegistry.enroll(browserProviderRegistry.createEnrollmentToken().token);
-  const provider = createE2eBrowserProvider(enrollment.providerId, process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT);
-  const providerClient = new ReverseRelayBrowserProviderClient({
-    serverUrl: `http://${process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1'}:${process.env.COMICCRAWLER_E2E_PORT || '4173'}`,
-    credential: enrollment.credential,
-    provider,
-  });
-  const providerConnection = providerClient.connectOnce();
-  await waitFor(() => Boolean(browserProviderRegistry.list()[0]?.descriptor));
-  await browserProviderRegistry.createSession(enrollment.providerId, { ttlSeconds: 3600 });
+  const providerClients = [];
+  const providerConnections = [];
+  for (let index = 1; index <= 3; index += 1) {
+    const enrollment = await browserProviderRegistry.register(apiSecurity.publicPrincipal(), {
+      clientInstanceId: `e2e-provider-${index}`,
+    });
+    const provider = createE2eBrowserProvider(
+      enrollment.providerId,
+      process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT,
+      `e2e-process-${index}`
+    );
+    const providerClient = new ReverseRelayBrowserProviderClient({
+      serverUrl: `http://${process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1'}:${process.env.COMICCRAWLER_E2E_PORT || '4173'}`,
+      credential: enrollment.credential,
+      provider,
+    });
+    providerClients.push(providerClient);
+    providerConnections.push(providerClient.connectOnce());
+  }
+  await waitFor(() => browserProviderRegistry.list().filter((entry) => entry.descriptor).length === 3);
 
   const shutdown = async () => {
-    await providerClient.close();
-    await providerConnection;
+    await Promise.all(providerClients.map((client) => client.close()));
+    await Promise.all(providerConnections);
     await server.stop();
     await storage.dispose();
     process.exit(0);
@@ -346,28 +403,34 @@ async function start() {
   process.once('SIGTERM', () => void shutdown());
 }
 
-function createE2eBrowserProvider(providerId, localWsEndpoint) {
+function createE2eBrowserProvider(providerId, localWsEndpoint, processInstanceId) {
   if (!localWsEndpoint) throw new Error('COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT is required.');
   const capabilities = {
     browser: 'chromium', headed: false, interactive: true, persistentContext: false,
-    screenshots: true, downloads: true, tracing: true, fileTransfer: false,
+    screenshots: true, downloads: true, tracing: true,
   };
-  const now = Date.now();
-  const session = {
-    sessionId: 'e2e-browser-session', providerId, protocol: 'playwright', transport: 'reverse-relay',
-    localWsEndpoint, runtimeVersion: require('playwright/package.json').version,
-    capabilities, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 3_600_000).toISOString(),
-  };
+  const runtimeVersion = require('playwright/package.json').version;
+  const sessions = new Map();
+  let sequence = 0;
   return {
     describe: async () => ({
-      contractVersion: '1', providerId, providerType: 'playwright',
-      runtimeVersion: session.runtimeVersion, capabilities, transports: ['reverse-relay'],
+      contractVersion: '2', providerId, processInstanceId, providerType: 'playwright',
+      runtimeVersion, capabilities, transports: ['reverse-relay'],
     }),
-    createSession: async () => session,
-    getSession: async (sessionId) => sessionId === session.sessionId ? session : undefined,
-    heartbeat: async () => session,
-    closeSession: async () => undefined,
-    close: async () => undefined,
+    createSession: async () => {
+      const now = Date.now();
+      const session = {
+        sessionId: `e2e-browser-session-${++sequence}`, providerId, protocol: 'playwright', transport: 'reverse-relay',
+        localWsEndpoint, runtimeVersion, capabilities, createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 3_600_000).toISOString(),
+      };
+      sessions.set(session.sessionId, session);
+      return session;
+    },
+    getSession: async (sessionId) => sessions.get(sessionId),
+    heartbeat: async (sessionId) => sessions.get(sessionId),
+    closeSession: async (sessionId) => { sessions.delete(sessionId); },
+    close: async () => { sessions.clear(); },
   };
 }
 

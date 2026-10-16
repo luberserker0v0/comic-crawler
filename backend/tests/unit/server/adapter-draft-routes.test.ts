@@ -117,7 +117,7 @@ describe('Adapter draft routes', () => {
     }
   });
 
-  it('does not execute project-source TypeScript drafts', async () => {
+  it('executes project-source TypeScript drafts without replacing the active adapter', async () => {
     const { app, userPath } = await createApp();
     try {
       const created = await app.inject({ method: 'POST', url: '/api/adapters/happymh/drafts' });
@@ -129,8 +129,16 @@ describe('Adapter draft routes', () => {
         payload: { url: 'https://m.happymh.com/manga/demo' },
       });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json().error).toMatch(/project-source typescript drafts can be saved but not executed/i);
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toMatchObject({
+        ok: true,
+        adapterId: draftId,
+        resultSummary: {
+          matched: true,
+          draftId,
+          baseAdapterId: 'happymh',
+        },
+      });
     } finally {
       await app.close();
       await rm(userPath, { recursive: true, force: true });
@@ -194,7 +202,7 @@ class GeneratedImages extends ChapterImagesCapability {
     }
   });
 
-  it('creates a read/edit draft copy for allowlisted project source without executing it', async () => {
+  it('creates a read/edit draft copy for allowlisted project source', async () => {
     const { app, userPath } = await createApp();
     try {
       const created = await app.inject({ method: 'POST', url: '/api/adapters/happymh/drafts' });

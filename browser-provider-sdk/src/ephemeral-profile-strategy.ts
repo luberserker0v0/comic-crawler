@@ -24,7 +24,6 @@ export class EphemeralProfileStrategy extends BrowserProfileStrategy {
       screenshots: true,
       downloads: true,
       tracing: true,
-      fileTransfer: false,
     };
   }
 

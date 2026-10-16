@@ -9,6 +9,7 @@ export interface GlobalConfig {
   log: LogConfig;
   i18n: I18nConfig;
   maintenance?: MaintenanceConfig;
+  apiSecurity?: ApiSecurityPolicyConfig;
 }
 
 export interface DownloadConfig {
@@ -36,12 +37,12 @@ export interface BrowserConfig {
   mode: 'remote';
   maxInstances: number;
   timeout: number;
+  workerWaitTimeoutMs?: number;
   waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
   waitForSelector?: string;
   postLoadDelayMs?: number;
   challengeAutoAttempt?: boolean;
   challengeWaitMs?: number;
-  storageStatePath?: string;
   remote?: RemoteBrowserConfig;
 }
 
@@ -55,10 +56,22 @@ export interface RemoteBrowserConfig {
 export interface ServerConfig {
   port: number;
   host: string;
-  auth?: {
-    username: string;
-    password: string;
-  };
+}
+
+export type ApiSecurityMode = 'public' | 'token';
+
+export interface ApiSecurityRuleConfig {
+  id: string;
+  methods: string[];
+  path: string;
+  permission: string;
+}
+
+export interface ApiSecurityPolicyConfig {
+  mode: ApiSecurityMode;
+  defaultEffect: 'deny';
+  secretPath?: string;
+  rules: ApiSecurityRuleConfig[];
 }
 
 export interface LogConfig {

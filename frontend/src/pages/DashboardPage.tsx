@@ -70,7 +70,7 @@ export const DashboardPage: React.FC = () => {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-left font-medium text-gray-500">Adapter</th>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">{text.dashboard.adapter}</th>
                 <th className="px-4 py-2 text-left font-medium text-gray-500">{text.dashboard.verificationCapability}</th>
                 <th className="px-4 py-2 text-left font-medium text-gray-500">{text.dashboard.metadataCapability}</th>
                 <th className="px-4 py-2 text-left font-medium text-gray-500">{text.dashboard.chapterImagesCapability}</th>

@@ -110,13 +110,17 @@ The deleted adapter list shows whether an adapter can be restored:
 
 Adapter Lab can create user-owned editable drafts:
 
-- Project-source TypeScript drafts can be saved, reset, diffed, and discarded, but are
-  not executed yet.
+- Project-source TypeScript drafts can be saved, reset, diffed, discarded, and
+  executed in Adapter Lab without replacing the active adapter.
 - Dynamic manifest drafts can be tested through a temporary adapter without
   registering or promoting them.
 
 Drafts are stored under the user data area, not in the Git-tracked repo source.
 Discarding a draft removes that saved user copy.
+
+Project-source drafts are developer-authored code and execute with the backend's
+normal module access. Adapter Lab is a review workbench, not a security sandbox
+for untrusted TypeScript.
 
 ## Fixtures and verified DOM
 

@@ -32,7 +32,7 @@ import type { ChallengeDiscoveryService } from '../../challenge';
 import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
 import type { AdapterFunctionId } from './adapter-function-types';
-import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
@@ -40,6 +40,7 @@ export { testAdapterFunction } from './adapter-function-runner';
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
   getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+  withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
 }
@@ -250,16 +251,16 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
-    const [browser, network] = await Promise.all([
-      options.getBrowserConfig?.(),
-      options.getNetworkConfig?.(),
-    ]);
-    const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+    const network = await options.getNetworkConfig?.();
+    const runExtraction = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
       browser,
       challengeDiscoveryId: body.challengeDiscoveryId,
       challengeDiscoveryService: options.challengeDiscoveryService,
       network,
     });
+    const extraction = options.withBrowserConfig
+      ? await options.withBrowserConfig(request, body.browserTarget, runExtraction)
+      : await runExtraction(await options.getBrowserConfig?.());
     if (!extraction.ok) {
       reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
         error: extraction.error ?? 'Chapter image extraction failed.',
@@ -339,16 +340,16 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
-    const [browser, network] = await Promise.all([
-      options.getBrowserConfig?.(),
-      options.getNetworkConfig?.(),
-    ]);
-    const result = await testAdapterFunction(adapter, functionId, body.url, {
-        browser,
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-      });
+    const network = await options.getNetworkConfig?.();
+    const runTest = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, functionId, body.url, {
+      browser,
+      challengeDiscoveryId: body.challengeDiscoveryId,
+      challengeDiscoveryService: options.challengeDiscoveryService,
+      network,
+    });
+    const result = options.withBrowserConfig
+      ? await options.withBrowserConfig(request, body.browserTarget, runTest)
+      : await runTest(await options.getBrowserConfig?.());
     reply.send({ data: result });
   });
 

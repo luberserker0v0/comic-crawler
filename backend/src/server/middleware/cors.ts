@@ -8,7 +8,7 @@ export function setupCors(app: FastifyInstance, options: CorsOptions): void {
   app.register(require('@fastify/cors'), {
     origin: options.origin,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-ComicCrawler-User-Id'],
     credentials: true,
   });
 }

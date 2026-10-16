@@ -10,6 +10,7 @@ import { TaskManager } from '../../../src/task/manager';
 import { createEmptyCheckpoint } from '../../../src/task/checkpoint';
 import { CrawlerEngine } from '../../../src/crawler/engine';
 import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
+import { BrowserProviderRegistry } from '../../../src/browser/provider-registry';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'task-routes');
 
@@ -20,6 +21,7 @@ describe('Task routes persistence', () => {
   let crawlerEngine: CrawlerEngine;
   let adapterRegistry: AdapterRegistry;
   let challengeJobs: Map<string, any>;
+  let browserProviderRegistry: BrowserProviderRegistry;
 
   beforeEach(async () => {
     await fs.rm(TEST_ROOT, { recursive: true, force: true });
@@ -51,6 +53,7 @@ describe('Task routes persistence', () => {
       concurrency: 1,
       eventBus,
     });
+    browserProviderRegistry = new BrowserProviderRegistry();
 
     await taskManager.createTask({
       id: 'task-1',
@@ -76,6 +79,7 @@ describe('Task routes persistence', () => {
       adapterRegistry,
       crawlerEngine,
       eventBus,
+      browserProviderRegistry,
       selectorDiscoveryService: {
         create: async (input: { url: string; target?: 'full' | 'chapter-only' }) => {
           const id = `disc-${Date.now()}`;
@@ -265,6 +269,36 @@ describe('Task routes persistence', () => {
     expect(task?.data.mode).toBe('chapters');
     expect(task?.data.url).toBe(chapterUrl);
     expect(task?.data.chapterUrls).toEqual([chapterUrl]);
+  });
+
+  it('persists the default worker selection and rejects the removed session input', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+
+    const response = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        mode: 'chapters',
+        url: chapterUrl,
+        chapterUrls: [chapterUrl],
+        browserTarget: { mode: 'any' },
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.browserTarget).toEqual({ mode: 'any' });
+    expect(taskManager.getTask(response.json().data.taskId)?.data).toMatchObject({
+      ownerUserId: 'public',
+      browserTarget: { mode: 'any' },
+    });
+
+    const legacy = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { mode: 'chapters', url: chapterUrl, chapterUrls: [chapterUrl], browserSessionId: 'legacy' },
+    });
+    expect(legacy.statusCode).toBe(400);
+    expect(legacy.json().error).toContain('internal');
   });
 
   it('should reject a specific-chapters task without chapter URLs', async () => {

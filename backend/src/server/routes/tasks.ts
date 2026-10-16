@@ -8,6 +8,9 @@ import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
+import type { BrowserLeaseCoordinator } from '../../browser/lease-coordinator';
+import type { ApiSecurityService } from '../../security/api-security';
+import { requestPrincipal } from '../middleware/api-security';
 import { adapterSupports, isMissingChallengeJobError, recreateChallengeJobForTask } from './tasks-challenge';
 import { buildTaskDownloadPreview, contentTypeForImage, isPreviewImage, resolvePreviewRoot } from './tasks-preview';
 
@@ -26,7 +29,11 @@ export function setupTasksRoutes(
   adapterRegistry: AdapterRegistry,
   discoveryService?: SelectorDiscoveryService,
   challengeDiscoveryService?: ChallengeDiscoveryService,
-  options?: { downloadDir?: string | (() => string | Promise<string>) }
+  options?: {
+    downloadDir?: string | (() => string | Promise<string>);
+    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    apiSecurity?: ApiSecurityService;
+  }
 ): void {
   app.get('/api/tasks', async (_request: FastifyRequest, reply: FastifyReply) => {
     const tasks = taskManager.getAllTasks();
@@ -44,6 +51,7 @@ export function setupTasksRoutes(
           startedAt: t.startedAt,
           completedAt: t.completedAt,
           error: t.error,
+          browserTarget: t.data.browserTarget,
           progress: taskManager.getProgress(t.id)
             ? {
                 totalItems: taskManager.getProgress(t.id)!.totalItems,
@@ -96,6 +104,7 @@ export function setupTasksRoutes(
           startedAt: task.startedAt,
           completedAt: task.completedAt,
           error: task.error,
+          browserTarget: task.data.browserTarget,
         },
         progress,
         result,
@@ -144,8 +153,17 @@ export function setupTasksRoutes(
       chapters?: string[];
       chapterUrls?: string[];
       priority?: number;
+      browserTarget?: { mode?: string; workerId?: string };
     };
     const mode = body.mode ?? 'all';
+    const principal = options?.apiSecurity
+      ? requestPrincipal(request, options.apiSecurity)
+      : undefined;
+
+    if ('browserSessionId' in ((request.body ?? {}) as Record<string, unknown>)) {
+      reply.code(400).send({ error: 'browserSessionId is internal. Select browserTarget.workerId instead.' });
+      return;
+    }
 
     if (!body.url) {
       reply.code(400).send({ error: 'URL is required' });
@@ -173,6 +191,18 @@ export function setupTasksRoutes(
       return;
     }
 
+    const browserTarget = parseBrowserTarget(body.browserTarget);
+    if (browserTarget instanceof Error) {
+      reply.code(400).send({ error: browserTarget.message });
+      return;
+    }
+    try {
+      options?.browserLeaseCoordinator?.validateTarget(principal?.userId ?? 'public', browserTarget);
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
     const lookupUrl = mode === 'chapters' ? chapterUrls[0] ?? body.url : body.url;
     const requiredCapabilities = mode === 'chapters'
       ? { chapterImages: true }
@@ -192,6 +222,8 @@ export function setupTasksRoutes(
             url: lookupUrl,
             target: mode === 'chapters' ? 'chapter-only' : 'full',
             forceDiscovery: true,
+            ownerUserId: principal?.userId ?? 'public',
+            browserTarget,
           });
           reply.code(202).send({
             data: {
@@ -229,7 +261,10 @@ export function setupTasksRoutes(
         const anyMatchedAdapter = exactMatchedAdapter ?? domainSupplementAdapter;
         if (discoveryService) {
           if (!anyMatchedAdapter && challengeDiscoveryService) {
-            const challengeProbe = await challengeDiscoveryService.probe(lookupUrl);
+            const challengeProbe = await challengeDiscoveryService.probe(lookupUrl, {
+              ownerUserId: principal?.userId ?? 'public',
+              browserTarget,
+            });
             if (challengeProbe.status === 'challenge' && challengeProbe.job) {
               reply.code(202).send({
                 data: {
@@ -248,6 +283,8 @@ export function setupTasksRoutes(
             url: lookupUrl,
             target: mode === 'chapters' ? 'chapter-only' : 'full',
             forceDiscovery: Boolean(anyMatchedAdapter),
+            ownerUserId: principal?.userId ?? 'public',
+            browserTarget,
           });
           reply.code(202).send({
             data: {
@@ -289,9 +326,17 @@ export function setupTasksRoutes(
       chapters: body.chapters,
       chapterUrls,
       priority: body.priority ?? 0,
+      ownerUserId: principal?.userId ?? 'public',
+      browserTarget,
     });
 
-    reply.code(201).send({ data: { kind: 'taskCreated', taskId } });
+    reply.code(201).send({
+      data: {
+        kind: 'taskCreated',
+        taskId,
+        browserTarget,
+      },
+    });
   });
 
   app.post('/api/tasks/:id/pause', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -362,6 +407,7 @@ export function setupTasksRoutes(
         error: undefined,
       });
       await taskManager.updateTaskError(id, undefined);
+      challengeDiscoveryService.detachBrowserLease?.(challengeDiscoveryId);
     }
 
     const success = await taskManager.resumeTask(id);
@@ -383,6 +429,10 @@ export function setupTasksRoutes(
       return;
     }
 
+    const challengeDiscoveryId = taskManager.getTaskResult(id)?.challengeDiscoveryId;
+    if (challengeDiscoveryId) await challengeDiscoveryService?.releaseBrowserLease?.(challengeDiscoveryId);
+    await options?.browserLeaseCoordinator?.releaseTask(id);
+
     reply.send({ data: { message: 'Task cancelled' } });
   });
 
@@ -391,6 +441,7 @@ export function setupTasksRoutes(
     const query = request.query as { deleteFiles?: string | boolean };
     const deleteFiles = query.deleteFiles === true || query.deleteFiles === 'true' || query.deleteFiles === '1';
     const downloadDir = typeof options?.downloadDir === 'function' ? await options.downloadDir() : options?.downloadDir;
+    const challengeDiscoveryId = taskManager.getTaskResult(id)?.challengeDiscoveryId;
     const outcome = await taskManager.deleteTaskWithFiles(id, deleteFiles ? { deleteFiles: true, downloadDir } : undefined);
 
     if (!outcome.deleted) {
@@ -398,6 +449,18 @@ export function setupTasksRoutes(
       return;
     }
 
+    if (challengeDiscoveryId) await challengeDiscoveryService?.releaseBrowserLease?.(challengeDiscoveryId);
+    await options?.browserLeaseCoordinator?.releaseTask(id);
+
     reply.send({ data: { message: 'Task deleted', filesDeleted: outcome.filesDeleted, filesSkipped: outcome.filesSkipped } });
   });
+}
+
+function parseBrowserTarget(value: { mode?: string; workerId?: string } | undefined) {
+  if (value === undefined || value.mode === 'any') return { mode: 'any' as const };
+  const workerId = value.workerId?.trim();
+  if (value.mode !== 'specific' || !workerId) {
+    return new Error('browserTarget must be { mode: "any" } or { mode: "specific", workerId: "..." }.');
+  }
+  return { mode: 'specific' as const, workerId };
 }

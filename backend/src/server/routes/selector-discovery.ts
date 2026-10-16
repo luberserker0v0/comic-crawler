@@ -3,10 +3,13 @@ import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '.
 import { SelectorDiscoveryBundleManager } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
-import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 import { setupSelectorDiscoverySettingsRoutes } from './selector-discovery-settings';
 import { setupDiscoveryDraftFunctionRoutes } from './selector-discovery-function-routes';
+import type { BrowserLeaseCoordinator } from '../../browser/lease-coordinator';
+import type { ApiSecurityService } from '../../security/api-security';
+import { requestPrincipal } from '../middleware/api-security';
 
 export function setupSelectorDiscoveryRoutes(
   app: FastifyInstance,
@@ -17,7 +20,10 @@ export function setupSelectorDiscoveryRoutes(
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
     getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    apiSecurity?: ApiSecurityService;
   } = {}
 ): void {
   setupSelectorDiscoverySettingsRoutes(app, settingsStore, bundleManager);
@@ -33,7 +39,10 @@ function setupDiscoveryJobRoutes(
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
     getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    apiSecurity?: ApiSecurityService;
   } = {}
 ): void {
   app.post(prefix, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -45,6 +54,7 @@ function setupDiscoveryJobRoutes(
         providerDocument?: unknown;
         model?: string;
         forceDiscovery?: boolean;
+        browserTarget?: { mode?: string; workerId?: string };
       };
       if (!body.url) {
         reply.code(400).send({ error: 'URL is required.' });
@@ -54,6 +64,10 @@ function setupDiscoveryJobRoutes(
         reply.code(400).send({ error: 'Discovery target must be "full" or "chapter-only".' });
         return;
       }
+      const principal = options.apiSecurity
+        ? requestPrincipal(request, options.apiSecurity)
+        : undefined;
+      const browserTarget = validateBrowserTarget(body.browserTarget, principal?.userId ?? 'public', options.browserLeaseCoordinator);
 
       const job = await discoveryService.create({
         url: body.url,
@@ -62,6 +76,8 @@ function setupDiscoveryJobRoutes(
         providerDocument: body.providerDocument as any,
         model: body.model,
         forceDiscovery: body.forceDiscovery,
+        ownerUserId: principal?.userId ?? 'public',
+        browserTarget,
       });
       reply.code(job.status === 'known_adapter' ? 200 : 202).send({ data: job });
     } catch (error) {
@@ -80,6 +96,7 @@ function setupDiscoveryJobRoutes(
         providerDocument?: unknown;
         model?: string;
         forceDiscovery?: boolean;
+        browserTarget?: { mode?: string; workerId?: string };
       };
       if (!body.url) {
         reply.code(400).send({ error: 'URL is required.' });
@@ -105,6 +122,10 @@ function setupDiscoveryJobRoutes(
         });
         return;
       }
+      const principal = options.apiSecurity
+        ? requestPrincipal(request, options.apiSecurity)
+        : undefined;
+      const browserTarget = validateBrowserTarget(body.browserTarget, principal?.userId ?? 'public', options.browserLeaseCoordinator);
 
       const job = await discoveryService.create({
         url: body.url,
@@ -113,6 +134,8 @@ function setupDiscoveryJobRoutes(
         providerDocument: body.providerDocument as any,
         model: body.model,
         forceDiscovery: body.forceDiscovery ?? true,
+        ownerUserId: principal?.userId ?? 'public',
+        browserTarget,
         htmlSnapshot: {
           html: body.html,
           finalUrl: body.finalUrl,
@@ -168,4 +191,19 @@ function setupDiscoveryJobRoutes(
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+}
+
+function validateBrowserTarget(
+  value: { mode?: string; workerId?: string } | undefined,
+  ownerUserId: string,
+  coordinator: BrowserLeaseCoordinator | undefined
+) {
+  if (value === undefined || value.mode === 'any') return { mode: 'any' as const };
+  const workerId = value.workerId?.trim();
+  if (value.mode !== 'specific' || !workerId) {
+    throw new Error('browserTarget must be { mode: "any" } or { mode: "specific", workerId: "..." }.');
+  }
+  const target = { mode: 'specific' as const, workerId };
+  coordinator?.validateTarget(ownerUserId, target);
+  return target;
 }

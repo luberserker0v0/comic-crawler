@@ -2,6 +2,7 @@ export type TaskStatus =
   | 'pending'
   | 'running'
   | 'paused'
+  | 'waiting_for_browser_worker'
   | 'waiting_verification'
   | 'completed'
   | 'failed'
@@ -19,16 +20,17 @@ export interface TaskItem<T = unknown> {
   error?: string;
 }
 
-export interface TaskQueueOptions {
+export interface TaskSchedulerOptions {
   concurrency: number;
   autoStart?: boolean;
 }
 
-export interface TaskQueueStats {
+export interface TaskSchedulerStats {
   total: number;
   pending: number;
   running: number;
   waitingVerification: number;
+  waitingForBrowserWorker: number;
   interrupted: number;
   completed: number;
   failed: number;

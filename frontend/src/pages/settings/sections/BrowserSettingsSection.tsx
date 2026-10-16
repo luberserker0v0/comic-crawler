@@ -1,25 +1,37 @@
+import { useI18n } from '../../../text/i18n';
+
 export function BrowserSettingsSection(props: {
   form: any;
   handleChange: (section: string, key: string, value: any) => void;
-  remoteTestMessage: string | null;
-  handleRemoteTest: () => void;
 }) {
-  const { form, handleChange, remoteTestMessage, handleRemoteTest } = props;
+  const { form, handleChange } = props;
+  const { text } = useI18n();
 
   return (
     <div className="space-y-4 rounded-lg bg-white p-6 shadow" data-testid="browser-crawler-settings">
       <div>
-        <h2 className="text-lg font-semibold">Remote Browser Crawler</h2>
+        <h2 className="text-lg font-semibold">{text.settings.browserTitle}</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Every crawl, selector-discovery render, and verification handoff uses the same user-side Playwright service.
+          {text.settings.browserDescription}
         </p>
         <p className="mt-1 text-sm text-amber-700">
-          ComicCrawler never launches a browser locally. Enroll and connect the Browser Provider client on the user device.
+          {text.settings.browserNoLocal}
         </p>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700">Wait until</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.workerWaitTimeout}</label>
+          <input
+            type="number"
+            value={(form as any).browser?.workerWaitTimeoutMs ?? 1800000}
+            onChange={(e) => handleChange('browser', 'workerWaitTimeoutMs', Number(e.target.value))}
+            min={1000}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+          />
+          <p className="mt-1 text-xs text-slate-500">{text.settings.workerWaitTimeoutHelp}</p>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.waitUntil}</label>
           <select
             data-testid="browser-wait-until-select"
             value={(form as any).browser?.waitUntil ?? 'domcontentloaded'}
@@ -32,7 +44,7 @@ export function BrowserSettingsSection(props: {
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Timeout (ms)</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.timeout}</label>
           <input
             data-testid="browser-timeout-input"
             type="number"
@@ -43,7 +55,7 @@ export function BrowserSettingsSection(props: {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Max browser instances</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.maxBrowserInstances}</label>
           <input
             type="number"
             value={(form as any).browser?.maxInstances ?? 2}
@@ -54,7 +66,7 @@ export function BrowserSettingsSection(props: {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Wait for selector</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.waitForSelector}</label>
           <input
             data-testid="browser-wait-selector-input"
             type="text"
@@ -65,7 +77,7 @@ export function BrowserSettingsSection(props: {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Post-load delay (ms)</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.postLoadDelay}</label>
           <input
             type="number"
             value={(form as any).browser?.postLoadDelayMs ?? 0}
@@ -75,7 +87,7 @@ export function BrowserSettingsSection(props: {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Challenge wait (ms)</label>
+          <label className="block text-sm font-medium text-gray-700">{text.settings.challengeWait}</label>
           <input
             data-testid="browser-challenge-wait-input"
             type="number"
@@ -85,7 +97,7 @@ export function BrowserSettingsSection(props: {
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
           />
           <p className="mt-1 text-xs text-slate-500">
-            If a JavaScript challenge appears, Playwright waits this long for it to complete naturally before marking the page blocked.
+            {text.settings.challengeWaitHelp}
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -96,38 +108,8 @@ export function BrowserSettingsSection(props: {
             onChange={(e) => handleChange('browser', 'challengeAutoAttempt', e.target.checked)}
             className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
           />
-          Attempt JavaScript challenge automatically
+          {text.settings.challengeAutoAttempt}
         </label>
-        <div className="md:col-span-3">
-          <label className="block text-sm font-medium text-gray-700">Storage state path</label>
-          <input
-            data-testid="browser-storage-state-input"
-            type="text"
-            value={(form as any).browser?.storageStatePath ?? ''}
-            onChange={(e) => handleChange('browser', 'storageStatePath', e.target.value || undefined)}
-            placeholder="D:\\path\\to\\storage-state.json"
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            Use a Playwright storageState JSON exported after you manually pass a site challenge.
-          </p>
-        </div>
-        <div className="md:col-span-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-          <div className="font-medium text-slate-800">Browser Provider session</div>
-          <p className="mt-1 text-xs text-slate-500">
-            Browser traffic uses the provider's outbound reverse relay. No WebSocket endpoint is entered here.
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleRemoteTest}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-100"
-            >
-              Test active session
-            </button>
-            {remoteTestMessage && <span className="text-sm text-slate-600">{remoteTestMessage}</span>}
-          </div>
-        </div>
       </div>
     </div>
   );

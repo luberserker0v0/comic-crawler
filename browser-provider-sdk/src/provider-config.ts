@@ -1,10 +1,15 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { BrowserProviderEnrollmentResponse, BrowserProviderState } from './contracts';
+import type { BrowserProviderRegistrationResponse, BrowserProviderState } from './contracts';
 
 export interface BrowserProviderClientConfig {
   serverUrl: string;
+  providerName?: string;
+  authentication?: {
+    userId: string;
+    tokenFile: string;
+  };
   browser?: {
     headless?: boolean;
     channel?: string;
@@ -26,7 +31,7 @@ export async function loadProviderConfig(path: string): Promise<BrowserProviderC
 
 export async function loadProviderState(path = defaultProviderStatePath()): Promise<BrowserProviderState> {
   const state = JSON.parse(await fs.readFile(resolve(path), 'utf8')) as BrowserProviderState;
-  if (state.schemaVersion !== 1 || !state.providerId || !state.credential?.file) {
+  if (state.schemaVersion !== 2 || !state.providerId || !state.clientInstanceId || !state.credential?.file) {
     throw new Error(`Invalid browser provider state: ${path}`);
   }
   return state;
@@ -46,8 +51,8 @@ export function defaultCredentialPath(statePath: string): string {
   return join(dirname(resolve(statePath)), 'provider.credential');
 }
 
-export async function writeEnrollmentFiles(input: {
-  enrollment: BrowserProviderEnrollmentResponse;
+export async function writeProviderFiles(input: {
+  registration: BrowserProviderRegistrationResponse;
   serverUrl: string;
   stateOutput?: string;
   credentialOutput?: string;
@@ -55,18 +60,19 @@ export async function writeEnrollmentFiles(input: {
   const statePath = resolve(input.stateOutput ?? defaultProviderStatePath());
   const credentialPath = resolve(input.credentialOutput ?? defaultCredentialPath(statePath));
   await Promise.all([fs.mkdir(dirname(statePath), { recursive: true }), fs.mkdir(dirname(credentialPath), { recursive: true })]);
-  await fs.writeFile(credentialPath, `${input.enrollment.credential}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  await fs.writeFile(credentialPath, `${input.registration.credential}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   try {
     const state: BrowserProviderState = {
-      schemaVersion: 1,
-      providerId: input.enrollment.providerId,
+      schemaVersion: 2,
+      providerId: input.registration.providerId,
+      clientInstanceId: input.registration.clientInstanceId,
       serverUrl: input.serverUrl,
       credential: {
-        type: 'device-token',
-        credentialId: input.enrollment.credentialId,
+        type: 'provider-token',
+        credentialId: input.registration.credentialId,
         file: credentialPath.replace(/\\/g, '/'),
       },
-      enrolledAt: input.enrollment.enrolledAt,
+      registeredAt: input.registration.registeredAt,
     };
     await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   } catch (error) {

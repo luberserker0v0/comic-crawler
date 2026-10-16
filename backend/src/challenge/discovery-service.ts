@@ -1,5 +1,5 @@
 import type { Browser, BrowserContext } from 'playwright';
-import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
 import { fetchSafeHtml, normalizeAndValidateUrl } from '../selector-discovery/safe-fetch';
 import { looksLikeAccessBlocked, looksLikeAntiBotChallenge } from '../crawler/anti-bot';
@@ -9,7 +9,7 @@ import { getGlobalVerifiedBrowserSessionRegistry, type VerifiedBrowserSession } 
 import { loadChallengeStrategyFromSource } from './strategy-loader';
 import { validateChallengeStrategySource } from './strategy-validator';
 import type { ChallengeDiscoveryJob } from './discovery-types';
-import { findPageHtmlInContexts, inspectRemoteBrowser, type RemoteConnectionSummary } from './remote-handoff';
+import { findPageHtmlInContexts } from './remote-handoff';
 import { connectRemoteBrowser, requireRemoteBrowserEndpoint } from '../browser/remote-browser-provider';
 
 const JOB_PREFIX = 'challenge-discovery-job-';
@@ -18,11 +18,26 @@ const ACTIVE_STRATEGIES_KEY = 'challenge-discovery-active-strategies';
 
 export interface ChallengeDiscoveryServiceOptions {
   workspaceRoot?: string;
-  getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
+  getBrowserConfig?: (browserSessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  acquireBrowserSession?: (input: { jobId: string; ownerUserId: string; browserTarget?: BrowserTarget }) => Promise<{ sessionId: string; release(): Promise<void> }>;
 }
 
+interface TransferredBrowserLease {
+  sessionId: string;
+  release(): Promise<void>;
+}
+
+type ChallengeDiscoveryInput = {
+  url: string;
+  browserSessionId?: string;
+  browserLease?: TransferredBrowserLease;
+  ownerUserId?: string;
+  browserTarget?: BrowserTarget;
+};
+
 export class ChallengeDiscoveryService {
+  private readonly ownedBrowserLeases = new Map<string, { release(): Promise<void> }>();
   private readonly browserContexts = new Map<string, {
     browser: Browser;
     context: BrowserContext;
@@ -34,23 +49,30 @@ export class ChallengeDiscoveryService {
     private readonly options: ChallengeDiscoveryServiceOptions = {}
   ) {}
 
-  async create(input: { url: string }): Promise<ChallengeDiscoveryJob> {
+  async create(input: ChallengeDiscoveryInput): Promise<ChallengeDiscoveryJob> {
     const job = await this.createQueuedJob(input);
-    return this.run(job.id);
+    const result = await this.run(job.id);
+    if (result.status === 'failed') await this.releaseBrowserLease(job.id);
+    return result;
   }
 
-  async createDeferred(input: { url: string }): Promise<ChallengeDiscoveryJob> {
+  async createDeferred(input: ChallengeDiscoveryInput): Promise<ChallengeDiscoveryJob> {
     const job = await this.createQueuedJob(input);
-    void this.run(job.id).catch(async (error) => {
+    void this.run(job.id).then(async (result) => {
+      if (result.status === 'failed' || (result.status === 'ready' && !input.browserLease)) {
+        await this.releaseBrowserLease(job.id);
+      }
+    }).catch(async (error) => {
       await this.updateJob(job.id, {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => undefined);
+      await this.releaseBrowserLease(job.id).catch(() => undefined);
     });
     return job;
   }
 
-  private async createQueuedJob(input: { url: string }): Promise<ChallengeDiscoveryJob> {
+  private async createQueuedJob(input: ChallengeDiscoveryInput): Promise<ChallengeDiscoveryJob> {
     const normalizedUrl = normalizeAndValidateUrl(input.url);
     const hostname = new URL(normalizedUrl).hostname;
     const now = new Date().toISOString();
@@ -60,23 +82,43 @@ export class ChallengeDiscoveryService {
       normalizedUrl,
       hostname,
       status: 'queued',
+      browserSessionId: input.browserLease?.sessionId ?? input.browserSessionId,
+      ownerUserId: input.ownerUserId,
+      browserTarget: input.browserTarget,
       createdAt: now,
       updatedAt: now,
     };
     await this.saveJob(job);
+    if (input.browserLease) this.ownedBrowserLeases.set(job.id, input.browserLease);
     return job;
   }
 
-  async probe(url: string): Promise<{ status: 'ready' | 'challenge' | 'failed'; job?: ChallengeDiscoveryJob; error?: string }> {
-    try {
-      await this.renderReady(url);
+  async probe(url: string, input: { ownerUserId?: string; browserTarget?: BrowserTarget } = {}): Promise<{ status: 'ready' | 'challenge' | 'failed'; job?: ChallengeDiscoveryJob; error?: string }> {
+    const job = await this.create({ url, ...input });
+    if (job.status === 'ready') {
+      await this.releaseBrowserLease(job.id);
       return { status: 'ready' };
-    } catch (error) {
-      if (isAntiBotChallengeError(error)) {
-        return { status: 'challenge', job: await this.create({ url }) };
-      }
-      return { status: 'failed', error: error instanceof Error ? error.message : String(error) };
     }
+    if (['challenge_detected', 'challenge_required', 'access_blocked'].includes(job.status)) {
+      return { status: 'challenge', job };
+    }
+    return { status: 'failed', job, error: job.error };
+  }
+
+  async releaseBrowserLease(id: string): Promise<void> {
+    const lease = this.ownedBrowserLeases.get(id);
+    if (!lease) return;
+    this.ownedBrowserLeases.delete(id);
+    await lease.release();
+    await this.updateJob(id, { browserSessionId: undefined }).catch(() => undefined);
+  }
+
+  detachBrowserLease(id: string): void {
+    this.ownedBrowserLeases.delete(id);
+  }
+
+  async dispose(): Promise<void> {
+    await Promise.all([...this.ownedBrowserLeases.keys()].map((id) => this.releaseBrowserLease(id)));
   }
 
   async retry(id: string): Promise<ChallengeDiscoveryJob> {
@@ -127,7 +169,7 @@ export class ChallengeDiscoveryService {
       await existing.browser.close().catch(() => undefined);
       this.browserContexts.delete(job.id);
     }
-    const browserConfig = await this.getBrowserConfig();
+    const browserConfig = await this.getBrowserConfig(job.browserSessionId);
     const network = await this.getNetworkConfig();
     const wsEndpoint = requireRemoteBrowserEndpoint({
       wsEndpoint: browserConfig.remote?.wsEndpoint,
@@ -142,7 +184,6 @@ export class ChallengeDiscoveryService {
       userAgent: network?.userAgent,
       proxy: network?.proxy ? { server: network.proxy } : undefined,
       viewport: { width: 1920, height: 1080 },
-      storageState: browserConfig.storageStatePath,
     });
     const page = context.pages()[0] ?? await context.newPage();
     await page.goto(job.normalizedUrl, {
@@ -155,14 +196,6 @@ export class ChallengeDiscoveryService {
       error: undefined,
     });
     return this.getRequiredJob(job.id);
-  }
-
-  async testRemoteConnection(wsEndpoint?: string): Promise<RemoteConnectionSummary> {
-    const resolved = wsEndpoint ?? (await this.getBrowserConfig()).remote?.wsEndpoint;
-    if (!resolved) {
-      throw new Error('No active Browser Provider session is available.');
-    }
-    return inspectRemoteBrowser(resolved);
   }
 
   async inspectRemotePage(id: string): Promise<ChallengeDiscoveryJob> {
@@ -299,6 +332,7 @@ export class ChallengeDiscoveryService {
       this.browserContexts.delete(id);
     }
     getGlobalVerifiedBrowserSessionRegistry().deleteBySourceJobId(id);
+    await this.releaseBrowserLease(id);
     return true;
   }
 
@@ -309,10 +343,10 @@ export class ChallengeDiscoveryService {
   }
 
   private async run(id: string): Promise<ChallengeDiscoveryJob> {
-    const job = await this.getRequiredJob(id);
+    const job = await this.ensureBrowserSession(await this.getRequiredJob(id));
     try {
       await this.updateJob(id, { status: 'challenge_detected', error: undefined });
-      await this.renderReady(job.normalizedUrl);
+      await this.renderReady(job.normalizedUrl, {}, job.browserSessionId);
       await this.updateJob(id, {
         status: 'ready',
         diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n',
@@ -356,8 +390,8 @@ export class ChallengeDiscoveryService {
     }
   }
 
-  private async renderReady(url: string, browserPatch: Partial<BrowserConfig> = {}): Promise<void> {
-    const [browser, network] = await Promise.all([this.getBrowserConfig(), this.getNetworkConfig()]);
+  private async renderReady(url: string, browserPatch: Partial<BrowserConfig> = {}, browserSessionId?: string): Promise<void> {
+    const [browser, network] = await Promise.all([this.getBrowserConfig(browserSessionId), this.getNetworkConfig()]);
     await fetchSafeHtml(url, { browser: { ...browser, ...browserPatch }, network });
   }
 
@@ -365,9 +399,9 @@ export class ChallengeDiscoveryService {
     getGlobalVerifiedBrowserSessionRegistry().register(session);
   }
 
-  private async getBrowserConfig(): Promise<BrowserConfig> {
+  private async getBrowserConfig(browserSessionId?: string): Promise<BrowserConfig> {
     return this.options.getBrowserConfig
-      ? await this.options.getBrowserConfig()
+      ? await this.options.getBrowserConfig(browserSessionId)
       : {
           mode: 'remote',
           maxInstances: 1,
@@ -376,6 +410,18 @@ export class ChallengeDiscoveryService {
           challengeAutoAttempt: true,
           challengeWaitMs: 15000,
         };
+  }
+
+  private async ensureBrowserSession(job: ChallengeDiscoveryJob): Promise<ChallengeDiscoveryJob> {
+    if (job.browserSessionId || !this.options.acquireBrowserSession) return job;
+    const lease = await this.options.acquireBrowserSession({
+      jobId: job.id,
+      ownerUserId: job.ownerUserId ?? 'public',
+      browserTarget: job.browserTarget,
+    });
+    this.ownedBrowserLeases.set(job.id, lease);
+    await this.updateJob(job.id, { browserSessionId: lease.sessionId });
+    return this.getRequiredJob(job.id);
   }
 
   private async getNetworkConfig(): Promise<NetworkConfig | undefined> {

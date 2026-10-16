@@ -4,13 +4,8 @@ import type {
   AdapterImplementationSymbol,
   AdapterResolveResponse,
 } from '@comiccrawler/shared';
-
-export const capabilityLabels: Record<AdapterFunctionCapability, string> = {
-  common: 'Common',
-  verification: 'Verification handoff',
-  metadata: 'Manga metadata',
-  chapterImages: 'Chapter images',
-};
+import { useI18n } from '../../text/i18n';
+import { formatText } from '../../text/format';
 
 export const capabilityOrder: AdapterFunctionCapability[] = ['common', 'verification', 'metadata', 'chapterImages'];
 
@@ -35,10 +30,10 @@ export function isCapabilityAllowedForUrlKind(capability: AdapterFunctionCapabil
   return false;
 }
 
-export function urlKindDescription(kind: AdapterLabUrlKind): string {
-  if (kind === 'manga') return 'This URL looks like a manga catalog page. Metadata functions are available; chapter image functions require a chapter URL.';
-  if (kind === 'chapter') return 'This URL looks like a chapter page. Chapter image functions are available; metadata functions require a manga catalog URL.';
-  return 'Enter a manga catalog URL or chapter URL to unlock matching adapter functions.';
+export function urlKindDescription(kind: AdapterLabUrlKind, text: { mangaUrlDescription: string; chapterUrlDescription: string; unknownUrlDescription: string }): string {
+  if (kind === 'manga') return text.mangaUrlDescription;
+  if (kind === 'chapter') return text.chapterUrlDescription;
+  return text.unknownUrlDescription;
 }
 
 export function formatLineRange(symbol: AdapterImplementationSymbol): string {
@@ -89,6 +84,7 @@ export function renderChapterRows(chapters: ChapterSummaryItem[]) {
 }
 
 export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, unknown> }> = ({ summary }) => {
+  const { text } = useI18n();
   const chapters = getChapterSummaryItems(summary);
   const imageUrls = getImageUrls(summary);
   if (chapters.length > 0) {
@@ -97,15 +93,15 @@ export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, un
       <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-semibold text-gray-900">Extracted chapters</div>
-            <div className="text-gray-600">{chapterCount} chapters returned by the adapter function.</div>
+            <div className="text-sm font-semibold text-gray-900">{text.lab.extractedChapters}</div>
+            <div className="text-gray-600">{formatText(text.lab.chaptersReturned, { count: chapterCount })}</div>
           </div>
         </div>
         <ol className="mt-3 space-y-2">{renderChapterRows(chapters.slice(0, 5))}</ol>
         {chapters.length > 5 && (
           <details className="mt-3">
             <summary className="cursor-pointer text-blue-700">
-              Show all {chapters.length} chapters
+              {formatText(text.lab.showAllChapters, { count: chapters.length })}
             </summary>
             <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
               {renderChapterRows(chapters)}
@@ -113,7 +109,7 @@ export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, un
           </details>
         )}
         <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
+          <summary className="cursor-pointer text-gray-600">{text.lab.rawResult}</summary>
           <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
             {JSON.stringify(summary, null, 2)}
           </pre>
@@ -126,8 +122,8 @@ export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, un
     const imageUrlCount = typeof summary.imageUrlCount === 'number' ? summary.imageUrlCount : imageUrls.length;
     return (
       <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
-        <div className="text-sm font-semibold text-gray-900">Extracted image URLs</div>
-        <div className="text-gray-600">{imageUrlCount} image URLs returned by the adapter function.</div>
+        <div className="text-sm font-semibold text-gray-900">{text.lab.extractedImageUrls}</div>
+        <div className="text-gray-600">{formatText(text.lab.imageUrlsReturned, { count: imageUrlCount })}</div>
         <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
           {imageUrls.map((url, index) => (
             <li key={`${url}-${index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
@@ -137,7 +133,7 @@ export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, un
           ))}
         </ol>
         <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">Raw result JSON</summary>
+          <summary className="cursor-pointer text-gray-600">{text.lab.rawResult}</summary>
           <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
             {JSON.stringify(summary, null, 2)}
           </pre>

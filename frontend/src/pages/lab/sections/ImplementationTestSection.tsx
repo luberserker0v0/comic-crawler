@@ -7,7 +7,9 @@ import type {
   ChallengeHandoffJobSummary,
 } from '@comiccrawler/shared';
 import { ImplementationDiffEditor, ImplementationEditor, type EditorLanguage } from '../../../components/ImplementationEditor';
-import { AdapterFunctionResultSummary, capabilityLabels, formatLineRange } from '../widgets';
+import { AdapterFunctionResultSummary, formatLineRange } from '../widgets';
+import { useI18n } from '../../../text/i18n';
+import { formatText } from '../../../text/format';
 
 export function ImplementationTestSection(props: {
   selectedFunction: { label: string; notes?: string; inputKind?: string } | undefined;
@@ -77,20 +79,27 @@ export function ImplementationTestSection(props: {
     openVerificationBrowser,
     continueAfterVerification,
   } = props;
+  const { text } = useI18n();
+  const capabilityLabels = {
+    common: text.lab.commonCapability,
+    verification: text.agent.capabilityVerification,
+    metadata: text.agent.capabilityMetadata,
+    chapterImages: text.agent.capabilityChapterImages,
+  };
 
   return (
     <section className="rounded-lg bg-white p-5 shadow">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">4. Implementation / Test</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{text.lab.implementationStep}</h2>
           {selectedFunction && (
             <p className="mt-1 text-sm text-gray-600">
-              Test target: <span className="font-mono">{selectedFunction.label}</span>. {selectedFunction.notes} Input kind: <span className="font-medium">{selectedFunction.inputKind}</span>
+              {text.lab.testTarget}: <span className="font-mono">{selectedFunction.label}</span>. {selectedFunction.notes} {text.lab.inputKind}: <span className="font-medium">{selectedFunction.inputKind}</span>
             </p>
           )}
           {selectedSymbol?.startLine && (
             <p className="mt-1 text-xs text-gray-500">
-              Implementation symbol: {formatLineRange(selectedSymbol)}. The full adapter artifact remains visible because helpers and constants can be shared.
+              {text.lab.implementationSymbol}: {formatLineRange(selectedSymbol)}. {text.lab.sharedArtifactNote}
             </p>
           )}
         </div>
@@ -101,21 +110,21 @@ export function ImplementationTestSection(props: {
           disabled={!selectedFunctionId || !selectedFunctionAllowed || !url || loading === 'test' || Boolean(draft && !canExecuteDraft)}
           className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:bg-gray-300"
         >
-          {loading === 'test' ? 'Testing...' : draft ? 'Test draft' : 'Test'}
+          {loading === 'test' ? text.lab.testing : draft ? text.lab.testDraft : text.lab.test}
         </button>
       </div>
 
       {capabilityDetail && (
         <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-          <div className="text-sm font-medium text-gray-800">Adapter DOM strategy</div>
+          <div className="text-sm font-medium text-gray-800">{text.lab.domStrategy}</div>
           <div className="mt-1 text-sm text-gray-700">
-            Playwright render
+            {text.lab.playwrightRender}
           </div>
           <div className="mt-1 text-sm text-gray-700">
-            Human verification handoff: {capabilityDetail.adapter.capabilities.verification ? 'supported' : 'not supported'}
+            {text.lab.verificationHandoff}: {capabilityDetail.adapter.capabilities.verification ? text.lab.supported : text.lab.unsupported}
           </div>
           <div className="mt-1 text-xs text-gray-500">
-            This is adapter metadata. Adapter Lab uses it automatically; users do not choose crawler mode per test.
+            {text.lab.domStrategyHelp}
           </div>
         </div>
       )}
@@ -133,16 +142,14 @@ export function ImplementationTestSection(props: {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="font-medium text-gray-900">
-                {isDraftMode ? 'Editable draft' : 'Active adapter implementation'}
-                {hasUnsavedDraftChanges && <span className="ml-2 text-amber-700">Unsaved changes</span>}
-                {isDraftMode && !hasUnsavedDraftChanges && <span className="ml-2 text-emerald-700">Saved</span>}
+                {isDraftMode ? text.lab.editableDraft : text.lab.activeImplementation}
+                {hasUnsavedDraftChanges && <span className="ml-2 text-amber-700">{text.lab.unsavedChanges}</span>}
+                {isDraftMode && !hasUnsavedDraftChanges && <span className="ml-2 text-emerald-700">{text.lab.saved}</span>}
               </div>
               <div className="mt-1 text-xs text-gray-600">
                 {isDraftMode
-                  ? canExecuteDraft
-                    ? `Draft ${draft?.draft.draftId} is stored under user adapter-drafts. Tests run against this temporary draft manifest and do not modify the active adapter.`
-                    : `Draft ${draft?.draft.draftId} is stored under user adapter-drafts. Project-source TypeScript draft execution is not supported yet.`
-                  : 'The active adapter is read-only. Create a draft to edit and save a user-owned copy.'}
+                  ? formatText(text.lab.draftTestHelp, { id: draft?.draft.draftId ?? '-' })
+                  : text.lab.activeReadOnly}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -153,7 +160,7 @@ export function ImplementationTestSection(props: {
                   disabled={loading === 'draft'}
                   className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
                 >
-                  {loading === 'draft' ? 'Creating...' : 'Create draft'}
+                  {loading === 'draft' ? text.lab.creating : text.lab.createDraft}
                 </button>
               ) : (
                 <>
@@ -165,7 +172,7 @@ export function ImplementationTestSection(props: {
                         draftViewMode === 'edit' ? 'bg-amber-600 text-white' : 'text-amber-800 hover:bg-amber-50'
                       }`}
                     >
-                      Edit
+                      {text.lab.edit}
                     </button>
                     <button
                       type="button"
@@ -174,7 +181,7 @@ export function ImplementationTestSection(props: {
                         draftViewMode === 'diff' ? 'bg-amber-600 text-white' : 'text-amber-800 hover:bg-amber-50'
                       }`}
                     >
-                      Diff
+                      {text.lab.diff}
                     </button>
                   </div>
                   <button
@@ -183,7 +190,7 @@ export function ImplementationTestSection(props: {
                     disabled={!hasUnsavedDraftChanges || loading === 'draft-save'}
                     className="rounded-md bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:bg-gray-300"
                   >
-                    {loading === 'draft-save' ? 'Saving...' : 'Save draft'}
+                    {loading === 'draft-save' ? text.lab.saving : text.lab.saveDraft}
                   </button>
                   <button
                     type="button"
@@ -191,7 +198,7 @@ export function ImplementationTestSection(props: {
                     disabled={!hasUnsavedDraftChanges}
                     className="rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300"
                   >
-                    Reload saved
+                    {text.lab.reloadSaved}
                   </button>
                   <button
                     type="button"
@@ -199,7 +206,7 @@ export function ImplementationTestSection(props: {
                     disabled={loading === 'draft-reset'}
                     className="rounded-md border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-50 disabled:text-gray-300"
                   >
-                    {loading === 'draft-reset' ? 'Resetting...' : 'Reset from original'}
+                    {loading === 'draft-reset' ? text.lab.resetting : text.lab.resetOriginal}
                   </button>
                   <button
                     type="button"
@@ -207,7 +214,7 @@ export function ImplementationTestSection(props: {
                     disabled={loading === 'draft-discard'}
                     className="rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:text-gray-300"
                   >
-                    {loading === 'draft-discard' ? 'Discarding...' : 'Discard draft'}
+                    {loading === 'draft-discard' ? text.lab.discarding : text.lab.discardDraft}
                   </button>
                 </>
               )}
@@ -223,7 +230,7 @@ export function ImplementationTestSection(props: {
         </div>
         <div className="grid gap-3 xl:grid-cols-[220px_1fr]">
           <div className="max-h-[480px] overflow-auto rounded-md border border-gray-200 bg-gray-50 p-2">
-            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Outline</div>
+            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{text.lab.outline}</div>
             {implementation?.outline.length ? (
               <div className="space-y-1">
                 {implementation.outline.map((symbol) => {
@@ -250,7 +257,7 @@ export function ImplementationTestSection(props: {
                 })}
               </div>
             ) : (
-              <p className="px-2 text-xs text-gray-500">No outline available.</p>
+              <p className="px-2 text-xs text-gray-500">{text.lab.noOutline}</p>
             )}
           </div>
           {isDraftMode && draftViewMode === 'diff' ? (
@@ -262,7 +269,7 @@ export function ImplementationTestSection(props: {
             />
           ) : (
             <ImplementationEditor
-              content={loading === 'adapter' ? 'Loading implementation...' : editorContent}
+              content={loading === 'adapter' ? text.lab.loadingImplementation : editorContent}
               language={editorLanguage}
               outline={implementation?.outline ?? []}
               selectedSymbolId={selectedFunctionId}
@@ -272,7 +279,7 @@ export function ImplementationTestSection(props: {
           )}
         </div>
         {implementation?.notes && <p className="mt-2 text-xs text-gray-500">{implementation.notes}</p>}
-        {implementation?.filePath && <p className="mt-1 text-xs text-gray-500">Source file: {implementation.filePath}</p>}
+        {implementation?.filePath && <p className="mt-1 text-xs text-gray-500">{text.lab.sourceFile}: {implementation.filePath}</p>}
       </div>
 
       {testResult && (
@@ -285,16 +292,16 @@ export function ImplementationTestSection(props: {
         }`}>
           <div className="font-semibold">
             {testResult.status === 'verification_required'
-              ? 'Verification required'
-              : `Test ${testResult.ok ? 'passed' : 'did not pass'}`} - {testResult.durationMs}ms
+              ? text.lab.verificationRequired
+              : testResult.ok ? text.lab.testPassed : text.lab.testFailed} - {testResult.durationMs}ms
           </div>
           <div className="mt-2 grid gap-2 text-xs text-gray-700 sm:grid-cols-2">
-            <div>DOM source: <span className="font-medium">{testResult.domSource}</span></div>
-            <div>Recommended action: <span className="font-medium">{testResult.recommendedAction}</span></div>
-            <div>Readiness: <span className="font-medium">{testResult.readiness.status}</span></div>
-            <div>Confidence: <span className="font-medium">{testResult.readiness.confidence}</span></div>
-            {testResult.fixtureId && <div>Fixture: <span className="font-medium">{testResult.fixtureId}</span></div>}
-            {testResult.fixturePath && <div className="break-all sm:col-span-2">Fixture path: {testResult.fixturePath}</div>}
+            <div>{text.lab.domSource}: <span className="font-medium">{testResult.domSource}</span></div>
+            <div>{text.lab.recommendedAction}: <span className="font-medium">{testResult.recommendedAction}</span></div>
+            <div>{text.lab.readiness}: <span className="font-medium">{testResult.readiness.status}</span></div>
+            <div>{text.lab.confidence}: <span className="font-medium">{testResult.readiness.confidence}</span></div>
+            {testResult.fixtureId && <div>{text.lab.fixture}: <span className="font-medium">{testResult.fixtureId}</span></div>}
+            {testResult.fixturePath && <div className="break-all sm:col-span-2">{text.lab.fixturePath}: {testResult.fixturePath}</div>}
           </div>
           {testResult.readiness.reasons.length > 0 && (
             <ul className="mt-2 list-disc pl-5 text-xs text-gray-700">
@@ -305,7 +312,7 @@ export function ImplementationTestSection(props: {
           )}
           {testResult.timings && testResult.timings.length > 0 && (
             <div className="mt-3 rounded border border-gray-200 bg-white p-3 text-xs text-gray-700">
-              <div className="font-semibold text-gray-900">Timing breakdown</div>
+              <div className="font-semibold text-gray-900">{text.lab.timingBreakdown}</div>
               <div className="mt-2 grid gap-1 sm:grid-cols-3">
                 {testResult.timings.map((timing, index) => (
                   <div key={`${timing.step}-${index}`} className="flex justify-between gap-3 rounded bg-gray-50 px-2 py-1">
@@ -319,15 +326,15 @@ export function ImplementationTestSection(props: {
           {testResult.requiresVerification && (
             <div className="mt-3 space-y-3 text-amber-900">
               <p>
-                {testResult.verificationMessage ?? 'Human verification is required. Open the verification browser, complete the check, then continue this test.'}
+                {testResult.verificationMessage ?? text.lab.verificationDefault}
               </p>
               {testResult.challengeDiscoveryId && (
                 <div className="rounded-md bg-white/70 p-3">
-                  <div className="text-xs text-gray-600">Handoff job: {testResult.challengeDiscoveryId}</div>
-                  {challengeJob?.status && <div className="mt-1 text-xs text-gray-600">Status: {challengeJob.status}</div>}
+                  <div className="text-xs text-gray-600">{text.lab.handoffJob}: {testResult.challengeDiscoveryId}</div>
+                  {challengeJob?.status && <div className="mt-1 text-xs text-gray-600">{text.lab.status}: {challengeJob.status}</div>}
                   {challengeJob?.error && <div className="mt-1 text-xs text-amber-800">{challengeJob.error}</div>}
                   <p className="mt-3 text-xs text-gray-600">
-                    Verification opens in the configured remote Playwright service.
+                    {text.lab.verificationRemote}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -337,10 +344,10 @@ export function ImplementationTestSection(props: {
                       className="rounded-md bg-amber-600 px-3 py-2 text-xs font-medium text-white hover:bg-amber-700 disabled:bg-gray-300"
                     >
                       {browserAction === 'open'
-                        ? 'Opening...'
+                        ? text.lab.opening
                         : browserAlreadyOpen
-                          ? 'Browser already opened'
-                          : 'Open browser for verification'}
+                          ? text.lab.browserOpened
+                          : text.lab.openBrowser}
                     </button>
                     <button
                       type="button"
@@ -348,7 +355,7 @@ export function ImplementationTestSection(props: {
                       disabled={browserAction === 'continue'}
                       className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
                     >
-                      {browserAction === 'continue' ? 'Continuing...' : 'Continue test'}
+                      {browserAction === 'continue' ? text.lab.continuing : text.lab.continueTest}
                     </button>
                   </div>
                 </div>

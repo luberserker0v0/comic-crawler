@@ -14,6 +14,10 @@ export function looksLikeAntiBotChallenge(html: string): boolean {
     lower.includes('you are unable to access') ||
     lower.includes('verify you are human') ||
     lower.includes('checking if the site connection is secure') ||
+    lower.includes('<title>請稍候') ||
+    lower.includes('<title>请稍候') ||
+    lower.includes('正在執行安全驗證') ||
+    lower.includes('正在执行安全验证') ||
     lower.includes('人机验证') ||
     lower.includes('人機驗證') ||
     lower.includes('嗨皮漫画——人机验证') ||

@@ -21,6 +21,18 @@ export function createLogger(options?: LoggerOptions) {
     name: opts.name,
     level: opts.level,
     timestamp: pino.stdTimeFunctions.isoTime,
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'request.headers.authorization',
+        'headers.authorization',
+        '*.token',
+        '*.userToken',
+        '*.credential',
+        '*.providerCredential',
+      ],
+      censor: '[REDACTED]',
+    },
   };
 
   if (process.env.NODE_ENV === 'test' && !opts.transport) {

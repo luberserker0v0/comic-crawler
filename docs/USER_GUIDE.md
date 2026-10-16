@@ -136,6 +136,32 @@ source DOM, readiness result, extracted values, and known risks first. A
 challenge page, recommendation card, footer, or partially expanded page is not a
 valid source for adapter promotion.
 
+### Accept an adapter
+
+Accepting a selector-discovery adapter performs these steps:
+
+1. Fetch the reviewed page through the active Browser Provider.
+2. Reject pages that still show human verification.
+3. Run the reviewed adapter against the rendered page.
+4. Save the rendered DOM as `page.html`.
+5. Save the approved output as `expected.json`.
+6. Promote the adapter only after fixture capture succeeds.
+
+The fixture is stored under the configured agent workspace. A chapter-only
+adapter must return at least one image URL before it can be accepted.
+
+Later regression checks replay the current adapter against `page.html` and
+compare its complete normalized output with `expected.json`.
+
+Run every approved runtime fixture from the repository root:
+
+```bash
+npm run test:fixtures
+```
+
+The command exits with a failure code when an adapter is missing or any complete
+result differs from its approved output.
+
 ### Delete an adapter
 
 Open **Maintain Adapters** and select the **Site adapters** tab. Pick the adapter
@@ -189,17 +215,27 @@ and does not promote adapter versions by itself.
 Browser-backed features require a user-side Browser Provider.
 The backend and Docker container do not launch Chromium.
 
+On the user-side machine, run Browser Provider npm commands from the
+source-of-truth repository root:
+
+```bash
+cd repo
+```
+
+Do not run the workspace commands from `browser-provider-sdk/` directly.
+
 The client uses outbound connections.
 No inbound user port is required.
 
 Setup follows this order:
 
-1. Create an enrollment token.
-2. Enroll the client once.
-3. Start the client.
-4. Create an active session.
+1. Configure the Server security policy.
+2. Create the Browser Provider config.
+3. Run the client `connect` command.
+4. Let the client register automatically.
+5. Select an available Browser Worker when creating a task.
 
-The active session supports these features:
+A Browser Worker creates internal Playwright sessions for these features:
 
 - Normal Playwright crawling.
 - Selector discovery.
@@ -221,8 +257,9 @@ To continue:
 3. Complete verification in the browser opened by your remote Playwright service.
 4. Return to the task detail page and click **Continue**.
 
-ComicCrawler then resumes from the latest checkpoint. While a task is waiting
-for verification, it does not occupy a worker slot; other queued tasks can run.
+ComicCrawler then resumes from the latest checkpoint. A waiting task releases
+its scheduler execution slot but keeps its Browser Worker reserved. Tasks can
+still run on the user's other connected Browser Workers.
 
 If the verification handoff expired or was removed, the task detail page asks you
 to click **Continue** to recreate the handoff before opening the browser again.

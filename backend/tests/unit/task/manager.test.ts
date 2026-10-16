@@ -100,6 +100,31 @@ describe('TaskManager persistence', () => {
     await flushAsyncWork();
   });
 
+  it('persists the stable browser worker target instead of a transient session', async () => {
+    let releaseExecutor!: () => void;
+    const executorBlocked = new Promise<void>((resolve) => {
+      releaseExecutor = resolve;
+    });
+    const manager = new TaskManager(async () => executorBlocked, { eventBus, storage });
+    managers.push(manager);
+    await manager.initialize();
+    await manager.createTask({
+      id: 'task-affinity',
+      url: 'https://example.com/comic/affinity',
+      adapterId: 'kuronavi',
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'specific', workerId: 'worker-a' },
+    });
+
+    expect(manager.getTask('task-affinity')?.data.browserTarget).toEqual({ mode: 'specific', workerId: 'worker-a' });
+    const persisted = await storage.read<any>('tasks/task-affinity');
+    expect(persisted.task.data).toMatchObject({
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'specific', workerId: 'worker-a' },
+    });
+    releaseExecutor();
+  });
+
   it('should persist progress snapshots and completion result', async () => {
     const manager = new TaskManager(async () => {}, { eventBus, storage });
     managers.push(manager);
