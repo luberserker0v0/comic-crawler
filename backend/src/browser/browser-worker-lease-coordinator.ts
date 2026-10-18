@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrowserRenderContext, BrowserSessionSource } from '@comiccrawler/browser-client-sdk';
 import type { BrowserTarget } from '../task/manager';
 import type { BrowserSessionGateway, BrowserWorker, GatewaySession } from './browser-session-gateway';
+import { normalizeBrowserResourceUrl } from './browser-resource-url';
 
 export type BrowserWorkerLeaseState = 'active' | 'reconnecting' | 'releasing' | 'released';
 
@@ -26,6 +27,13 @@ export interface AcquireBrowserWorkerLeaseRequest {
   renderContext?: BrowserRenderContext;
   timeoutMs?: number;
   onWaiting?: (message: string) => void | Promise<void>;
+}
+
+export interface ValidateExistingTabRecoveryTargetRequest {
+  ownerUserId: string;
+  target: Extract<BrowserTarget, { mode: 'existing-tab' }>;
+  expectedUrl: string;
+  requireHumanHandoff: boolean;
 }
 
 type GatewayPort = Pick<
@@ -73,6 +81,28 @@ export class BrowserWorkerLeaseCoordinator {
         throw new Error(`Browser resource "${target.resourceId}" was not found for this Worker.`);
       }
     }
+  }
+
+  validateExistingTabRecoveryTarget(request: ValidateExistingTabRecoveryTargetRequest): { resourceUrl: string } {
+    this.validateTarget(request.ownerUserId, request.target);
+    const worker = this.gateway.getWorker(request.target.workerId)!;
+    const resource = this.gateway.getResource(request.target.resourceId)!;
+    if (!worker.online) {
+      throw new Error(`Browser Worker "${worker.workerId}" is offline.`);
+    }
+    if (worker.activeSessionId || this.leasesByWorker.has(worker.workerId)) {
+      throw new Error(`Browser Worker "${worker.workerId}" is busy.`);
+    }
+    if (!worker.capabilities.navigation || !worker.capabilities.renderedDom) {
+      throw new Error(`Browser Worker "${worker.workerId}" does not provide the capabilities required by this task.`);
+    }
+    if (request.requireHumanHandoff && !worker.capabilities.humanHandoff) {
+      throw new Error(`Browser Worker "${worker.workerId}" does not support human verification handoff.`);
+    }
+    if (normalizeBrowserResourceUrl(resource.url) !== normalizeBrowserResourceUrl(request.expectedUrl)) {
+      throw new Error(`Browser resource "${resource.resourceId}" is not on the task target URL.`);
+    }
+    return { resourceUrl: resource.url };
   }
 
   async acquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease> {
@@ -127,6 +157,7 @@ export class BrowserWorkerLeaseCoordinator {
     const deadline = Date.now() + normalizeTimeout(timeoutMs);
     lease.state = 'reconnecting';
     while (Date.now() < deadline) {
+      if (isReleased(lease)) return false;
       const worker = this.gateway.getWorker(lease.workerId);
       if (worker?.online && worker.processInstanceId === lease.processInstanceId) {
         try {
@@ -261,4 +292,8 @@ function sessionSource(target: BrowserTarget, initialUrl: string | undefined): B
 function normalizeTimeout(value: number): number {
   if (!Number.isFinite(value)) return 30 * 60 * 1000;
   return Math.max(1, Math.floor(value));
+}
+
+function isReleased(lease: BrowserWorkerLease): boolean {
+  return lease.state === 'releasing' || lease.state === 'released';
 }

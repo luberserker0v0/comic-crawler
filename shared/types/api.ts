@@ -327,6 +327,40 @@ export type BrowserTarget =
   | { mode: 'managed-profile'; workerId?: string }
   | { mode: 'existing-tab'; workerId: string; resourceId: string };
 
+export type ExistingTabBrowserTarget = Extract<BrowserTarget, { mode: 'existing-tab' }>;
+
+export interface RebindBrowserTargetRequest {
+  expectedBrowserTarget: ExistingTabBrowserTarget;
+  browserTarget: ExistingTabBrowserTarget;
+}
+
+export interface TaskBrowserTargetReboundEvent {
+  type: 'task:browser_target_rebound';
+  occurredAt: string;
+  previousBrowserTarget: ExistingTabBrowserTarget;
+  browserTarget: ExistingTabBrowserTarget;
+  previousStatus: TaskStatus;
+  previousTaskError?: string;
+  previousResultError?: string;
+  recovery: {
+    reason: 'browser_client_process_restarted';
+    reboundAt: string;
+  };
+}
+
+export interface RebindBrowserTargetResponse {
+  task: {
+    id: string;
+    status: TaskStatus;
+    browserTarget: ExistingTabBrowserTarget;
+  };
+  previousBrowserTarget: ExistingTabBrowserTarget;
+  recovery: TaskBrowserTargetReboundEvent['recovery'] & {
+    idempotent: boolean;
+  };
+  challenge?: ChallengeHandoffJobSummary;
+}
+
 export type CreateTaskResponse =
   | {
       kind: 'taskCreated';
@@ -392,6 +426,7 @@ export interface TaskDetailResponse {
   result?: TaskResultSummary;
   checkpoint: CrawlCheckpointSummary | null;
   preview: TaskPreview | null;
+  events: TaskBrowserTargetReboundEvent[];
 }
 
 export interface TaskProgressSummary {

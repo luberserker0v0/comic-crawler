@@ -295,6 +295,28 @@ export type BrowserTarget =
 - 指定的 target 不得被其他 Worker 取代。
 - Resource 消失時 task 等待原 Worker 或依 policy 失敗。
 
+### 10.1 Process restart recovery
+
+Process restart produces a new `workerId` and `resourceId`. Recovery is always
+explicit:
+
+1. Consumer reconnects with its saved Client credential.
+2. User approves the current tab again.
+3. Consumer registers a new resource.
+4. Consumer reads the task's current target.
+5. Consumer calls `rebind-browser-target` with old and new targets.
+6. Server validates ownership, URL, capability, state, and concurrency.
+7. Server persists `task:browser_target_rebound`.
+8. Scheduler continues only with the supplied target.
+
+The old target is an optimistic concurrency precondition. The scheduler never
+chooses a replacement. Browser-native tab IDs remain local to the Consumer.
+
+Allowed states are `waiting_for_browser_worker`, `interrupted`,
+`waiting_verification`, and browser-target-loss `failed`. A running or terminal
+task rejects the operation. A waiting handoff closes its old session and reuses
+the persisted handoff record with the newly approved resource.
+
 ## 11. Session source
 
 ```ts

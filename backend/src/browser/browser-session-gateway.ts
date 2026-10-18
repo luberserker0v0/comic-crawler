@@ -14,6 +14,7 @@ import {
 } from '@comiccrawler/browser-client-sdk';
 import type { ApiSecurityService } from '../security/api-security';
 import type { BrowserClientRegistry } from './browser-client-registry';
+import { normalizeBrowserResourceUrl } from './browser-resource-url';
 
 export interface BrowserWorker {
   workerId: string;
@@ -611,7 +612,7 @@ export class BrowserSessionGateway {
     if (!resource || resource.workerId !== worker.workerId || resource.ownerUserId !== worker.ownerUserId) {
       throw new Error(`Browser resource "${source.resourceId}" was not found for this Worker.`);
     }
-    if (normalizeResourceUrl(resource.url) !== normalizeResourceUrl(source.expectedUrl)) {
+    if (normalizeBrowserResourceUrl(resource.url) !== normalizeBrowserResourceUrl(source.expectedUrl)) {
       throw new Error(`Browser resource "${source.resourceId}" is not on the requested URL.`);
     }
   }
@@ -714,10 +715,6 @@ function requireResource(value: BrowserResourceDescriptor): BrowserResourceDescr
     throw new Error('Browser resource URL must use HTTP or HTTPS.');
   }
   return { resourceId, kind: 'tab', url, ...(value.title === undefined ? {} : { title: value.title }) };
-}
-
-function normalizeResourceUrl(value: string): string {
-  return new URL(value).toString();
 }
 
 function assertCapability(capabilities: BrowserCapabilities, command: BrowserCommand): void {

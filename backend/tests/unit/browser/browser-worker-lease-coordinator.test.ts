@@ -100,6 +100,44 @@ describe('BrowserWorkerLeaseCoordinator', () => {
     await coordinator.dispose();
   });
 
+  it('validates an idle, owned existing-tab recovery target on the task URL', async () => {
+    const targetWorker = worker('worker-recovery', 'alice', 'existing-tab');
+    const resource: BrowserResource = {
+      resourceId: 'resource-recovery',
+      workerId: targetWorker.workerId,
+      ownerUserId: 'alice',
+      kind: 'tab',
+      url: 'https://example.test/chapter#reader',
+      registeredAt: new Date().toISOString(),
+    };
+    const coordinator = new BrowserWorkerLeaseCoordinator(new FakeGateway([targetWorker], [resource]));
+
+    expect(coordinator.validateExistingTabRecoveryTarget({
+      ownerUserId: 'alice',
+      target: { mode: 'existing-tab', workerId: targetWorker.workerId, resourceId: resource.resourceId },
+      expectedUrl: 'https://example.test/chapter',
+      requireHumanHandoff: true,
+    })).toEqual({ resourceUrl: resource.url });
+
+    resource.url = 'https://example.test/another-chapter';
+    expect(() => coordinator.validateExistingTabRecoveryTarget({
+      ownerUserId: 'alice',
+      target: { mode: 'existing-tab', workerId: targetWorker.workerId, resourceId: resource.resourceId },
+      expectedUrl: 'https://example.test/chapter',
+      requireHumanHandoff: false,
+    })).toThrow('is not on the task target URL');
+
+    resource.url = 'https://example.test/chapter';
+    targetWorker.activeSessionId = 'session-busy';
+    expect(() => coordinator.validateExistingTabRecoveryTarget({
+      ownerUserId: 'alice',
+      target: { mode: 'existing-tab', workerId: targetWorker.workerId, resourceId: resource.resourceId },
+      expectedUrl: resource.url,
+      requireHumanHandoff: false,
+    })).toThrow('is busy');
+    await coordinator.dispose();
+  });
+
   it('reopens a session on the same process after reconnect', async () => {
     const gateway = new FakeGateway([worker('worker-a', 'alice')]);
     const coordinator = new BrowserWorkerLeaseCoordinator(gateway);
@@ -112,6 +150,22 @@ describe('BrowserWorkerLeaseCoordinator', () => {
     expect(lease.sessionId).toBe('session-2');
     expect(lease.state).toBe('active');
     await lease.release();
+    await coordinator.dispose();
+  });
+
+  it('stops reconnect waiting when explicit recovery releases the old task lease', async () => {
+    const targetWorker = worker('worker-a', 'alice');
+    const gateway = new FakeGateway([targetWorker]);
+    const coordinator = new BrowserWorkerLeaseCoordinator(gateway);
+    const lease = await coordinator.acquire({ taskId: 'task-1', ownerUserId: 'alice' });
+    targetWorker.online = false;
+    targetWorker.activeSessionId = undefined;
+
+    const waiting = coordinator.waitForReconnect(lease, 1_000);
+    await coordinator.releaseTask('task-1');
+
+    await expect(waiting).resolves.toBe(false);
+    expect(lease.state).toBe('released');
     await coordinator.dispose();
   });
 });

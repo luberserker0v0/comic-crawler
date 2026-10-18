@@ -7,6 +7,11 @@ import { TaskDeferredError, TaskScheduler } from '../scheduler';
 import { ProgressTracker } from './progress';
 import { ComicError, errorToLogObject } from '../error/types';
 import { deleteTaskOutputDir, hasWaitingVerificationContext } from './file-utils';
+import type {
+  BrowserTarget as SharedBrowserTarget,
+  ExistingTabBrowserTarget,
+  TaskBrowserTargetReboundEvent,
+} from '@comiccrawler/shared';
 
 const TASK_INDEX_KEY = 'tasks/index';
 const TASK_PRIORITY_ORDER_KEY = 'tasks/priority-order';
@@ -33,12 +38,11 @@ export interface TaskDefinition {
   options?: Record<string, unknown>;
   ownerUserId?: string;
   browserTarget?: BrowserTarget;
+  browserTargetUrl?: string;
   browserWaitStartedAt?: string;
 }
 
-export type BrowserTarget =
-  | { mode: 'managed-profile'; workerId?: string }
-  | { mode: 'existing-tab'; workerId: string; resourceId: string };
+export type BrowserTarget = SharedBrowserTarget;
 
 export interface TaskResult {
   taskId: string;
@@ -60,6 +64,23 @@ export interface PersistedTaskRecord {
   result: TaskResult;
   progress?: TaskProgress;
   checkpoint?: CrawlCheckpoint;
+  events?: TaskBrowserTargetReboundEvent[];
+}
+
+export class BrowserTargetRebindError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'NOT_FOUND' | 'FORBIDDEN' | 'INVALID_STATE' | 'STALE_TARGET' | 'INVALID_TARGET'
+  ) {
+    super(message);
+    this.name = 'BrowserTargetRebindError';
+  }
+}
+
+export interface RebindBrowserTargetResult {
+  task: TaskItem<TaskDefinition>;
+  event: TaskBrowserTargetReboundEvent;
+  idempotent: boolean;
 }
 
 export class TaskManager {
@@ -334,6 +355,86 @@ export class TaskManager {
     return this.records.get(taskId)?.checkpoint;
   }
 
+  getEvents(taskId: string): TaskBrowserTargetReboundEvent[] {
+    return [...(this.records.get(taskId)?.events ?? [])];
+  }
+
+  async rebindBrowserTarget(input: {
+    taskId: string;
+    ownerUserId: string;
+    expectedBrowserTarget: ExistingTabBrowserTarget;
+    browserTarget: ExistingTabBrowserTarget;
+    browserTargetUrl: string;
+  }): Promise<RebindBrowserTargetResult> {
+    const record = this.records.get(input.taskId);
+    if (!record) {
+      throw new BrowserTargetRebindError(`Task "${input.taskId}" was not found.`, 'NOT_FOUND');
+    }
+    if ((record.task.data.ownerUserId ?? 'public') !== input.ownerUserId) {
+      throw new BrowserTargetRebindError('The authenticated user does not own this task.', 'FORBIDDEN');
+    }
+    if (sameBrowserTarget(input.expectedBrowserTarget, input.browserTarget)) {
+      throw new BrowserTargetRebindError('The replacement Browser Target must differ from the expected target.', 'INVALID_TARGET');
+    }
+
+    const currentTarget = record.task.data.browserTarget;
+    const previousEvent = [...(record.events ?? [])].reverse().find((event) =>
+      sameBrowserTarget(event.previousBrowserTarget, input.expectedBrowserTarget)
+      && sameBrowserTarget(event.browserTarget, input.browserTarget));
+    if (currentTarget?.mode === 'existing-tab'
+      && sameBrowserTarget(currentTarget, input.browserTarget)
+      && previousEvent) {
+      return { task: record.task, event: previousEvent, idempotent: true };
+    }
+    if (currentTarget?.mode !== 'existing-tab') {
+      throw new BrowserTargetRebindError('Only existing-tab tasks can rebind their Browser Target.', 'INVALID_TARGET');
+    }
+    if (!sameBrowserTarget(currentTarget, input.expectedBrowserTarget)) {
+      throw new BrowserTargetRebindError('The task Browser Target changed after it was inspected.', 'STALE_TARGET');
+    }
+    if (!isRecoverableBrowserTargetState(record.task.status, record.task.error ?? record.result.error)) {
+      throw new BrowserTargetRebindError(
+        `Task status "${record.task.status}" does not allow Browser Target recovery.`,
+        'INVALID_STATE'
+      );
+    }
+
+    const previousStatus = record.task.status;
+    const reboundAt = new Date().toISOString();
+    const event: TaskBrowserTargetReboundEvent = {
+      type: 'task:browser_target_rebound',
+      occurredAt: reboundAt,
+      previousBrowserTarget: { ...currentTarget },
+      browserTarget: { ...input.browserTarget },
+      previousStatus,
+      ...(record.task.error ? { previousTaskError: record.task.error } : {}),
+      ...(record.result.error ? { previousResultError: record.result.error } : {}),
+      recovery: {
+        reason: 'browser_client_process_restarted',
+        reboundAt,
+      },
+    };
+    record.task.data.browserTarget = { ...input.browserTarget };
+    record.task.data.browserTargetUrl = input.browserTargetUrl;
+    delete record.task.data.browserWaitStartedAt;
+    record.events = [...(record.events ?? []), event];
+
+    if (previousStatus !== 'waiting_verification') {
+      record.task.status = 'pending';
+      record.task.completedAt = undefined;
+      record.task.error = undefined;
+      record.result.status = 'pending';
+      record.result.completedAt = undefined;
+      record.result.error = undefined;
+    }
+    await this.persistRecord(record);
+    if (previousStatus === 'interrupted' || previousStatus === 'failed') {
+      await this.scheduler.add(record.task);
+    }
+    this.eventBus?.emit('task:browser_target_rebound', { taskId: input.taskId, event });
+    return { task: record.task, event, idempotent: false };
+  }
+
   getStats() {
     const tasks = this.getAllTasks();
     return {
@@ -602,4 +703,17 @@ export class TaskManager {
   private getTaskKey(taskId: string): string {
     return `tasks/${taskId}`;
   }
+}
+
+function sameBrowserTarget(left: ExistingTabBrowserTarget, right: ExistingTabBrowserTarget): boolean {
+  return left.mode === right.mode
+    && left.workerId === right.workerId
+    && left.resourceId === right.resourceId;
+}
+
+function isRecoverableBrowserTargetState(status: TaskStatus, error: string | undefined): boolean {
+  if (status === 'waiting_for_browser_worker' || status === 'interrupted' || status === 'waiting_verification') {
+    return true;
+  }
+  return status === 'failed' && /browser (worker|resource|session).*(offline|disconnect|not found|closed|lost|restart)/i.test(error ?? '');
 }

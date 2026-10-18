@@ -392,6 +392,56 @@ paths:
                 $ref: "#/components/schemas/ApiError"
         "400":
           $ref: "#/components/responses/Error"
+  /api/tasks/{id}/rebind-browser-target:
+    post:
+      summary: Explicitly recover an existing-tab task after its Browser Client process restarts
+      description: >-
+        Replaces a process-scoped existing-tab Worker and resource only after the
+        caller explicitly approves and registers the page again. The expected
+        target provides optimistic concurrency protection. No Worker is selected
+        automatically.
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RebindBrowserTargetRequest"
+      responses:
+        "200":
+          description: Browser Target rebound, or the same recovery request was replayed idempotently
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RebindBrowserTargetResponse"
+        "400":
+          description: Invalid target, unavailable resource, URL mismatch, or insufficient capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: The authenticated user does not own the task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Stale expected target or non-recoverable task state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          $ref: "#/components/responses/Error"
   /api/tasks/{id}/preview-file:
     get:
       summary: Read a downloaded image preview file
@@ -914,6 +964,83 @@ components:
               type: string
             resourceId:
               type: string
+    ExistingTabBrowserTarget:
+      type: object
+      additionalProperties: false
+      required: [mode, workerId, resourceId]
+      properties:
+        mode:
+          const: existing-tab
+        workerId:
+          type: string
+        resourceId:
+          type: string
+    RebindBrowserTargetRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedBrowserTarget, browserTarget]
+      properties:
+        expectedBrowserTarget:
+          $ref: "#/components/schemas/ExistingTabBrowserTarget"
+        browserTarget:
+          $ref: "#/components/schemas/ExistingTabBrowserTarget"
+    TaskBrowserTargetReboundEvent:
+      type: object
+      required: [type, occurredAt, previousBrowserTarget, browserTarget, previousStatus, recovery]
+      properties:
+        type:
+          const: task:browser_target_rebound
+        occurredAt:
+          type: string
+          format: date-time
+        previousBrowserTarget:
+          $ref: "#/components/schemas/ExistingTabBrowserTarget"
+        browserTarget:
+          $ref: "#/components/schemas/ExistingTabBrowserTarget"
+        previousStatus:
+          type: string
+        previousTaskError:
+          type: string
+        previousResultError:
+          type: string
+        recovery:
+          type: object
+          required: [reason, reboundAt]
+          properties:
+            reason:
+              const: browser_client_process_restarted
+            reboundAt:
+              type: string
+              format: date-time
+    RebindBrowserTargetResponse:
+      type: object
+      required: [task, previousBrowserTarget, recovery]
+      properties:
+        task:
+          type: object
+          required: [id, status, browserTarget]
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+            browserTarget:
+              $ref: "#/components/schemas/ExistingTabBrowserTarget"
+        previousBrowserTarget:
+          $ref: "#/components/schemas/ExistingTabBrowserTarget"
+        recovery:
+          type: object
+          required: [reason, reboundAt, idempotent]
+          properties:
+            reason:
+              const: browser_client_process_restarted
+            reboundAt:
+              type: string
+              format: date-time
+            idempotent:
+              type: boolean
+        challenge:
+          $ref: "#/components/schemas/HandoffJob"
     BrowserWorker:
       type: object
       required: [workerId, clientId, name, ownerUserId, processInstanceId, status, online, capabilities, connectedAt, lastHeartbeatAt]
@@ -1246,7 +1373,7 @@ components:
           $ref: "#/components/schemas/BrowserTarget"
     TaskDetailResponse:
       type: object
-      required: [task, checkpoint, preview]
+      required: [task, checkpoint, preview, events]
       properties:
         task:
           $ref: "#/components/schemas/TaskSummary"
@@ -1264,6 +1391,10 @@ components:
           type:
             - object
             - "null"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskBrowserTargetReboundEvent"
     SelectorDiscoveryJob:
       type: object
       required: [id, url, normalizedUrl, hostname, status]

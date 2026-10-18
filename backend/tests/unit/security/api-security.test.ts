@@ -37,6 +37,12 @@ function tokenSecurity() {
         path: '/api/browser-clients/**',
         permission: 'browser-client:manage-own',
       },
+      {
+        id: 'task-target-recovery',
+        methods: ['POST'],
+        path: '/api/tasks/:id/rebind-browser-target',
+        permission: 'task:control-own',
+      },
     ],
   }, {
     schemaVersion: 1,
@@ -47,6 +53,7 @@ function tokenSecurity() {
         'browser-client:read-own',
         'browser-client:manage-own',
         'browser-client:session-own',
+        'task:control-own',
       ],
       limits: { maxRegisteredBrowserClients: 2 },
     }],
@@ -112,6 +119,25 @@ describe('API security policy', () => {
     });
 
     expect(response.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('allows the ownership-aware task recovery route to perform its resource checks', async () => {
+    const security = tokenSecurity();
+    const app = fastify();
+    setupApiSecurity(app, security);
+    app.post('/api/tasks/:id/rebind-browser-target', async () => ({ data: true }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/tasks/task-1/rebind-browser-target',
+      headers: {
+        'x-comiccrawler-user-id': 'alice',
+        authorization: `Bearer ${aliceToken}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
     await app.close();
   });
 

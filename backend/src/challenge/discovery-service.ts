@@ -109,6 +109,28 @@ export class ChallengeDiscoveryService {
     this.ownedBrowserLeases.delete(id);
   }
 
+  async rebindBrowserTarget(id: string, browserTarget: BrowserTarget): Promise<ChallengeDiscoveryJob> {
+    await this.releaseBrowserLease(id);
+    await this.updateJob(id, {
+      browserTarget,
+      browserSessionId: undefined,
+      status: 'queued',
+      error: undefined,
+    });
+    try {
+      const result = await this.run(id);
+      if (result.status === 'failed') await this.releaseBrowserLease(id);
+      return result;
+    } catch (error) {
+      await this.updateJob(id, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.releaseBrowserLease(id);
+      return this.getRequiredJob(id);
+    }
+  }
+
   async dispose(): Promise<void> {
     await Promise.all([...this.ownedBrowserLeases.keys()].map((id) => this.releaseBrowserLease(id)));
   }

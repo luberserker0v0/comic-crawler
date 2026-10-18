@@ -145,7 +145,7 @@ async function main(): Promise<void> {
           taskId: task.id,
           ownerUserId: task.data.ownerUserId ?? 'public',
           target: task.data.browserTarget,
-          initialUrl: task.data.url,
+          initialUrl: task.data.browserTargetUrl ?? task.data.url,
         });
         if (!browserLease) {
           const targetMessage = task.data.browserTarget?.mode === 'existing-tab' || task.data.browserTarget?.workerId
@@ -174,7 +174,17 @@ async function main(): Promise<void> {
             if (!isBrowserTransportDisconnect(error) || reconnectAttempts >= 3) throw error;
             reconnectAttempts += 1;
             await taskManager.markWaitingForBrowserWorker(task.id, `Browser worker disconnected; waiting to resume (${reconnectAttempts}/3).`);
-            if (!await browserLeaseCoordinator.waitForReconnect(browserLease, 120_000)) throw error;
+            if (!await browserLeaseCoordinator.waitForReconnect(browserLease, 120_000)) {
+              const reboundTarget = task.data.browserTarget;
+              const targetChanged = reboundTarget?.workerId !== browserLease.workerId
+                || (reboundTarget?.mode === 'existing-tab'
+                  && browserLease.source.type === 'existing-resource'
+                  && reboundTarget.resourceId !== browserLease.source.resourceId);
+              if (targetChanged) {
+                throw new TaskDeferredError('Browser Target was explicitly rebound; restarting the task.', 1);
+              }
+              throw error;
+            }
           }
         }
       } catch (error) {

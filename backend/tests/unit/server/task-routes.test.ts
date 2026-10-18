@@ -20,6 +20,7 @@ describe('Task routes persistence', () => {
   let crawlerEngine: CrawlerEngine;
   let adapterRegistry: AdapterRegistry;
   let challengeJobs: Map<string, any>;
+  let recoveryResources: Map<string, { workerId: string; ownerUserId: string; url: string; online?: boolean }>;
 
   beforeEach(async () => {
     await fs.rm(TEST_ROOT, { recursive: true, force: true });
@@ -46,6 +47,7 @@ describe('Task routes persistence', () => {
     taskManager = new TaskManager(async () => {}, { eventBus, storage });
     await taskManager.initialize();
     challengeJobs = new Map();
+    recoveryResources = new Map();
     crawlerEngine = new CrawlerEngine({
       downloadDir: join(TEST_ROOT, 'downloads'),
       concurrency: 1,
@@ -122,6 +124,31 @@ describe('Task routes persistence', () => {
           if (!job) throw new Error(`Challenge discovery job "${id}" was not found.`);
           return job;
         },
+        rebindBrowserTarget: async (id: string, browserTarget: any) => {
+          const job = challengeJobs.get(id);
+          if (!job) throw new Error(`Challenge discovery job "${id}" was not found.`);
+          const updated = { ...job, browserTarget, status: 'challenge_required' };
+          challengeJobs.set(id, updated);
+          return updated;
+        },
+      } as any,
+      browserLeaseCoordinator: {
+        validateTarget: () => undefined,
+        validateExistingTabRecoveryTarget: (input: any) => {
+          const resource = recoveryResources.get(input.target.resourceId);
+          if (!resource
+            || resource.workerId !== input.target.workerId
+            || resource.ownerUserId !== input.ownerUserId) {
+            throw new Error(`Browser resource "${input.target.resourceId}" was not found for this Worker.`);
+          }
+          if (resource.online === false) throw new Error(`Browser Worker "${resource.workerId}" is offline.`);
+          if (new URL(resource.url).toString() !== new URL(input.expectedUrl).toString()) {
+            throw new Error(`Browser resource "${input.target.resourceId}" is not on the task target URL.`);
+          }
+          return { resourceUrl: resource.url };
+        },
+        releaseTask: async () => undefined,
+        dispose: async () => undefined,
       } as any,
     });
   });
@@ -245,6 +272,155 @@ describe('Task routes persistence', () => {
     expect(task?.data.mode).toBe('all');
     expect(task?.data.url).toBe('https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu/');
     expect(task?.data.chapterUrls).toEqual([]);
+  });
+
+  it('explicitly rebinds a recoverable existing-tab task and persists an idempotent event', async () => {
+    const url = 'https://kuronavi.one/manga/demo/chapter-1';
+    await createRecoveryTask(taskManager, 'task-rebind', url, 'public', 'waiting_for_browser_worker');
+    recoveryResources.set('resource-new', {
+      workerId: 'worker-new',
+      ownerUserId: 'public',
+      url,
+    });
+    const payload = {
+      expectedBrowserTarget: existingTarget('worker-old', 'resource-old'),
+      browserTarget: existingTarget('worker-new', 'resource-new'),
+    };
+
+    const first = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-rebind/rebind-browser-target',
+      payload,
+    });
+    const repeated = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-rebind/rebind-browser-target',
+      payload,
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json().data).toMatchObject({
+      task: { id: 'task-rebind', browserTarget: payload.browserTarget },
+      previousBrowserTarget: payload.expectedBrowserTarget,
+      recovery: { reason: 'browser_client_process_restarted', idempotent: false },
+    });
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json().data.recovery).toMatchObject({
+      reboundAt: first.json().data.recovery.reboundAt,
+      idempotent: true,
+    });
+    expect(taskManager.getEvents('task-rebind')).toHaveLength(1);
+    const detail = await server.getApp().inject({ method: 'GET', url: '/api/tasks/task-rebind' });
+    expect(detail.json().data.events).toHaveLength(1);
+  });
+
+  it('rejects stale, wrong-owner, URL-mismatched, and running task recovery', async () => {
+    const url = 'https://kuronavi.one/manga/demo/chapter-1';
+    recoveryResources.set('resource-new', {
+      workerId: 'worker-new',
+      ownerUserId: 'public',
+      url: 'https://kuronavi.one/manga/demo/chapter-2',
+    });
+    await createRecoveryTask(taskManager, 'task-stale', url, 'public', 'interrupted');
+    await createRecoveryTask(taskManager, 'task-owner', url, 'alice', 'interrupted');
+    await createRecoveryTask(taskManager, 'task-running', url, 'public', 'running');
+
+    const target = existingTarget('worker-new', 'resource-new');
+    const stale = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-stale/rebind-browser-target',
+      payload: { expectedBrowserTarget: existingTarget('worker-other', 'resource-other'), browserTarget: target },
+    });
+    const wrongOwner = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-owner/rebind-browser-target',
+      payload: { expectedBrowserTarget: existingTarget('worker-old', 'resource-old'), browserTarget: target },
+    });
+    const mismatch = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-stale/rebind-browser-target',
+      payload: { expectedBrowserTarget: existingTarget('worker-old', 'resource-old'), browserTarget: target },
+    });
+    recoveryResources.set('resource-new', { workerId: 'worker-new', ownerUserId: 'public', url });
+    const running = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-running/rebind-browser-target',
+      payload: { expectedBrowserTarget: existingTarget('worker-old', 'resource-old'), browserTarget: target },
+    });
+
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().code).toBe('STALE_TARGET');
+    expect(wrongOwner.statusCode).toBe(403);
+    expect(mismatch.statusCode).toBe(400);
+    expect(running.statusCode).toBe(409);
+    expect(running.json().code).toBe('INVALID_STATE');
+  });
+
+  it('rebinds the existing human-verification handoff without replacing its history', async () => {
+    const url = 'https://kuronavi.one/manga/demo/chapter-1';
+    await createRecoveryTask(taskManager, 'task-handoff-rebind', url, 'public', 'waiting_verification');
+    setTaskWaitingVerification(taskManager, 'task-handoff-rebind', 'chal-rebind');
+    challengeJobs.set('chal-rebind', {
+      id: 'chal-rebind',
+      url,
+      normalizedUrl: url,
+      hostname: 'kuronavi.one',
+      status: 'challenge_required',
+      browserTarget: existingTarget('worker-old', 'resource-old'),
+      createdAt: '2026-10-18T00:00:00.000Z',
+      updatedAt: '2026-10-18T00:00:00.000Z',
+    });
+    recoveryResources.set('resource-new', { workerId: 'worker-new', ownerUserId: 'public', url });
+
+    const response = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-handoff-rebind/rebind-browser-target',
+      payload: {
+        expectedBrowserTarget: existingTarget('worker-old', 'resource-old'),
+        browserTarget: existingTarget('worker-new', 'resource-new'),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.challenge).toMatchObject({
+      id: 'chal-rebind',
+      status: 'challenge_required',
+      browserTarget: existingTarget('worker-new', 'resource-new'),
+    });
+    expect(taskManager.getTask('task-handoff-rebind')?.status).toBe('waiting_verification');
+    expect(taskManager.getTaskResult('task-handoff-rebind')?.challengeDiscoveryId).toBe('chal-rebind');
+  });
+
+  it('only recovers failed tasks classified as browser-target loss', async () => {
+    const url = 'https://kuronavi.one/manga/demo/chapter-1';
+    await createRecoveryTask(taskManager, 'task-browser-failed', url, 'public', 'failed');
+    await createRecoveryTask(taskManager, 'task-adapter-failed', url, 'public', 'failed');
+    const browserFailure = (taskManager as any).records.get('task-browser-failed');
+    browserFailure.task.error = 'Browser resource was not found after process restart.';
+    browserFailure.result.error = browserFailure.task.error;
+    const adapterFailure = (taskManager as any).records.get('task-adapter-failed');
+    adapterFailure.task.error = 'Adapter selector did not match.';
+    adapterFailure.result.error = adapterFailure.task.error;
+    recoveryResources.set('resource-new', { workerId: 'worker-new', ownerUserId: 'public', url });
+    const payload = {
+      expectedBrowserTarget: existingTarget('worker-old', 'resource-old'),
+      browserTarget: existingTarget('worker-new', 'resource-new'),
+    };
+
+    const recoverable = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-browser-failed/rebind-browser-target',
+      payload,
+    });
+    const unrelated = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks/task-adapter-failed/rebind-browser-target',
+      payload,
+    });
+
+    expect(recoverable.statusCode).toBe(200);
+    expect(unrelated.statusCode).toBe(409);
+    expect(unrelated.json().code).toBe('INVALID_STATE');
   });
 
   it('should create a specific-chapters task from chapter URLs', async () => {
@@ -525,4 +701,34 @@ function setTaskWaitingVerification(taskManager: TaskManager, taskId: string, ch
 
 async function flushAsyncWork(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function existingTarget(workerId: string, resourceId: string) {
+  return { mode: 'existing-tab' as const, workerId, resourceId };
+}
+
+async function createRecoveryTask(
+  taskManager: TaskManager,
+  id: string,
+  url: string,
+  ownerUserId: string,
+  status: 'waiting_for_browser_worker' | 'waiting_verification' | 'interrupted' | 'running' | 'failed'
+): Promise<void> {
+  await taskManager.createTask({
+    id,
+    url,
+    adapterId: 'kuronavi',
+    mode: 'chapters',
+    chapterUrls: [url],
+    ownerUserId,
+    browserTarget: existingTarget('worker-old', 'resource-old'),
+  });
+  await flushAsyncWork();
+  const record = (taskManager as any).records.get(id);
+  record.task.status = status;
+  record.result.status = status;
+  if (status === 'interrupted') {
+    record.task.error = 'Task interrupted by server restart';
+    record.result.error = record.task.error;
+  }
 }

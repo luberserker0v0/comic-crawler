@@ -673,6 +673,8 @@ Cloud integration test 必須驗證：
 6. Disconnect 必須使未完成 command 失敗。
 7. 同一 process reconnect 才可維持 Worker affinity。
 8. Server 不可取得任意 Playwright API。
+9. 新 process 只能透過顯式、驗證過的 task target rebind 接手。
+10. Scheduler 不得自動替換 existing-tab target。
 
 ## 19. 驗收條件
 

@@ -1,4 +1,9 @@
-import type { ChapterListSummary, CrawlStage, TaskPreviewFile } from '@comiccrawler/shared';
+import type {
+  ChapterListSummary,
+  CrawlStage,
+  TaskBrowserTargetReboundEvent,
+  TaskPreviewFile,
+} from '@comiccrawler/shared';
 
 export interface EventMap {
   'task:created': { taskId: string; url: string };
@@ -10,6 +15,7 @@ export interface EventMap {
   'task:resumed': { taskId: string };
   'task:waiting_for_browser_worker': { taskId: string; message: string };
   'task:waiting_verification': { taskId: string; challengeDiscoveryId: string; challengeStatus?: string; message: string };
+  'task:browser_target_rebound': { taskId: string; event: TaskBrowserTargetReboundEvent };
   'task:completed': { taskId: string; result: unknown };
   'task:failed': { taskId: string; error: Error };
   'task:cancelled': { taskId: string };

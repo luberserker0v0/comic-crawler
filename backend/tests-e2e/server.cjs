@@ -19,6 +19,7 @@ const { BrowserClient } = require('../../browser-client-sdk/dist/src');
 const { chromium } = require('playwright');
 const WebSocket = require('ws');
 const { ApiSecurityService } = require('../dist/security/api-security');
+const { TaskDeferredError } = require('../dist/scheduler');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
 
@@ -130,14 +131,19 @@ async function start() {
     if (!adapter) {
       throw new Error(`Adapter ${task.data.adapterId} not found`);
     }
-    const lease = await browserLeaseCoordinator.acquire({
+    const lease = await browserLeaseCoordinator.tryAcquire({
       taskId: task.id,
       ownerUserId: task.data.ownerUserId || 'public',
       target: task.data.browserTarget,
-      initialUrl: task.data.url,
-      timeoutMs: 10_000,
-      onWaiting: (message) => taskManager.markWaitingForBrowserWorker(task.id, message),
+      initialUrl: task.data.browserTargetUrl || task.data.url,
     });
+    if (!lease) {
+      const message = task.data.browserTarget?.mode === 'existing-tab' || task.data.browserTarget?.workerId
+        ? `Waiting for browser worker "${task.data.browserTarget.workerId}".`
+        : 'Waiting for an available managed-profile browser worker.';
+      await taskManager.markWaitingForBrowserWorker(task.id, message);
+      throw new TaskDeferredError(message, 250);
+    }
     let leaseTransferred = false;
     try {
       await crawlerEngine.crawl(adapter, task.data.url, {
