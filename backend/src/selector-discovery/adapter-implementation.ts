@@ -77,10 +77,6 @@ export function validateCapabilityDraft(
     }
   }
 
-  if (/fetchMetadata|fetchChapterImages/.test(source)) {
-    errors.push('Capability draft must not mention old facade functions fetchMetadata or fetchChapterImages.');
-  }
-
   switch (options.stage) {
     case 'common-verification':
       errors.push(...validateCommonVerificationDraft(source));
@@ -134,8 +130,8 @@ export function validateAdapterImplementationDraft(
     }
   }
 
-  if (!/readonly\s+parseMode\s*[^=]*=\s*['"](?:static|dynamic|interactive)['"]/.test(source)) {
-    errors.push('parseMode must be one of "static", "dynamic", or "interactive".');
+  if (!/readonly\s+parseMode\s*[^=]*=\s*['"]playwright['"]/.test(source)) {
+    errors.push('parseMode must be "playwright".');
   }
 
   if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*(?:true|false)[^}]*metadata\s*:\s*(?:true|false)[^}]*chapterImages\s*:\s*(?:true|false)/s.test(source)) {
@@ -158,10 +154,6 @@ export function validateAdapterImplementationDraft(
 
   const signatureErrors = validateRequiredSignatures(source, requiredFunctions);
   errors.push(...signatureErrors);
-
-  if (/fetchMetadata|fetchChapterImages/.test(source)) {
-    errors.push('Implementation must not mention old facade functions fetchMetadata or fetchChapterImages.');
-  }
 
   return {
     valid: errors.length === 0,

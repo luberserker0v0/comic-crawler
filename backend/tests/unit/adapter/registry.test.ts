@@ -7,7 +7,7 @@ class MockAdapter implements IComicAdapter {
   readonly id: string;
   readonly name: string;
   readonly domains: string[];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
 
   constructor(id: string, name: string, domains: string[]) {
     this.id = id;

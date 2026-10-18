@@ -6,25 +6,28 @@ This directory contains user- and contributor-facing documentation for the
 ## Current documents
 
 - `USER_GUIDE.md` - WebUI flow for all-chapter tasks, chapter-only tasks,
-  waiting verification, resume, previews, and download folder operations.
+  Browser Client setup, verification, resume, and downloads.
+- `DEVELOPER_GUIDE.md` - local setup, runtime settings, troubleshooting, test
+  gates, and Browser Client development.
 - `API.md` - concise reference for the currently implemented backend routes.
-- `openapi.yaml` - machine-readable contract for the public REST crawl flow;
+- `API_SECURITY.md` - public/token modes, roles, permissions, secret setup, and
+  Browser Client credential behavior.
+- `openapi.yaml` - machine-readable contract for the REST crawl flow;
   the running backend serves Swagger UI at `GET /api-docs`.
-- `ARCHITECTURE.md` - current subsystem overview and runtime data flow.
+- `ARCHITECTURE.md` - system context, startup responsibilities, components,
+  Browser Client boundary, and runtime data flow.
 - `ADAPTERS.md` - adapter contract, capabilities, deletion behavior, Adapter
   Lab, drafts, and verified fixture policy.
 - `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
   `AdapterBase` output contract, and AO API lifecycle.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
   forced task order, and adapter lifecycle recovery.
+- `development/` - version-controlled SRS, SDD, TDD, test scenarios, and
+  authentication credential contract.
 
 ## Documentation boundary
 
-- External software development documents such as SRS, SDD, STD, TDD, roadmap,
-  and implementation notes belong in the outer `../docs/` directory.
+- Current software specifications belong in `development/`.
+- Superseded plans and designs are removed instead of kept as active documents.
 - Contributor workflow belongs in `../CONTRIBUTING.md`, not here.
-- Agent-facing instructions belong in the outer `../AGENTS.md`.
-
-## Missing docs to add
-
-- None at the current documentation-entry level.
+- Agent-facing instructions belong in the workspace root `AGENTS.md`.

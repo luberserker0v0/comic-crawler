@@ -1,18 +1,18 @@
 import type { BrowserConfig, ComicMetadata, CrawlStage, ImageInfo, NetworkConfig, SearchOptions, SearchResult } from '@comiccrawler/shared';
 import { join } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AdapterBase } from '../adapter/base';
 import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import type { EventBus } from '../events/bus';
 import { HtmlParser } from './html-parser';
-import type { BrowserPool } from './browser-pool';
 import { ChapterFetcher } from './chapter-fetcher';
 import { ImageDownloader, type DownloadOptions } from './image-downloader';
 import { SearchEngine } from './search';
 import { selectChapters } from './chapter-selection';
 import { ComicError, ErrorType, errorToLogObject } from '../error/types';
 import { logger } from '../utils/logger';
-import { PlaywrightHtmlRenderer, type HtmlRenderer } from './html-renderer';
-import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
+import { GatewayHtmlRenderer, type HtmlRenderer } from './html-renderer';
+import type { BrowserRenderService } from '../browser/browser-render-service';
 import { createEmptyCheckpoint, type ChapterCheckpoint, type CrawlCheckpoint } from '../task/checkpoint';
 import {
   createChapterListSummary,
@@ -20,7 +20,6 @@ import {
   createPreviewFile,
   ensureChapterCheckpoint,
   getOutputRoot,
-  isHeadlessFallbackHttpStatus,
   isHumanVerificationRequiredError,
   recountCheckpoint,
 } from './crawl-helpers';
@@ -31,6 +30,7 @@ export interface CrawlerEngineOptions {
   eventBus?: EventBus;
   browser?: BrowserConfig;
   network?: NetworkConfig;
+  browserRenderService?: BrowserRenderService;
 }
 
 export interface CrawlResult {
@@ -53,6 +53,11 @@ interface CrawlOptions {
   taskId?: string;
   checkpoint?: CrawlCheckpoint;
   onCheckpoint?: (checkpoint: CrawlCheckpoint) => Promise<void> | void;
+  browserSessionId?: string;
+}
+
+interface CrawlBrowserContext {
+  sessionId?: string;
 }
 
 export class CrawlerEngine {
@@ -60,12 +65,12 @@ export class CrawlerEngine {
   private chapterFetcher: ChapterFetcher;
   private imageDownloader: ImageDownloader;
   private searchEngine: SearchEngine;
-  private browserPool?: BrowserPool;
   private htmlRenderer?: HtmlRenderer;
   private browserConfig: BrowserConfig;
   private eventBus?: EventBus;
   private downloadDir: string;
   private concurrency: number;
+  private readonly browserContext = new AsyncLocalStorage<CrawlBrowserContext>();
 
   constructor(options: CrawlerEngineOptions) {
     this.parser = new HtmlParser();
@@ -76,19 +81,36 @@ export class CrawlerEngine {
     this.downloadDir = options.downloadDir;
     this.concurrency = options.concurrency ?? 5;
     this.browserConfig = options.browser ?? {
-      mode: 'auto',
-      headless: true,
-      maxInstances: 2,
       timeout: 30000,
-      waitUntil: 'domcontentloaded',
+      workerWaitTimeoutMs: 30 * 60 * 1000,
       postLoadDelayMs: 0,
     };
-    if (this.browserConfig.mode !== 'static') {
-      this.htmlRenderer = new PlaywrightHtmlRenderer(this.browserConfig, options.network);
-    }
+    this.htmlRenderer = options.browserRenderService
+      ? new GatewayHtmlRenderer(
+          options.browserRenderService,
+          () => this.browserContext.getStore()?.sessionId,
+          this.browserConfig
+        )
+      : {
+          render: async () => {
+            throw new ComicError(
+              'Browser Worker renderer is required for rendered DOM.',
+              ErrorType.CONFIG_ERROR,
+              false
+            );
+          },
+          dispose: async () => undefined,
+        };
   }
 
   async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
+    return this.browserContext.run(
+      { sessionId: options?.browserSessionId },
+      () => this.crawlWithBrowserContext(adapter, url, options)
+    );
+  }
+
+  private async crawlWithBrowserContext(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
     const taskId = options?.taskId ?? url;
     const checkpoint = options?.checkpoint ?? createEmptyCheckpoint(taskId);
     const saveCheckpoint = async () => {
@@ -311,14 +333,10 @@ export class CrawlerEngine {
       try {
 
         const chapterDir = join(outputRoot, chapter.title);
-        const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(chapter.url);
         const previewEventPromises: Array<Promise<void>> = [];
         const downloadOptions: DownloadOptions = {
           outputDir: chapterDir,
           concurrency: this.concurrency,
-          ...(verifiedSession?.cdpUrl
-            ? { verifiedBrowser: { cdpUrl: verifiedSession.cdpUrl, pageUrl: chapter.url } }
-            : {}),
           onProgress: (completed, _total, result, image) => {
             const progressImage = image ?? remainingImages[completed - 1];
             if (!progressImage) {
@@ -478,15 +496,37 @@ export class CrawlerEngine {
     if (this.htmlRenderer) {
       await this.htmlRenderer.dispose();
     }
-    if (this.browserPool) {
-      await this.browserPool.dispose();
-    }
   }
 
   private attachRenderer(adapter: AdapterBase): void {
-    if (typeof (adapter as any).setHtmlRenderer === 'function') {
-      adapter.setHtmlRenderer(this.htmlRenderer);
+    const renderer = this.htmlRenderer;
+    if (!renderer) return;
+    const rendererAttachableAdapter = adapter as AdapterBase & {
+      setHtmlRenderer?: (renderer: HtmlRenderer | undefined) => void;
+    };
+    if (typeof rendererAttachableAdapter.setHtmlRenderer !== 'function') {
+      return;
     }
+    rendererAttachableAdapter.setHtmlRenderer({
+      render: async (url) => {
+        const html = await renderer.render(url);
+        if (adapter.verification && await adapter.verification.detectVerificationRequired(html)) {
+          throw new ComicError(
+            `Adapter "${adapter.id}" detected that human verification is required for ${url}.`,
+            ErrorType.AUTH_ERROR,
+            false,
+            {
+              adapterId: adapter.id,
+              url,
+              antiBotChallenge: true,
+              challengeType: 'adapter_verification_required',
+            }
+          );
+        }
+        return html;
+      },
+      dispose: async () => undefined,
+    });
   }
 
   private emitProgressStage(taskId: string, stage: CrawlStage, stageDetail: string): void {
@@ -504,104 +544,10 @@ export class CrawlerEngine {
   }
 
   private async composeMetadata(adapter: AdapterBase, url: string): Promise<ComicMetadata> {
-    return this.withCrawlerFetchMode(adapter, () => composeMetadata(adapter, url), {
-      adapter,
-      url,
-      operation: 'composeMetadata',
-    });
+    return composeMetadata(adapter, url);
   }
 
   private async composeChapterImages(adapter: AdapterBase, chapterUrl: string): Promise<ImageInfo[]> {
-    return this.withCrawlerFetchMode(adapter, () => composeChapterImages(adapter, chapterUrl), {
-      adapter,
-      url: chapterUrl,
-      operation: 'composeChapterImages',
-    });
-  }
-
-  private async withCrawlerFetchMode<T>(
-    adapter: AdapterBase,
-    operation: () => Promise<T>,
-    context: { adapter: AdapterBase; url: string; operation: string }
-  ): Promise<T> {
-    const preferredMode = this.getPreferredMode(adapter);
-    if (preferredMode === 'static') {
-      return this.runAdapterOperation(adapter, 'static', operation);
-    }
-
-    if (preferredMode === 'headless') {
-      return this.runAdapterOperation(adapter, 'headless', operation);
-    }
-
-    try {
-      return await this.runAdapterOperation(adapter, 'static', operation);
-    } catch (staticError) {
-      if (!this.shouldFallbackToHeadless(staticError)) {
-        throw staticError;
-      }
-
-      logger.warn(
-        {
-          adapterId: context.adapter.id,
-          url: context.url,
-          operation: context.operation,
-          error: errorToLogObject(staticError),
-        },
-        'Static extraction failed; retrying with Playwright headless render'
-      );
-
-      try {
-        return await this.runAdapterOperation(adapter, 'headless', operation);
-      } catch (headlessError) {
-        throw new ComicError(
-          `Static extraction failed and headless fallback also failed for ${context.url}`,
-          ErrorType.PARSING_ERROR,
-          false,
-          {
-            adapterId: context.adapter.id,
-            operation: context.operation,
-            url: context.url,
-            staticError: errorToLogObject(staticError),
-            headlessError: errorToLogObject(headlessError),
-          }
-        );
-      }
-    }
-  }
-
-  private getPreferredMode(adapter: AdapterBase): 'static' | 'headless' | 'auto' {
-    if (this.browserConfig.mode !== 'auto') {
-      return this.browserConfig.mode;
-    }
-    if (adapter.parseMode === 'dynamic' || adapter.parseMode === 'interactive') {
-      return 'headless';
-    }
-    return 'auto';
-  }
-
-  private async runAdapterOperation<T>(
-    adapter: AdapterBase,
-    mode: 'static' | 'headless',
-    operation: () => Promise<T>
-  ): Promise<T> {
-    if (typeof (adapter as any).withHtmlFetchMode === 'function') {
-      return adapter.withHtmlFetchMode(mode, operation);
-    }
-    return operation();
-  }
-
-  private shouldFallbackToHeadless(error: unknown): boolean {
-    if (error instanceof ComicError) {
-      if (error.type === ErrorType.NETWORK_ERROR && isHeadlessFallbackHttpStatus(error.context.statusCode)) {
-        return true;
-      }
-      return error.type === ErrorType.PARSING_ERROR;
-    }
-
-    if (error instanceof Error) {
-      return /HTTP (401|403|429|503)|forbidden|access denied|captcha|cloudflare|anti-bot|too many requests|no chapters|no images|required selector|parsing|empty html/i.test(error.message);
-    }
-
-    return false;
+    return composeChapterImages(adapter, chapterUrl);
   }
 }

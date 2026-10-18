@@ -48,7 +48,7 @@ describe('Integration: API Endpoints', () => {
       readonly id = 'mock';
       readonly name = 'Mock';
       readonly domains = ['mock.example.com'];
-      readonly parseMode = 'static' as const;
+      readonly parseMode = 'playwright' as const;
       matchUrl(url: string): boolean { return url.includes('mock.example.com'); }
     }
 
@@ -63,7 +63,7 @@ describe('Integration: API Endpoints', () => {
       readonly id = 'mock';
       readonly name = 'Mock';
       readonly domains = ['mock.example.com'];
-      readonly parseMode = 'static' as const;
+      readonly parseMode = 'playwright' as const;
       matchUrl(url: string): boolean { return url.includes('mock.example.com'); }
     }
 

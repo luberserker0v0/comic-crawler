@@ -6,15 +6,22 @@ import process from 'node:process';
 const coreBackendTests = [
   'tests/unit/server/task-routes.test.ts',
   'tests/unit/task/manager.test.ts',
-  'tests/unit/task/queue.test.ts',
+  'tests/unit/scheduler/task-scheduler-lifecycle.test.ts',
   'tests/unit/crawler/engine.test.ts',
   'tests/unit/crawler/image-downloader.test.ts',
   'tests/unit/crawler/anti-bot.test.ts',
-  'tests/unit/challenge/cdp-handoff.test.ts',
+  'tests/unit/server/browser-client-routes.test.ts',
+  'tests/unit/browser/browser-client-registry.test.ts',
+  'tests/unit/browser/browser-session-gateway.test.ts',
+  'tests/unit/browser/browser-worker-lease-coordinator.test.ts',
+  'tests/unit/browser/browser-render-service.test.ts',
+  'tests/unit/security/api-security.test.ts',
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
   'tests/unit/server/adapter-routes.test.ts',
   'tests/unit/server/adapter-draft-routes.test.ts',
+  'tests/unit/fixtures/fixture-capture-service.test.ts',
+  'tests/unit/scheduler/task-scheduler.test.ts',
 ];
 
 // Everything else under backend/tests/unit. These run in the full backend
@@ -27,6 +34,7 @@ const nonCoreBackendTests = [
   'tests/unit/adapter/dynamic-site-adapter.test.ts',
   'tests/unit/adapter/registry.test.ts',
   'tests/unit/adapter/sites/kuronavi/adapter.test.ts',
+  'tests/unit/adapter/sites/comix/adapter.test.ts',
   'tests/unit/adapter/url-resolver.test.ts',
   'tests/unit/crawler/chapter-selection.test.ts',
   'tests/unit/crawler/extraction/dom.test.ts',
@@ -45,6 +53,7 @@ const nonCoreBackendTests = [
   'tests/unit/agent/workspace-factory.test.ts',
   // Challenge / config / server 其餘
   'tests/unit/challenge/registry.test.ts',
+  'tests/unit/challenge/browser-worker-handoff.test.ts',
   'tests/unit/challenge/strategy-loader.test.ts',
   'tests/unit/cli/ui.test.ts',
   'tests/unit/config/runtime.test.ts',
@@ -70,10 +79,12 @@ const nonCoreBackendTests = [
   'tests/unit/selector-discovery/ao-client.test.ts',
   'tests/unit/selector-discovery/bundle-manager.test.ts',
   'tests/unit/selector-discovery/eval-suite.test.ts',
-  'tests/unit/selector-discovery/markdown-candidate.test.ts',
   'tests/unit/selector-discovery/provider-config.test.ts',
   'tests/unit/selector-discovery/service.test.ts',
+  'tests/unit/selector-discovery/service-shell-compose.test.ts',
   'tests/unit/selector-discovery/settings-store.test.ts',
+  'tests/unit/selector-discovery/safe-fetch.test.ts',
+  'tests/unit/selector-discovery/url-models.test.ts',
 ];
 
 function collectUnitTests(dir) {

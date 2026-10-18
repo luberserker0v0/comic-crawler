@@ -3,7 +3,7 @@ import type { TaskProgress } from './progress';
 import type { CrawlCheckpoint } from './checkpoint';
 import type { EventBus } from '../events/bus';
 import type { IStorage } from '../storage/types';
-import { TaskQueue } from './queue';
+import { TaskDeferredError, TaskScheduler } from '../scheduler';
 import { ProgressTracker } from './progress';
 import { ComicError, errorToLogObject } from '../error/types';
 import { deleteTaskOutputDir, hasWaitingVerificationContext } from './file-utils';
@@ -31,7 +31,14 @@ export interface TaskDefinition {
   chapterUrls?: string[];
   priority?: number;
   options?: Record<string, unknown>;
+  ownerUserId?: string;
+  browserTarget?: BrowserTarget;
+  browserWaitStartedAt?: string;
 }
+
+export type BrowserTarget =
+  | { mode: 'managed-profile'; workerId?: string }
+  | { mode: 'existing-tab'; workerId: string; resourceId: string };
 
 export interface TaskResult {
   taskId: string;
@@ -56,7 +63,7 @@ export interface PersistedTaskRecord {
 }
 
 export class TaskManager {
-  private queue: TaskQueue<TaskDefinition>;
+  private scheduler: TaskScheduler<TaskDefinition>;
   private progress: ProgressTracker;
   private eventBus?: EventBus;
   private storage?: IStorage;
@@ -72,12 +79,13 @@ export class TaskManager {
     this.eventBus = options?.eventBus;
     this.storage = options?.storage;
     this.progress = new ProgressTracker(options?.eventBus);
-    this.queue = new TaskQueue<TaskDefinition>(
+    this.scheduler = new TaskScheduler<TaskDefinition>(
       async (task) => {
         try {
           await this.taskExecutor(task);
           await this.markTaskCompleted(task.id);
         } catch (error) {
+          if (error instanceof TaskDeferredError) throw error;
           if (await this.markTaskWaitingVerification(task.id, error)) {
             return;
           }
@@ -99,7 +107,7 @@ export class TaskManager {
 
     const taskIds = (await this.storage.read<string[]>(TASK_INDEX_KEY)) ?? [];
     this.priorityOrder = (await this.storage.read<string[]>(TASK_PRIORITY_ORDER_KEY)) ?? [];
-    this.queue.setPriorityOrder(this.priorityOrder);
+    this.scheduler.setPriorityOrder(this.priorityOrder);
     for (const taskId of taskIds) {
       const record = await this.storage.read<PersistedTaskRecord>(this.getTaskKey(taskId));
       if (!record) {
@@ -108,7 +116,8 @@ export class TaskManager {
 
       let changed = false;
       let shouldRequeue = false;
-      if (record.task.status === 'pending' || record.task.status === 'running' || record.task.status === 'paused') {
+      if (record.task.status === 'pending' || record.task.status === 'running' || record.task.status === 'paused'
+        || record.task.status === 'waiting_for_browser_worker') {
         if (record.checkpoint?.resumable) {
           record.task.status = 'pending';
           record.task.completedAt = undefined;
@@ -145,14 +154,14 @@ export class TaskManager {
         await this.persistRecord(record);
       }
       if (shouldRequeue) {
-        await this.queue.add(record.task);
+        await this.scheduler.add(record.task);
       }
     }
   }
 
   async dispose(): Promise<void> {
-    this.queue.stop();
-    await this.queue.waitForIdle();
+    this.scheduler.stop();
+    await this.scheduler.waitForIdle();
   }
 
   async createTask(definition: TaskDefinition): Promise<string> {
@@ -178,14 +187,14 @@ export class TaskManager {
 
     this.records.set(definition.id, record);
     await this.persistRecord(record);
-    await this.queue.add(taskItem);
+    await this.scheduler.add(taskItem);
     this.eventBus?.emit('task:created', { taskId: definition.id, url: definition.url });
 
     return definition.id;
   }
 
   async pauseTask(taskId: string): Promise<boolean> {
-    const task = this.queue.get(taskId);
+    const task = this.scheduler.get(taskId);
     if (!task) return false;
 
     if (task.status === 'running') {
@@ -207,7 +216,7 @@ export class TaskManager {
   }
 
   async resumeTask(taskId: string): Promise<boolean> {
-    const task = this.queue.get(taskId) ?? this.records.get(taskId)?.task;
+    const task = this.scheduler.get(taskId) ?? this.records.get(taskId)?.task;
     const checkpoint = this.records.get(taskId)?.checkpoint;
     const canResumeCompletedTask = task?.status === 'completed' && checkpoint?.resumable === true;
     if (!task || (
@@ -236,13 +245,17 @@ export class TaskManager {
         ...(checkpoint?.outputPath ? { outputPath: checkpoint.outputPath } : {}),
       },
     });
-    await this.queue.add(task);
+    await this.scheduler.add(task);
     this.eventBus?.emit('task:resumed', { taskId });
     return true;
   }
 
   async cancelTask(taskId: string): Promise<boolean> {
-    const cancelled = this.queue.cancel(taskId);
+    let cancelled = this.scheduler.cancel(taskId);
+    const record = this.records.get(taskId);
+    if (!cancelled && record?.task.status === 'waiting_verification') {
+      cancelled = true;
+    }
     if (cancelled) {
       await this.updateTaskRecord(taskId, {
         task: {
@@ -270,7 +283,7 @@ export class TaskManager {
       return { deleted: false, filesDeleted: false };
     }
 
-    const activeStatuses: TaskStatus[] = ['pending', 'running', 'paused'];
+    const activeStatuses: TaskStatus[] = ['pending', 'running', 'paused', 'waiting_for_browser_worker'];
     if (activeStatuses.includes(record.task.status)) {
       return { deleted: false, filesDeleted: false };
     }
@@ -283,7 +296,7 @@ export class TaskManager {
       filesSkipped = outcome.skipped;
     }
 
-    this.queue.remove(taskId);
+    this.scheduler.remove(taskId);
     this.records.delete(taskId);
     this.progress.remove(taskId);
 
@@ -292,7 +305,7 @@ export class TaskManager {
       const nextIndex = currentIndex.filter((id) => id !== taskId);
       const nextPriorityOrder = this.priorityOrder.filter((id) => id !== taskId);
       this.priorityOrder = nextPriorityOrder;
-      this.queue.setPriorityOrder(nextPriorityOrder);
+      this.scheduler.setPriorityOrder(nextPriorityOrder);
       await this.storage.write(TASK_INDEX_KEY, nextIndex);
       await this.storage.write(TASK_PRIORITY_ORDER_KEY, nextPriorityOrder);
       await this.storage.delete(this.getTaskKey(taskId));
@@ -327,6 +340,7 @@ export class TaskManager {
       total: tasks.length,
       pending: tasks.filter((task) => task.status === 'pending').length,
       running: tasks.filter((task) => task.status === 'running').length,
+      waitingForBrowserWorker: tasks.filter((task) => task.status === 'waiting_for_browser_worker').length,
       waitingVerification: tasks.filter((task) => task.status === 'waiting_verification').length,
       interrupted: tasks.filter((task) => task.status === 'interrupted').length,
       completed: tasks.filter((task) => task.status === 'completed').length,
@@ -342,7 +356,7 @@ export class TaskManager {
   async setPriorityOrder(taskIds: string[]): Promise<string[]> {
     const unique = Array.from(new Set(taskIds.map((id) => id.trim()).filter(Boolean)));
     this.priorityOrder = unique;
-    this.queue.setPriorityOrder(unique);
+    this.scheduler.setPriorityOrder(unique);
     if (this.storage) {
       await this.storage.write(TASK_PRIORITY_ORDER_KEY, unique);
     }
@@ -374,6 +388,26 @@ export class TaskManager {
       task: { error },
       result: { error },
     });
+  }
+
+  async markWaitingForBrowserWorker(taskId: string, message: string): Promise<void> {
+    const record = this.records.get(taskId);
+    if (!record) return;
+    record.task.data.browserWaitStartedAt ??= new Date().toISOString();
+    await this.updateTaskRecord(taskId, {
+      task: { status: 'waiting_for_browser_worker', completedAt: undefined, error: message },
+      result: { status: 'waiting_for_browser_worker', completedAt: undefined, error: message },
+    });
+    this.eventBus?.emit('task:waiting_for_browser_worker', { taskId, message });
+  }
+
+  async markBrowserWorkerAcquired(taskId: string): Promise<void> {
+    const record = this.records.get(taskId);
+    if (!record) return;
+    delete record.task.data.browserWaitStartedAt;
+    record.task.error = undefined;
+    record.result.error = undefined;
+    await this.persistRecord(record);
   }
 
   getProgressTracker(): ProgressTracker {
@@ -450,8 +484,8 @@ export class TaskManager {
     }
 
     const shouldWait = error instanceof ComicError
-      ? hasWaitingVerificationContext(error.context) || /human verification|challenge|cloudflare|anti-bot|browser profile/i.test(message)
-      : /human verification|challenge|cloudflare|anti-bot|browser profile/i.test(message);
+      ? hasWaitingVerificationContext(error.context) || /human verification|challenge|cloudflare|anti-bot/i.test(message)
+      : /human verification|challenge|cloudflare|anti-bot/i.test(message);
     if (!shouldWait) {
       return false;
     }

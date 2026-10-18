@@ -34,6 +34,24 @@ export interface ChapterImagesRequest {
   url: string;
   adapterId?: string;
   challengeDiscoveryId?: string;
+  browserTarget?: BrowserTarget;
+  renderContext?: RenderContext;
+}
+
+export interface RenderContext {
+  viewport: {
+    width: number;
+    height: number;
+  };
+  deviceScaleFactor?: number;
+}
+
+export interface EffectiveRenderContext {
+  viewport: {
+    width: number;
+    height: number;
+  };
+  deviceScaleFactor: number;
 }
 
 export interface ChapterImagesResponse {
@@ -43,6 +61,7 @@ export interface ChapterImagesResponse {
   imageUrls: string[];
   domSource: AdapterDomSource;
   durationMs: number;
+  renderContext: EffectiveRenderContext;
 }
 
 export interface AdapterListItem {
@@ -117,15 +136,6 @@ export interface AdapterCapabilityDetailResponse {
   functions: AdapterFunctionDescriptor[];
 }
 
-export interface AdapterFunctionSourceResponse {
-  adapterId: string;
-  functionId: string;
-  language: 'typescript' | 'json' | 'markdown';
-  sourceKind: 'project-source' | 'dynamic-manifest' | 'pipeline-summary';
-  source: string;
-  notes: string;
-}
-
 export type AdapterImplementationSourceType = 'project-source' | 'dynamic' | 'summary' | 'generated-draft';
 export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
 
@@ -181,6 +191,7 @@ export interface SaveAdapterDraftContentRequest {
 export interface AdapterFunctionTestRequest {
   url: string;
   challengeDiscoveryId?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface AdapterFunctionRevisionRequest {
@@ -197,7 +208,7 @@ export interface CompleteHumanVerificationRequest {
 
 export type AdapterFunctionTestStatus = 'passed' | 'failed' | 'verification_required';
 
-export type AdapterDomSource = 'static' | 'rendered' | 'verified-fixture' | 'handoff-required';
+export type AdapterDomSource = 'rendered' | 'verified-fixture' | 'handoff-required';
 export type DomReadinessStatus =
   | 'ready'
   | 'human_verification_required'
@@ -226,6 +237,10 @@ export interface FixtureSummary {
   htmlLength: number;
   capturedAt: string;
   path: string;
+  expectedPath?: string;
+  adapterId?: string;
+  sourceDiscoveryId?: string;
+  functionIds?: string[];
   readiness: DomReadinessReport;
 }
 
@@ -291,12 +306,32 @@ export interface CreateTaskRequest {
   chapters?: string[];
   chapterUrls?: string[];
   priority?: number;
+  browserTarget?: BrowserTarget;
 }
+
+export interface BrowserWorkerSummary {
+  workerId: string;
+  name: string;
+  status: 'offline' | 'idle' | 'busy';
+  online: boolean;
+  capabilities?: Record<string, unknown>;
+  activeTaskId?: string;
+  lastConnectedAt?: string;
+}
+
+export interface BrowserWorkerListResponse {
+  workers: BrowserWorkerSummary[];
+}
+
+export type BrowserTarget =
+  | { mode: 'managed-profile'; workerId?: string }
+  | { mode: 'existing-tab'; workerId: string; resourceId: string };
 
 export type CreateTaskResponse =
   | {
       kind: 'taskCreated';
       taskId: string;
+      browserTarget: BrowserTarget;
     }
   | {
       kind: 'discoveryQueued';
@@ -328,6 +363,7 @@ export interface TaskStats {
   total: number;
   pending: number;
   running: number;
+  waitingForBrowserWorker: number;
   waitingVerification: number;
   interrupted: number;
   completed: number;
@@ -339,12 +375,13 @@ export interface TaskSummary {
   id: string;
   url: string;
   mode?: CrawlMode;
-  status: TaskStatus | 'interrupted';
+  status: TaskStatus;
   priority: number;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  browserTarget?: BrowserTarget;
   progress: TaskProgressSummary | null;
   checkpoint: CrawlCheckpointSummary | null;
 }
@@ -371,7 +408,7 @@ export interface TaskProgressSummary {
 
 export interface TaskResultSummary {
   taskId: string;
-  status: TaskStatus | 'interrupted';
+  status: TaskStatus;
   metadata?: Record<string, unknown>;
   downloadedImages: number;
   failedImages: number;
@@ -459,6 +496,7 @@ export interface CreateSelectorDiscoveryRequest {
   url: string;
   target?: SelectorDiscoveryTarget;
   forceDiscovery?: boolean;
+  browserTarget?: BrowserTarget;
 }
 
 export interface CreateSelectorDiscoverySnapshotRequest extends CreateSelectorDiscoveryRequest {
@@ -482,15 +520,16 @@ export interface SelectorDiscoveryJobSummary {
   createdAt: string;
   updatedAt: string;
   phase1Markdown?: string;
-  candidateMarkdown?: string;
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
   functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: unknown;
   validation?: unknown;
   error?: string;
+  retriedFromId?: string;
   adapterId?: string;
   adapterName?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface SelectorDiscoveryFunctionRevisionTask {
@@ -521,11 +560,6 @@ export interface ChallengeHandoffJobSummary {
   createdAt?: string;
   updatedAt?: string;
   error?: string;
-}
-
-export interface OpenVerificationBrowserRequest {
-  executablePath?: string;
-  profileId?: string;
 }
 
 export type ConfigResponse = GlobalConfig;

@@ -8,6 +8,7 @@ export interface EventMap {
   'task:chapter_list_extracted': { taskId: string; chapterListSummary: ChapterListSummary };
   'task:paused': { taskId: string };
   'task:resumed': { taskId: string };
+  'task:waiting_for_browser_worker': { taskId: string; message: string };
   'task:waiting_verification': { taskId: string; challengeDiscoveryId: string; challengeStatus?: string; message: string };
   'task:completed': { taskId: string; result: unknown };
   'task:failed': { taskId: string; error: Error };

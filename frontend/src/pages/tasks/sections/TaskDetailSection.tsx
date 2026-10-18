@@ -7,7 +7,6 @@ export function TaskDetailSection(props: {
   detail: TaskDetail;
   taskAction: string | null;
   isVerificationBrowserOpening: boolean;
-  isExternalVerificationUnreadable: boolean;
   pauseTask: (id: string) => void;
   cancelTask: (id: string) => void;
   handleResumeTask: (id: string) => void;
@@ -20,7 +19,6 @@ export function TaskDetailSection(props: {
     detail,
     taskAction,
     isVerificationBrowserOpening,
-    isExternalVerificationUnreadable,
     pauseTask,
     cancelTask,
     handleResumeTask,
@@ -47,16 +45,14 @@ export function TaskDetailSection(props: {
             {canResumeTaskDetail(detail) && (
               <button
                 onClick={() => void handleResumeTask(detail.task.id)}
-                disabled={taskAction !== null || isVerificationBrowserOpening || isExternalVerificationUnreadable}
+                disabled={taskAction !== null || isVerificationBrowserOpening}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 {isVerificationBrowserOpening
-                  ? 'Opening browser...'
-                  : isExternalVerificationUnreadable
-                    ? 'Browser not readable'
-                    : taskAction === 'resume'
-                      ? 'Continuing...'
-                      : text.taskList.resume}
+                  ? text.taskManager.openingBrowser
+                  : taskAction === 'resume'
+                    ? text.taskManager.continuing
+                    : text.taskList.resume}
               </button>
             )}
             {['running', 'pending', 'paused'].includes(detail.task.status) && (
@@ -112,27 +108,27 @@ export function TaskDetailSection(props: {
 
         {detail.checkpoint && (
           <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-            <div className="text-xs uppercase tracking-[0.25em] text-emerald-500">Resume checkpoint</div>
+            <div className="text-xs uppercase tracking-[0.25em] text-emerald-500">{text.taskManager.resumeCheckpoint}</div>
             <div className="mt-3 grid gap-3 md:grid-cols-4">
               <div>
-                <div className="text-xs text-emerald-700">Current chapter</div>
+                <div className="text-xs text-emerald-700">{text.taskManager.currentChapter}</div>
                 <div className="mt-1 font-medium">{detail.checkpoint.currentChapter ?? '-'}</div>
               </div>
               <div>
-                <div className="text-xs text-emerald-700">Completed images</div>
+                <div className="text-xs text-emerald-700">{text.taskManager.completedImages}</div>
                 <div className="mt-1 font-medium">{detail.checkpoint.completedImages}</div>
               </div>
               <div>
-                <div className="text-xs text-emerald-700">Failed images</div>
+                <div className="text-xs text-emerald-700">{text.taskManager.failedImages}</div>
                 <div className="mt-1 font-medium">{detail.checkpoint.failedImages}</div>
               </div>
               <div>
-                <div className="text-xs text-emerald-700">Updated</div>
+                <div className="text-xs text-emerald-700">{text.taskManager.checkpointUpdated}</div>
                 <div className="mt-1 font-medium">{formatDate(detail.checkpoint.updatedAt)}</div>
               </div>
             </div>
             <div className="mt-2 text-xs text-emerald-700">
-              {detail.checkpoint.resumable ? 'This task can continue from the last saved image checkpoint.' : 'Checkpoint is complete; resume is not needed.'}
+              {detail.checkpoint.resumable ? text.taskManager.checkpointResumable : text.taskManager.checkpointComplete}
             </div>
           </div>
         )}

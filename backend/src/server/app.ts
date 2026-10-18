@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type { BrowserTarget, EffectiveRenderContext } from '@comiccrawler/shared';
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
@@ -13,6 +15,12 @@ import type { AdapterDraftService } from '../adapter-drafts/service';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
 import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
+import type { BrowserClientRegistry } from '../browser/browser-client-registry';
+import type { BrowserSessionGateway } from '../browser/browser-session-gateway';
+import type { BrowserWorkerLeaseCoordinator } from '../browser/browser-worker-lease-coordinator';
+import type { BrowserRenderService } from '../browser/browser-render-service';
+import { ApiSecurityService } from '../security/api-security';
+import { COMICCRAWLER_VERSION } from '../version';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -23,8 +31,11 @@ import { setupChallengeDiscoveryRoutes } from './routes/challenge-discovery';
 import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupMaintenanceRoutes } from './routes/maintenance';
+import { setupBrowserClientRoutes } from './routes/browser-clients';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
+import { setupApiSecurity } from './middleware/api-security';
+import { requestPrincipal } from './middleware/api-security';
 import { logger } from '../utils/logger';
 
 export interface ServerOptions {
@@ -42,20 +53,31 @@ export interface ServerOptions {
   adapterDraftService?: AdapterDraftService;
   fixtureCaptureService?: FixtureCaptureService;
   maintenanceService?: MaintenanceService;
+  browserClientRegistry?: BrowserClientRegistry;
+  browserSessionGateway?: BrowserSessionGateway;
+  browserLeaseCoordinator?: BrowserWorkerLeaseCoordinator;
+  browserRenderService?: BrowserRenderService;
   storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
-  auth?: { username: string; password: string };
+  apiSecurity?: ApiSecurityService;
 }
 
 export class ComicCrawlerServer {
   private app: FastifyInstance;
   private options: ServerOptions;
   private httpServer?: import('node:http').Server;
+  private readonly apiSecurity: ApiSecurityService;
 
   constructor(options: ServerOptions) {
     this.options = options;
+    this.apiSecurity = options.apiSecurity ?? ApiSecurityService.fromSecretDocument({
+      mode: 'public',
+      defaultEffect: 'deny',
+      rules: [],
+    });
     this.app = this.createApp();
+    setupApiSecurity(this.app, this.apiSecurity);
     this.setupRoutes();
     this.setupApiDocs();
     this.setupHealthCheck();
@@ -82,7 +104,7 @@ export class ComicCrawlerServer {
     await this.app.listen({ port: this.options.port, host: this.options.host });
     this.httpServer = this.app.server;
 
-    setupWebSocket(this.httpServer, this.options.eventBus);
+    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserSessionGateway, this.apiSecurity);
 
     logger.info({ host: this.options.host, port: this.options.port }, 'Server started');
   }
@@ -91,6 +113,11 @@ export class ComicCrawlerServer {
     await this.app.close();
     await this.options.taskManager.dispose();
     await this.options.crawlerEngine.dispose();
+    await this.options.challengeDiscoveryService?.dispose();
+    await this.options.browserLeaseCoordinator?.dispose();
+    this.options.browserSessionGateway?.dispose();
+    this.options.browserClientRegistry?.dispose();
+    this.options.selectorDiscoveryService?.dispose();
 
     await Promise.all(
       this.options.adapterRegistry.getAll().map(async (adapter) => {
@@ -114,11 +141,20 @@ export class ComicCrawlerServer {
       this.options.challengeDiscoveryService,
       {
         downloadDir: async () => (await this.options.configManager.get()).download.directory,
+        browserLeaseCoordinator: this.options.browserLeaseCoordinator,
+        apiSecurity: this.apiSecurity,
       }
     );
     setupConfigRoutes(this.app, this.options.configManager);
+    if (this.options.browserClientRegistry && this.options.browserSessionGateway) {
+      setupBrowserClientRoutes(this.app, this.options.browserClientRegistry, this.options.browserSessionGateway, this.apiSecurity);
+    }
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
+      withBrowserSession: (request, target, initialUrl, renderContext, action) =>
+        this.withBrowserSession(request, target, initialUrl, renderContext, action),
+      browserRenderService: this.options.browserRenderService,
+      getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
@@ -126,6 +162,10 @@ export class ComicCrawlerServer {
     if (this.options.adapterDraftService) {
       setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
         challengeDiscoveryService: this.options.challengeDiscoveryService,
+        withBrowserSession: (request, target, initialUrl, action) =>
+          this.withBrowserSession(request, target, initialUrl, undefined, action),
+        browserRenderService: this.options.browserRenderService,
+        getNetworkConfig: async () => (await this.options.configManager.get()).network,
       });
     }
     if (this.options.selectorDiscoveryService && this.options.selectorDiscoverySettingsStore) {
@@ -137,6 +177,12 @@ export class ComicCrawlerServer {
         {
           challengeDiscoveryService: this.options.challengeDiscoveryService,
           adapterDraftService: this.options.adapterDraftService,
+          withBrowserSession: (request, target, initialUrl, action) =>
+            this.withBrowserSession(request, target, initialUrl, undefined, action),
+          browserRenderService: this.options.browserRenderService,
+          getNetworkConfig: async () => (await this.options.configManager.get()).network,
+          browserLeaseCoordinator: this.options.browserLeaseCoordinator,
+          apiSecurity: this.apiSecurity,
         }
       );
     }
@@ -144,7 +190,8 @@ export class ComicCrawlerServer {
       setupChallengeDiscoveryRoutes(
         this.app,
         this.options.challengeDiscoveryService,
-        this.options.selectorDiscoveryService
+        this.options.selectorDiscoveryService,
+        { apiSecurity: this.apiSecurity }
       );
     }
     if (this.options.agentAdminService) {
@@ -152,6 +199,33 @@ export class ComicCrawlerServer {
     }
     if (this.options.maintenanceService) {
       setupMaintenanceRoutes(this.app, this.options.maintenanceService);
+    }
+  }
+
+  private async withBrowserSession<T>(
+    request: FastifyRequest,
+    target: BrowserTarget | undefined,
+    initialUrl: string,
+    renderContext: EffectiveRenderContext | undefined,
+    action: (sessionId: string) => Promise<T>
+  ): Promise<T> {
+    const browser = (await this.options.configManager.get()).browser;
+    if (!this.options.browserLeaseCoordinator) {
+      throw new Error('Browser Worker service is not configured.');
+    }
+    const principal = requestPrincipal(request, this.apiSecurity);
+    const lease = await this.options.browserLeaseCoordinator.acquire({
+      taskId: `operation:${randomUUID()}`,
+      ownerUserId: principal.userId,
+      target,
+      initialUrl,
+      renderContext,
+      timeoutMs: browser.workerWaitTimeoutMs,
+    });
+    try {
+      return await action(lease.sessionId);
+    } finally {
+      await lease.release();
     }
   }
 
@@ -217,7 +291,7 @@ export class ComicCrawlerServer {
 
       reply.send({
         data: {
-          version: '0.1.0',
+          version: COMICCRAWLER_VERSION,
           uptime: process.uptime(),
           activeTasks: stats.running,
           queuedTasks: stats.pending,

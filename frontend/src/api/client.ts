@@ -5,7 +5,6 @@ import type {
   AdapterImplementationResponse,
   AdapterDraftDetailResponse,
   AdapterDraftListResponse,
-  AdapterFunctionSourceResponse,
   AdapterFunctionRevisionRequest,
   AdapterFunctionTestRequest,
   AdapterFunctionTestResponse,
@@ -23,12 +22,12 @@ import type {
   CreateSelectorDiscoverySnapshotRequest,
   CreateTaskRequest,
   CreateTaskResponse,
+  BrowserWorkerListResponse,
   FixtureCaptureRequest,
   FixtureCaptureResponse,
   FixtureDetailResponse,
   FixtureFunctionTestRequest,
   MessageResponse,
-  OpenVerificationBrowserRequest,
   RestoreAdapterResponse,
   SaveAdapterDraftContentRequest,
   SelectorDiscoveryConfigRequest,
@@ -47,6 +46,7 @@ const API_TIMEOUT_MS = 15 * 60 * 1000;
 
 const API_ENDPOINTS = {
   tasks: '/api/tasks',
+  browserWorkers: '/api/browser-workers',
   adapters: '/api/adapters',
   agentAdapters: '/api/agent/adapters',
   config: '/api/config',
@@ -104,6 +104,11 @@ export class ApiClient {
 
   async getTasks(): Promise<ApiResponse<TaskListResponse>> {
     const response = await this.client.get(API_ENDPOINTS.tasks);
+    return response.data;
+  }
+
+  async getBrowserWorkers(): Promise<ApiResponse<BrowserWorkerListResponse>> {
+    const response = await this.client.get(API_ENDPOINTS.browserWorkers);
     return response.data;
   }
 
@@ -187,8 +192,9 @@ export class ApiClient {
     return response.data;
   }
 
-  async getSelectorDiscoveryAoModels(): Promise<ApiResponse<SelectorDiscoveryAoModelsResponse>> {
-    const response = await this.client.get(`${API_ENDPOINTS.selectorDiscoveryConfig}/models`);
+  async getSelectorDiscoveryAoModels(aoBaseUrl?: string): Promise<ApiResponse<SelectorDiscoveryAoModelsResponse>> {
+    const query = aoBaseUrl?.trim() ? `?aoBaseUrl=${encodeURIComponent(aoBaseUrl.trim())}` : '';
+    const response = await this.client.get(`${API_ENDPOINTS.selectorDiscoveryConfig}/models${query}`);
     return response.data;
   }
 
@@ -239,11 +245,6 @@ export class ApiClient {
 
   async getAdapterImplementation(id: string): Promise<ApiResponse<AdapterImplementationResponse>> {
     const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/implementation`);
-    return response.data;
-  }
-
-  async getAdapterFunctionSource(id: string, functionId: string): Promise<ApiResponse<AdapterFunctionSourceResponse>> {
-    const response = await this.client.get(`${API_ENDPOINTS.adapters}/${id}/functions/${functionId}/source`);
     return response.data;
   }
 
@@ -432,23 +433,8 @@ export class ApiClient {
     return response.data;
   }
 
-  async shadowPromoteSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
-    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/shadow-promote`);
-    return response.data;
-  }
-
   async rejectSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/reject`);
-    return response.data;
-  }
-
-  async revalidateSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
-    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/revalidate`);
-    return response.data;
-  }
-
-  async validateSelectorDiscoveryCandidate(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
-    const response = await this.client.post(`${API_ENDPOINTS.selectorDiscovery}/${id}/validate`);
     return response.data;
   }
 
@@ -472,36 +458,13 @@ export class ApiClient {
     return response.data;
   }
 
-  async getChallengeBrowserOptions(): Promise<ApiResponse<any>> {
-    const response = await this.client.get(`${API_ENDPOINTS.challengeDiscovery}/browser-options`);
+  async inspectChallengeDiscoveryRemotePage(id: string): Promise<ApiResponse<any>> {
+    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/inspect-remote-page`);
     return response.data;
   }
 
-  async browseChallengeBrowserExecutable(): Promise<ApiResponse<any>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/browser-options/browse-executable`);
-    return response.data;
-  }
-
-  async openChallengeDiscoveryExternalBrowser(
-    id: string,
-    options?: OpenVerificationBrowserRequest
-  ): Promise<ApiResponse<ChallengeHandoffJobSummary>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/open-external-browser`, options ?? {});
-    return response.data;
-  }
-
-  async testChallengeDiscoveryCdp(cdpUrl?: string): Promise<ApiResponse<any>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/cdp/test`, { cdpUrl });
-    return response.data;
-  }
-
-  async inspectChallengeDiscoveryCdpPage(id: string, cdpUrl?: string): Promise<ApiResponse<any>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/inspect-cdp-page`, { cdpUrl });
-    return response.data;
-  }
-
-  async createSelectorDiscoveryFromChallengeCdp(id: string, cdpUrl?: string): Promise<ApiResponse<any>> {
-    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/create-selector-discovery-from-cdp`, { cdpUrl });
+  async createSelectorDiscoveryFromChallengeRemote(id: string): Promise<ApiResponse<any>> {
+    const response = await this.client.post(`${API_ENDPOINTS.challengeDiscovery}/${id}/create-selector-discovery-from-remote`);
     return response.data;
   }
 

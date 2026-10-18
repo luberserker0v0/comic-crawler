@@ -7,7 +7,7 @@ import type {
 import * as cheerio from 'cheerio';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
-import { FixtureCaptureService } from '../../fixtures/fixture-capture-service';
+import { FixtureCaptureService, runFixtureFunction } from '../../fixtures/fixture-capture-service';
 
 export function setupFixtureRoutes(
   app: FastifyInstance,
@@ -91,17 +91,23 @@ export function setupFixtureRoutes(
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
-}
 
-async function runFixtureFunction(adapter: any, functionId: string, document: cheerio.CheerioAPI, url: string): Promise<unknown> {
-  if (functionId === 'extractTitle') return { title: await adapter.extractTitle?.(document, url) };
-  if (functionId === 'extractAuthor') return { author: await adapter.extractAuthor?.(document, url) };
-  if (functionId === 'extractDescription') return { description: await adapter.extractDescription?.(document, url) };
-  if (functionId === 'extractCoverUrl') return { coverUrl: await adapter.extractCoverUrl?.(document, url) };
-  if (functionId === 'extractTags') return { tags: await adapter.extractTags?.(document, url) };
-  if (functionId === 'extractStatus') return { status: await adapter.extractStatus?.(document, url) };
-  if (functionId === 'extractChapterList') return { chapters: await adapter.extractChapterList?.(document, url) };
-  if (functionId === 'extractChapterImageUrls') return { imageUrls: await adapter.extractChapterImageUrls?.(document, url) };
-  if (functionId === 'matchUrl') return { matched: adapter.matchUrl(url) };
-  throw new Error(`Function "${functionId}" cannot be tested against a fixture.`);
+  app.post('/api/fixtures/:domain/:id/verify-approved-adapter', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!fixtureService) {
+      reply.code(503).send({ error: 'Fixture service is not available.' });
+      return;
+    }
+    try {
+      const { domain, id } = request.params as { domain: string; id: string };
+      const body = request.body as { adapterId?: string };
+      const adapter = body.adapterId ? adapterRegistry.get(body.adapterId) : undefined;
+      if (!adapter) {
+        reply.code(404).send({ error: 'Adapter not found.' });
+        return;
+      }
+      reply.send({ data: await fixtureService.verifyApprovedAdapterFixture(domain, id, adapter) });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
 }

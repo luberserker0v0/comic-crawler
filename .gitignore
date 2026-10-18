@@ -24,6 +24,8 @@ logs/
 *.tmp
 *.bak
 .tmp-dev-logs/
+tools/browser-client-acceptance/config.json
+tools/browser-client-acceptance/.state/
 
 # Environment
 .env

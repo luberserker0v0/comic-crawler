@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import { extname, resolve, relative } from 'node:path';
+import { dirname, extname, join, resolve, relative } from 'node:path';
 import type { IStorage, WriteOperation, JsonFileStoreOptions } from './types';
 
 export class JsonFileStore implements IStorage {
@@ -44,13 +44,10 @@ export class JsonFileStore implements IStorage {
         await new Promise((resolve) => setTimeout(resolve, 5 * (attempt + 1)));
       }
     }
-    // Preserve the legacy null contract (all callers null-coalesce), but log:
-    // permanently corrupt data used to be indistinguishable from "no data".
-    console.error(
-      `[JsonFileStore] persistent parse failure for key "${key}" ` +
-        `(returning null, content head: ${JSON.stringify((lastContent ?? '').slice(0, 120))})`
+    throw new SyntaxError(
+      `JsonFileStore: invalid JSON for key "${key}" ` +
+        `(content head: ${JSON.stringify((lastContent ?? '').slice(0, 120))})`
     );
-    return null;
   }
 
   private async readFileWithRetry(filePath: string, attempts = 5): Promise<string> {
@@ -74,6 +71,7 @@ export class JsonFileStore implements IStorage {
   }
 
   async write(key: string, value: unknown): Promise<void> {
+    this.resolvePath(key);
     if (this.disposed) {
       // No timer will fire after dispose; persist synchronously.
       const filePath = this.resolvePath(key);
@@ -108,10 +106,20 @@ export class JsonFileStore implements IStorage {
 
   async list(): Promise<string[]> {
     try {
-      const files = await fs.readdir(this.basePath);
-      return files
-        .filter((file) => extname(file) === '.json')
-        .map((file) => file.replace(/\.json$/, ''));
+      const keys: string[] = [];
+      const walk = async (directory: string): Promise<void> => {
+        const entries = await fs.readdir(directory, { withFileTypes: true });
+        for (const entry of entries) {
+          const absolutePath = join(directory, entry.name);
+          if (entry.isDirectory()) {
+            await walk(absolutePath);
+          } else if (extname(entry.name) === '.json') {
+            keys.push(relative(this.basePath, absolutePath).replace(/\\/g, '/').replace(/\.json$/, ''));
+          }
+        }
+      };
+      await walk(this.basePath);
+      return keys;
     } catch {
       return [];
     }
@@ -141,13 +149,15 @@ export class JsonFileStore implements IStorage {
     if (!key || typeof key !== 'string') {
       throw new Error('JsonFileStore: key must be a non-empty string');
     }
-    // Flat mapping (kept for backward compat): 'tasks/index' -> 'tasks_index.json'.
-    // '/' and '\' are sanitized so keys can never escape basePath.
-    const safeKey = key.replace(/[<>:"/\\|?*]/g, '_');
-    if (safeKey === '.' || safeKey === '..') {
+    if (key.includes('\\')) {
       throw new Error(`JsonFileStore: invalid key "${key}"`);
     }
-    const filePath = resolve(this.basePath, `${safeKey}.json`);
+    const segments = key.split('/');
+    if (segments.some((segment) => !/^[A-Za-z0-9._-]+$/.test(segment) || segment === '.' || segment === '..')) {
+      throw new Error(`JsonFileStore: invalid key "${key}"`);
+    }
+    const lastSegment = segments.pop()!;
+    const filePath = resolve(this.basePath, ...segments, `${lastSegment}.json`);
     const rel = relative(resolve(this.basePath), filePath);
     if (rel.startsWith('..') || resolve(this.basePath, rel) !== filePath) {
       throw new Error(`JsonFileStore: key escapes basePath: "${key}"`);
@@ -226,6 +236,7 @@ export class JsonFileStore implements IStorage {
     // Direct writes keep the original timing characteristics; torn reads on
     // crash now surface loudly via read() instead of silently becoming null.
     // Revisit with a real WAL/SQLite backend if crash atomicity is required.
+    await fs.mkdir(dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, content, 'utf-8');
   }
 

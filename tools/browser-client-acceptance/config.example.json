@@ -1,0 +1,14 @@
+{
+  "serverUrl": "http://127.0.0.1:4100",
+  "clientName": "production-acceptance-worker",
+  "statePath": ".state/browser-client.json",
+  "reconnectDelayMs": 2000,
+  "browser": {
+    "channel": "chrome",
+    "headless": false,
+    "args": [],
+    "profile": {
+      "type": "fresh"
+    }
+  }
+}

@@ -54,21 +54,18 @@ export const DEFAULTS = {
     retryDelay: 1000,
   },
   browser: {
-    mode: 'auto' as const,
-    headless: true,
-    maxInstances: 2,
     timeout: 30000,
-    waitUntil: 'domcontentloaded' as const,
+    workerWaitTimeoutMs: 30 * 60 * 1000,
     postLoadDelayMs: 0,
-    challengeAutoAttempt: true,
-    challengeWaitMs: 15000,
-    handoff: {
-      mode: 'snapshot' as const,
-    },
   },
   server: {
     port: 4100,
     host: '127.0.0.1',
+  },
+  apiSecurity: {
+    mode: 'public' as const,
+    defaultEffect: 'deny' as const,
+    rules: [],
   },
   i18n: {
     language: 'zh-TW',
@@ -84,9 +81,7 @@ export const DEFAULTS = {
     intervalHours: 24,
     tasksRetainDays: 30,
     discoveryJobsRetainDays: 14,
-    browserProfilesRetainDays: 14,
     deleteFiles: true,
-    deleteOrphanProfiles: true,
     batchLimit: 100,
   },
 } as const;

@@ -115,10 +115,6 @@ export function safePathSegment(value: string): string {
   return value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-').replace(/\s+/g, ' ').replace(/^-+|-+$/g, '') || 'unknown';
 }
 
-export function isHeadlessFallbackHttpStatus(statusCode: unknown): boolean {
-  return statusCode === 401 || statusCode === 403 || statusCode === 429 || statusCode === 503;
-}
-
 export function isHumanVerificationRequiredError(error: unknown): boolean {
   if (error instanceof ComicError) {
     return hasHumanVerificationContext(error.context);

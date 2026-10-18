@@ -54,6 +54,9 @@ export function useReviewJob(options?: {
       setFunctionRevisionMessage(null);
       setSelectedReviewFunctionId(firstFunctionId);
       setReviewTestUrl(firstFunctionId ? defaultTestUrlForFunction(jobResponse.data, firstFunctionId) : jobResponse.data.normalizedUrl);
+      requestAnimationFrame(() => {
+        document.getElementById('review-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     } catch (error) {
       setReviewError(getApiErrorMessage(error));
     } finally {

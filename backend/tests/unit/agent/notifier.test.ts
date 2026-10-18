@@ -38,7 +38,7 @@ describe('AgentNotifier', () => {
 
     const errorContext: ExtractionFailureContext = {
       adapterId: 'kuronavi',
-      parseMode: 'static',
+      parseMode: 'playwright',
       repairMode: 'selector-only',
       repairTargets: ['selectors.ts'],
       fixturesRoot: '/fixtures',

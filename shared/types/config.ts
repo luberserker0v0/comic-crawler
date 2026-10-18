@@ -9,6 +9,7 @@ export interface GlobalConfig {
   log: LogConfig;
   i18n: I18nConfig;
   maintenance?: MaintenanceConfig;
+  apiSecurity?: ApiSecurityPolicyConfig;
 }
 
 export interface DownloadConfig {
@@ -33,35 +34,30 @@ export interface NetworkConfig {
 }
 
 export interface BrowserConfig {
-  mode: 'static' | 'headless' | 'auto';
-  headless: boolean;
-  maxInstances: number;
   timeout: number;
-  waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
-  waitForSelector?: string;
+  workerWaitTimeoutMs?: number;
   postLoadDelayMs?: number;
-  challengeAutoAttempt?: boolean;
-  challengeWaitMs?: number;
-  channel?: string;
-  storageStatePath?: string;
-  userDataDir?: string;
-  handoff?: BrowserHandoffConfig;
-}
-
-export interface BrowserHandoffConfig {
-  mode: 'snapshot' | 'cdp' | 'managed';
-  cdpUrl?: string;
-  userDataDir?: string;
-  channel?: string;
 }
 
 export interface ServerConfig {
   port: number;
   host: string;
-  auth?: {
-    username: string;
-    password: string;
-  };
+}
+
+export type ApiSecurityMode = 'public' | 'token';
+
+export interface ApiSecurityRuleConfig {
+  id: string;
+  methods: string[];
+  path: string;
+  permission: string;
+}
+
+export interface ApiSecurityPolicyConfig {
+  mode: ApiSecurityMode;
+  defaultEffect: 'deny';
+  secretPath?: string;
+  rules: ApiSecurityRuleConfig[];
 }
 
 export interface LogConfig {
@@ -79,9 +75,7 @@ export interface MaintenanceConfig {
   intervalHours: number;
   tasksRetainDays: number;
   discoveryJobsRetainDays: number;
-  browserProfilesRetainDays: number;
   deleteFiles: boolean;
-  deleteOrphanProfiles: boolean;
   batchLimit: number;
 }
 

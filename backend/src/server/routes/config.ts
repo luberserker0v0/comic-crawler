@@ -12,9 +12,13 @@ export function setupConfigRoutes(app: FastifyInstance, configManager: ConfigMan
   });
 
   app.put('/api/config', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as Record<string, unknown>;
-    const updated = await configManager.update(body);
-    reply.send({ data: updated });
+    try {
+      const body = request.body as Record<string, unknown>;
+      const updated = await configManager.update(body);
+      reply.send({ data: updated });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post('/api/config/reset', async (_request: FastifyRequest, reply: FastifyReply) => {

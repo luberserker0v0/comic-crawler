@@ -11,6 +11,14 @@ const { SelectorDiscoveryService, SelectorDiscoverySettingsStore } = require('..
 const { ChallengeDiscoveryService } = require('../dist/challenge');
 const { DynamicSiteAdapter } = require('../dist/adapter/dynamic-site-adapter');
 const { ComicError, ErrorType, errorToLogObject } = require('../dist/error/types');
+const { BrowserClientRegistry } = require('../dist/browser/browser-client-registry');
+const { BrowserSessionGateway } = require('../dist/browser/browser-session-gateway');
+const { BrowserWorkerLeaseCoordinator } = require('../dist/browser/browser-worker-lease-coordinator');
+const { BrowserRenderService } = require('../dist/browser/browser-render-service');
+const { BrowserClient } = require('../../browser-client-sdk/dist/src');
+const { chromium } = require('playwright');
+const WebSocket = require('ws');
+const { ApiSecurityService } = require('../dist/security/api-security');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
 
@@ -31,16 +39,23 @@ async function start() {
     browser: {
       ...loadedConfig.browser,
       timeout: 10000,
-      challengeWaitMs: 1000,
+      workerWaitTimeoutMs: 10_000,
     },
   });
+  const apiSecurity = ApiSecurityService.fromSecretDocument({ mode: 'public', defaultEffect: 'deny', rules: [] });
+  const browserClientRegistry = new BrowserClientRegistry(storage);
+  await browserClientRegistry.initialize();
+  const browserSessionGateway = new BrowserSessionGateway(browserClientRegistry, apiSecurity);
+  const browserLeaseCoordinator = new BrowserWorkerLeaseCoordinator(browserSessionGateway, 10_000);
+  const browserRenderService = new BrowserRenderService(browserSessionGateway);
+  const getBrowserConfig = async () => (await configManager.get()).browser;
 
   const adapterRegistry = new AdapterRegistry(eventBus);
   adapterRegistry.register({
     id: 'kuronavi',
     name: 'Kuronavi E2E Fixture',
     domains: ['kuronavi.one'],
-    parseMode: 'static',
+    parseMode: 'playwright',
     matchUrl: (url) => url.includes('kuronavi.one'),
     capabilities: { verification: false, metadata: true, chapterImages: true },
     loadDocument: async () => ({}),
@@ -62,7 +77,7 @@ async function start() {
     id: 'reliability-fixture',
     name: 'Reliability Fixture',
     domains: ['reliability-fixture.invalid'],
-    parseMode: 'static',
+    parseMode: 'playwright',
     capabilities: { verification: true, metadata: true, chapterImages: true },
     matchUrl: (url) => /\/api\/fixtures\/reliability-/.test(url),
     loadDocument: async (url) => url,
@@ -103,14 +118,11 @@ async function start() {
     concurrency: 1,
     eventBus,
     browser: {
-      mode: 'auto',
-      headless: true,
-      maxInstances: 1,
       timeout: 30000,
-      waitUntil: 'domcontentloaded',
-      waitForSelector: '#reader img',
+      workerWaitTimeoutMs: 10_000,
       postLoadDelayMs: 0,
     },
+    browserRenderService,
   });
 
   const taskManager = new TaskManager(async (task) => {
@@ -118,18 +130,34 @@ async function start() {
     if (!adapter) {
       throw new Error(`Adapter ${task.data.adapterId} not found`);
     }
+    const lease = await browserLeaseCoordinator.acquire({
+      taskId: task.id,
+      ownerUserId: task.data.ownerUserId || 'public',
+      target: task.data.browserTarget,
+      initialUrl: task.data.url,
+      timeoutMs: 10_000,
+      onWaiting: (message) => taskManager.markWaitingForBrowserWorker(task.id, message),
+    });
+    let leaseTransferred = false;
     try {
       await crawlerEngine.crawl(adapter, task.data.url, {
         chapters: task.data.chapters,
         chapterUrls: task.data.chapterUrls,
         taskId: task.id,
+        browserSessionId: lease.sessionId,
         checkpoint: taskManager.getCheckpoint(task.id),
         onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
       });
     } catch (error) {
       if (isHumanVerificationRequiredError(error)) {
         const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
-        const challengeJob = await challengeDiscoveryService.create({ url: verificationUrl });
+        const challengeJob = await challengeDiscoveryService.create({
+          url: verificationUrl,
+          browserLease: lease,
+          ownerUserId: task.data.ownerUserId,
+          browserTarget: task.data.browserTarget,
+        });
+        leaseTransferred = true;
         throw new ComicError(
           `Human verification is required before crawling can continue. Challenge discovery job: ${challengeJob.id}`,
           ErrorType.AUTH_ERROR,
@@ -144,23 +172,47 @@ async function start() {
         );
       }
       throw error;
+    } finally {
+      if (!leaseTransferred) await lease.release();
     }
   }, { eventBus, storage });
   await taskManager.initialize();
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-    getBrowserConfig: async () => (await configManager.get()).browser,
+    getBrowserConfig,
+    renderBrowserPage: (sessionId, url, options) => browserRenderService.render(sessionId, url, options),
+    acquireBrowserSession: async ({ job, browserTarget }) => {
+      const lease = await browserLeaseCoordinator.acquire({
+        taskId: `selector:${job.id}`,
+        ownerUserId: job.ownerUserId || 'public',
+        target: browserTarget,
+        initialUrl: job.normalizedUrl,
+        timeoutMs: 10_000,
+      });
+      return { sessionId: lease.sessionId, release: () => lease.release() };
+    },
     getNetworkConfig: async () => (await configManager.get()).network,
   });
   const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
     workspaceRoot: path.resolve(__dirname, '../../test-results/e2e-agent-workspaces'),
-    getBrowserConfig: async () => (await configManager.get()).browser,
+    getBrowserConfig,
+    browserRenderService,
     getNetworkConfig: async () => (await configManager.get()).network,
+    acquireBrowserSession: async ({ jobId, ownerUserId, url, browserTarget }) => {
+      const lease = await browserLeaseCoordinator.acquire({
+        taskId: `challenge:${jobId}`,
+        ownerUserId,
+        target: browserTarget,
+        initialUrl: url,
+        timeoutMs: 10_000,
+      });
+      return { sessionId: lease.sessionId, release: () => lease.release() };
+    },
   });
 
   const server = new ComicCrawlerServer({
-    port: Number.parseInt(process.env.PORT || '4173', 10),
-    host: process.env.HOST || '127.0.0.1',
+    port: Number.parseInt(process.env.COMICCRAWLER_E2E_PORT || '4173', 10),
+    host: process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1',
     configManager,
     taskManager,
     adapterRegistry,
@@ -169,7 +221,12 @@ async function start() {
     selectorDiscoveryService,
     selectorDiscoverySettingsStore,
     challengeDiscoveryService,
+    browserClientRegistry,
+    browserSessionGateway,
+    browserLeaseCoordinator,
+    browserRenderService,
     staticDir: path.resolve(__dirname, '../../frontend/dist'),
+    apiSecurity,
   });
 
   installFakeAo(server.getApp());
@@ -212,6 +269,26 @@ async function start() {
           <main id="reader">
             <img class="fixture-replay-draft-page" data-src="/api/fixtures/discovery-image.jpg" />
           </main>
+        </body>
+      </html>`);
+  });
+
+  server.getApp().get('/api/fixtures/responsive-chapter', async (_request, reply) => {
+    reply.type('text/html').send(`<!doctype html>
+      <html>
+        <head><title>Responsive Chapter</title></head>
+        <body>
+          <main id="reader"></main>
+          <script>
+            const layout = window.innerWidth <= 600 ? 'mobile' : 'desktop';
+            const reader = document.querySelector('#reader');
+            for (let page = 1; page <= 2; page += 1) {
+              const image = document.createElement('img');
+              image.className = 'responsive-page';
+              image.setAttribute('data-src', '/api/fixtures/responsive-' + layout + '-' + page + '.jpg');
+              reader.appendChild(image);
+            }
+          </script>
         </body>
       </html>`);
   });
@@ -314,7 +391,23 @@ async function start() {
 
   await server.start();
 
+  const browserClients = [];
+  for (let index = 1; index <= 3; index += 1) {
+    const stateStore = createMemoryStateStore();
+    const browserClient = new BrowserClient({
+      serverUrl: `http://${process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1'}:${process.env.COMICCRAWLER_E2E_PORT || '4173'}`,
+      executor: createE2eBrowserExecutor(process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT),
+      stateStore,
+      webSocketFactory: { create: (url) => new WebSocket(url) },
+    });
+    await browserClient.enroll({ name: `E2E Browser Client ${index}` });
+    await browserClient.connect();
+    browserClients.push(browserClient);
+  }
+  await waitFor(() => browserSessionGateway.listWorkers().filter((worker) => worker.online).length === 3);
+
   const shutdown = async () => {
+    await Promise.all(browserClients.map((client) => client.close()));
     await server.stop();
     await storage.dispose();
     process.exit(0);
@@ -322,6 +415,93 @@ async function start() {
 
   process.once('SIGINT', () => void shutdown());
   process.once('SIGTERM', () => void shutdown());
+}
+
+function createE2eBrowserExecutor(localWsEndpoint) {
+  if (!localWsEndpoint) throw new Error('COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT is required.');
+  const capabilities = {
+    executionMode: 'managed-profile',
+    navigation: true,
+    renderedDom: true,
+    humanHandoff: true,
+    responsiveViewport: true,
+  };
+  return {
+    describe: async () => capabilities,
+    openSession: async (request) => {
+      const browser = await chromium.connect(localWsEndpoint);
+      const context = await browser.newContext({
+        viewport: request.renderContext?.viewport,
+        deviceScaleFactor: request.renderContext?.deviceScaleFactor,
+        isMobile: request.renderContext?.isMobile,
+        hasTouch: request.renderContext?.hasTouch,
+        userAgent: request.renderContext?.userAgent,
+      });
+      const page = await context.newPage();
+      return {
+        execute: async (command) => {
+          if (command.type === 'page.navigate') {
+            await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            return { type: command.type, url: page.url() };
+          }
+          if (command.type === 'page.get-url') return { type: command.type, url: page.url() };
+          if (command.type === 'page.get-content') return { type: command.type, url: page.url(), html: await page.content() };
+          if (command.type === 'page.wait-for-ready') {
+            await page.waitForLoadState('domcontentloaded', { timeout: command.timeoutMs || 30_000 }).catch(() => undefined);
+            await page.waitForTimeout(750);
+            return { type: command.type, url: page.url() };
+          }
+          if (command.type === 'page.prepare-content') {
+            await page.evaluate(async (timeoutMs) => {
+              const startY = window.scrollY;
+              const deadline = Date.now() + timeoutMs;
+              let previousHeight = 0;
+              let stableBottomChecks = 0;
+              try {
+                while (Date.now() < deadline) {
+                  const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
+                  const bottom = Math.max(0, height - window.innerHeight);
+                  window.scrollTo(0, Math.min(bottom, window.scrollY + Math.max(600, Math.floor(window.innerHeight * 0.8))));
+                  await new Promise((resolve) => setTimeout(resolve, 120));
+                  const atBottom = window.scrollY >= bottom;
+                  stableBottomChecks = atBottom && height === previousHeight ? stableBottomChecks + 1 : 0;
+                  previousHeight = height;
+                  if (stableBottomChecks >= 3) break;
+                }
+              } finally {
+                window.scrollTo(0, startY);
+              }
+            }, command.timeoutMs || 30_000);
+            return { type: command.type, url: page.url() };
+          }
+          await page.bringToFront();
+          return { type: 'page.focus' };
+        },
+        close: async () => {
+          await context.close().catch(() => undefined);
+          await browser.close().catch(() => undefined);
+        },
+      };
+    },
+    close: async () => undefined,
+  };
+}
+
+function createMemoryStateStore() {
+  let state;
+  return {
+    get: async () => state,
+    set: async (value) => { state = value; },
+    clear: async () => { state = undefined; },
+  };
+}
+
+async function waitFor(predicate) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for E2E Browser Client connection.');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 function installFakeAo(app) {
@@ -399,10 +579,20 @@ function installFakeAo(app) {
   app.post('/__ao/api/conversations/:id/message', async (request, reply) => {
     const conversation = getConversation(conversations, request.params.id);
     const text = request.body?.text || '';
-    const isCandidateTask = text.includes('Selector Discovery Phase 2') || text.includes('Selector Discovery Chapter-Only Candidate');
-    const output = isCandidateTask ? fakeCandidateMarkdown(text) : fakePhase1Markdown(text);
-    const outputPath = isCandidateTask ? 'outputs/candidate-output.md' : 'outputs/phase1-output.md';
-    conversation.files.set(outputPath, output);
+    if (text.includes('# Capability Stage Task')) {
+      const stage = /(?:Produce only the ([a-z-]+) capability draft\.|Produce only stage `([a-z-]+)`)/.exec(text);
+      const stageName = stage?.[1] || stage?.[2] || 'chapter-images';
+      const sourcePath = /(?:Write TypeScript capability source to|- TypeScript:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
+      const reviewPath = /(?:Write human review notes for this capability to|- Markdown review:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
+      const source = fakeCapabilitySource(stageName, `${conversation.files.get('task.md') || ''}\n${text}`);
+      if (sourcePath) conversation.files.set(sourcePath, source);
+      if (reviewPath) conversation.files.set(reviewPath, `# ${stageName} review\n\nE2E fixture capability generated for review.`);
+      conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
+      reply.send({ messageId: `msg-${conversation.messages.length}`, text: `Wrote ${sourcePath} and ${reviewPath}.` });
+      return;
+    }
+    const output = fakePhase1Markdown(text);
+    conversation.files.set('outputs/phase1-output.md', output);
     conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
     reply.send({ messageId: `msg-${conversation.messages.length}`, text: output });
   });
@@ -449,72 +639,35 @@ ${sourceUrl}
 - none`;
 }
 
-function fakeCandidateMarkdown(text = '') {
+function fakeCapabilitySource(stage, text = '') {
+  if (stage === 'common-verification') {
+    const skeletons = [...text.matchAll(/```ts\s*([\s\S]*?)```/g)];
+    const skeleton = skeletons.at(-1)?.[1]?.trim() || '';
+    const sourceUrl = extractSourceUrl(text) || '';
+    const fixturePrefix = sourceUrl.includes('/api/fixtures/discovery-')
+      ? '/api/fixtures/discovery-'
+      : sourceUrl.includes('/api/fixtures/challenge-clears')
+        ? '/api/fixtures/challenge-clears'
+        : undefined;
+    return fixturePrefix
+      ? skeleton.replace(/parsed\.pathname === '\/api' \|\| parsed\.pathname\.startsWith\('\/api\/'\)/, `parsed.pathname.startsWith('${fixturePrefix}')`)
+      : skeleton;
+  }
   const sourceUrl = extractSourceUrl(text) || 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';
-  const source = new URL(sourceUrl);
-  const isChallengeClears = sourceUrl.includes('challenge-clears');
-  const isFixtureReplayDraft = sourceUrl.includes('fixture-replay-draft');
-  const adapterId = isFixtureReplayDraft ? 'fixture-replay-draft-e2e' : isChallengeClears ? 'challenge-clears-e2e' : 'discovery-e2e';
-  const name = isFixtureReplayDraft ? 'Fixture Replay Draft E2E' : isChallengeClears ? 'Challenge Clears E2E' : 'Discovery E2E';
-  const pattern = isChallengeClears
-    ? `${source.origin}/api/fixtures/challenge-*`
-    : isFixtureReplayDraft
-      ? `${source.origin}/api/fixtures/fixture-replay-draft-*`
-    : `${source.origin}/api/fixtures/discovery-*`;
-  const imageItemSelector = isFixtureReplayDraft ? 'img.fixture-replay-draft-page' : 'img.page-image';
-  return `## Adapter Identity
+  const imageSelector = sourceUrl.includes('fixture-replay-draft')
+    ? 'img.fixture-replay-draft-page'
+    : 'img.page-image';
+  return `import { ChapterImagesCapability } from '../../base';
 
-- Adapter ID: ${adapterId}
-- Name: ${name}
-- Source URL: ${sourceUrl}
-
-## URL Patterns
-
-- Domain: ${source.hostname}
-- Pattern: ${pattern}
-
-## Metadata Selectors
-
-- Title:
-- Author:
-- Cover:
-- Status:
-- Tags:
-- Description:
-
-## Chapter Selectors
-
-- Chapter List Container:
-- Item:
-- Title:
-- URL:
-
-## Image Selectors
-
-- Container: #reader
-- Item: ${imageItemSelector}
-- Source Attribute: data-src
-
-## Sample Extraction
-
-- First image: http://127.0.0.1:4173/api/fixtures/discovery-image.jpg
-
-## Evidence
-
-- The rendered reader contains ${imageItemSelector} with data-src.
-
-## Confidence
-
-High for chapter-only image extraction.
-
-## Known Risks
-
-- This fixture only validates chapter-only extraction.
-
-## Reviewer Checklist
-
-- [x] Image selector is present.
-- [x] Source attribute is present.`;
+class E2EChapterImagesCapability extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document);
+    return $('${imageSelector}').map((_, element) => {
+      const raw = $(element).attr('data-src') ?? $(element).attr('src') ?? '';
+      return raw ? this.adapter.resolveUrl(sourceUrl, raw) : '';
+    }).get().filter(Boolean);
+  }
+}`;
 }
 
 function extractSourceUrl(text) {

@@ -1,0 +1,35 @@
+{
+  "name": "@comiccrawler/browser-client-sdk",
+  "version": "0.2.0",
+  "description": "Platform-neutral ComicCrawler Browser Client command SDK",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "require": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luberserker0v0/comic-crawler.git",
+    "directory": "browser-client-sdk"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --experimental-test-coverage --test dist/tests/*.test.js",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.0.0"
+  }
+}

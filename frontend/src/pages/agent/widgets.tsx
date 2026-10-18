@@ -197,11 +197,59 @@ export function isActiveBuildJob(job: SelectorDiscoveryJobSummary): boolean {
 }
 
 export function canRetryBuildJob(job: SelectorDiscoveryJobSummary): boolean {
-  return job.status === 'invalid' || job.status === 'failed';
+  return job.status === 'invalid' || job.status === 'failed' || job.status === 'configuration_required';
 }
 
 export function canReviewBuildJob(job: SelectorDiscoveryJobSummary): boolean {
   return job.status === 'awaiting_review' && Boolean(job.adapterImplementationTs?.trim());
+}
+
+export interface BuildJobThread {
+  key: string;
+  hostname: string;
+  target?: string;
+  promotionMode?: string;
+  normalizedUrl: string;
+  url: string;
+  attempts: SelectorDiscoveryJobSummary[];
+  latest: SelectorDiscoveryJobSummary;
+}
+
+export function threadKeyForBuildJob(job: SelectorDiscoveryJobSummary): string {
+  return `${job.normalizedUrl ?? job.url}::${job.target ?? ''}`;
+}
+
+export function groupBuildJobsIntoThreads(jobs: SelectorDiscoveryJobSummary[]): BuildJobThread[] {
+  const groups = new Map<string, SelectorDiscoveryJobSummary[]>();
+  for (const job of jobs) {
+    const key = threadKeyForBuildJob(job);
+    const attempts = groups.get(key);
+    if (attempts) {
+      attempts.push(job);
+    } else {
+      groups.set(key, [job]);
+    }
+  }
+  const threads: BuildJobThread[] = [];
+  for (const [key, attempts] of groups) {
+    const latest = attempts[0];
+    if (!latest) continue;
+    threads.push({
+      key,
+      hostname: latest.hostname,
+      target: latest.target,
+      promotionMode: latest.promotionMode,
+      normalizedUrl: latest.normalizedUrl ?? latest.url,
+      url: latest.url,
+      attempts,
+      latest,
+    });
+  }
+  return threads.sort((a, b) => buildJobTime(b.latest) - buildJobTime(a.latest));
+}
+
+function buildJobTime(job: SelectorDiscoveryJobSummary): number {
+  return new Date(job.updatedAt ?? job.createdAt).getTime() || 0;
 }
 
 export function formatBuildJobTarget(text: ReturnType<typeof useI18n>['text'], job: SelectorDiscoveryJobSummary): string {
@@ -220,7 +268,7 @@ export function formatDateTime(value: string | undefined): string {
 }
 
 export function extractRepresentativeChapterUrl(job: SelectorDiscoveryJobSummary): string | undefined {
-  const source = [job.phase1Markdown, job.candidateMarkdown, job.reviewNotesMarkdown].filter(Boolean).join('\n');
+  const source = [job.phase1Markdown, job.reviewNotesMarkdown].filter(Boolean).join('\n');
   const explicit = /Representative Chapter URL[\s\S]*?(https?:\/\/[^\s)<>"']+)/i.exec(source)?.[1];
   if (explicit) return explicit;
   return /https?:\/\/[^\s)<>"']*\/(?:chapter|mangaread)[^\s)<>"']*/i.exec(source)?.[0];

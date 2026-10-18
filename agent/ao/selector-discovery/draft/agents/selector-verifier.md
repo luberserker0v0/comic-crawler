@@ -27,5 +27,6 @@ signatures, return shapes, helper usage, and parseMode meaning.
 - Flag ambiguity, brittle selectors, missing evidence, forbidden APIs, and hidden site strategy outside adapter source.
 - Reject drafts that return previews such as first chapters or first image URLs
   instead of full `ChapterInfo[]` or full `string[]` extraction results.
-- Reject drafts that rely on runtime code outside the adapter to click, expand,
-  filter, or normalize site-specific content.
+- Reject browser actions inside capability code. Browser preparation is an
+  upstream runtime responsibility; filtering and normalization remain visible
+  in the capability.

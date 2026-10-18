@@ -57,12 +57,9 @@ export async function runSelectorDiscoveryEvalGate(
     throw new Error('Selector discovery service is not available in this CLI context.');
   }
 
-  let job = await ctx.options.selectorDiscoveryService.get(id);
+  const job = await ctx.options.selectorDiscoveryService.get(id);
   if (!job) throw new Error(`Discovery job "${id}" was not found.`);
 
-  if (job.status === 'invalid' && job.candidateMarkdown) {
-    job = await ctx.options.selectorDiscoveryService.revalidate(id);
-  }
   if (evalCase?.type === 'negative') {
     if (job.status === 'awaiting_review') {
       return { passed: false, job, reasons: ['Negative eval case unexpectedly produced a reviewable implementation draft.'] };
@@ -74,36 +71,16 @@ export async function runSelectorDiscoveryEvalGate(
     return { passed: false, job, reasons: [`Discovery job ended with status "${job.status}".`] };
   }
 
-  if (job.adapterImplementationTs) {
-    const reasons: string[] = [];
-    if (!job.implementationValidation?.valid) {
-      reasons.push(`Adapter implementation validation failed: ${(job.implementationValidation?.errors ?? []).join('; ') || 'unknown error'}`);
-    }
-    if (!job.reviewNotesMarkdown?.trim()) {
-      reasons.push('Adapter implementation review notes are missing.');
-    }
-    return { passed: reasons.length === 0, job, reasons };
-  }
-
-  job = await ctx.options.selectorDiscoveryService.validateCandidate(id);
-  job = await ctx.options.selectorDiscoveryService.shadowPromote(id);
-
   const reasons: string[] = [];
-  if (!job.extractionValidation?.valid) {
-    reasons.push(`Candidate extraction validation failed: ${(job.extractionValidation?.errors ?? []).join('; ') || 'unknown error'}`);
+  if (!job.adapterImplementationTs?.trim()) {
+    reasons.push('Adapter implementation draft is missing.');
   }
-  if (!job.oracleComparison) {
-    reasons.push('No existing adapter oracle comparison was available.');
-  } else {
-    if (evalCase?.oracleAdapterId && job.oracleComparison.adapterId !== evalCase.oracleAdapterId) {
-      reasons.push(`Oracle adapter was "${job.oracleComparison.adapterId}", expected "${evalCase.oracleAdapterId}".`);
-    }
-    if (!job.oracleComparison.titleMatched) reasons.push('Candidate title differs from existing adapter oracle title.');
-    if (job.oracleComparison.chapterCountDelta !== 0) reasons.push(`Chapter count delta is ${job.oracleComparison.chapterCountDelta}.`);
-    if ((job.oracleComparison.imageCountDelta ?? 0) !== 0) reasons.push(`Image count delta is ${job.oracleComparison.imageCountDelta}.`);
-    for (const warning of job.oracleComparison.warnings) reasons.push(warning);
+  if (!job.implementationValidation?.valid) {
+    reasons.push(`Adapter implementation validation failed: ${(job.implementationValidation?.errors ?? []).join('; ') || 'unknown error'}`);
   }
-
+  if (!job.reviewNotesMarkdown?.trim()) {
+    reasons.push('Adapter implementation review notes are missing.');
+  }
   return { passed: reasons.length === 0, job, reasons };
 }
 
@@ -167,20 +144,14 @@ export async function writeSelectorDiscoveryBundleEvalSuiteArtifact(
     await fs.writeFile(join(runDir, 'phase1-output.md'), result.job?.phase1Markdown ?? '', 'utf-8');
     await fs.writeFile(join(runDir, 'adapter-implementation.ts'), result.job?.adapterImplementationTs ?? '', 'utf-8');
     await fs.writeFile(join(runDir, 'review-notes.md'), result.job?.reviewNotesMarkdown ?? '', 'utf-8');
-    await fs.writeFile(join(runDir, 'legacy-candidate-output.md'), result.job?.candidateMarkdown ?? '', 'utf-8');
-    await fs.writeFile(join(runDir, 'parsed-candidate.json'), `${JSON.stringify(result.job?.parsedCandidate ?? null, null, 2)}\n`, 'utf-8');
     await fs.writeFile(join(runDir, 'implementation-validation.json'), `${JSON.stringify(result.job?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
-    await fs.writeFile(join(runDir, 'oracle-comparison.json'), `${JSON.stringify(result.job?.oracleComparison ?? null, null, 2)}\n`, 'utf-8');
   }
 
   const last = findLastJob(results);
   await fs.writeFile(join(artifactDir, 'phase1-output.md'), last?.phase1Markdown ?? '', 'utf-8');
   await fs.writeFile(join(artifactDir, 'adapter-implementation.ts'), last?.adapterImplementationTs ?? '', 'utf-8');
   await fs.writeFile(join(artifactDir, 'review-notes.md'), last?.reviewNotesMarkdown ?? '', 'utf-8');
-  await fs.writeFile(join(artifactDir, 'legacy-candidate-output.md'), last?.candidateMarkdown ?? '', 'utf-8');
-  await fs.writeFile(join(artifactDir, 'parsed-candidate.json'), `${JSON.stringify(last?.parsedCandidate ?? null, null, 2)}\n`, 'utf-8');
   await fs.writeFile(join(artifactDir, 'implementation-validation.json'), `${JSON.stringify(last?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
-  await fs.writeFile(join(artifactDir, 'oracle-comparison.json'), `${JSON.stringify(last?.oracleComparison ?? null, null, 2)}\n`, 'utf-8');
 
   return artifactDir;
 }
@@ -193,7 +164,6 @@ export function createEvalCaseSummary(result: SelectorDiscoveryEvalRunResult): R
       enabled: result.case.enabled,
       live: result.case.live,
       url: result.case.url,
-      oracleAdapterId: result.case.oracleAdapterId,
       expectations: result.case.expectations,
     } : undefined,
     runIndex: result.runIndex,
@@ -214,11 +184,7 @@ export function createEvalJobSummary(job?: SelectorDiscoveryJob): Record<string,
     phase: job.phase,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
-    validation: job.validation,
     implementationValidation: job.implementationValidation,
-    extractionValidation: job.extractionValidation,
-    shadowPromotion: job.shadowPromotion,
-    oracleComparison: job.oracleComparison,
     error: job.error,
   };
 }

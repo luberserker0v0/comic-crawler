@@ -1,5 +1,4 @@
 import { promises as fs } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { ComicCrawlerServer } from './server';
 import { AgentAdminService } from './agent/admin-service';
@@ -22,6 +21,12 @@ import { AdapterDraftService } from './adapter-drafts/service';
 import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import { MaintenanceService } from './maintenance/service';
 import { logger } from './utils/logger';
+import { BrowserClientRegistry } from './browser/browser-client-registry';
+import { BrowserSessionGateway } from './browser/browser-session-gateway';
+import { BrowserWorkerLeaseCoordinator, type BrowserWorkerLease } from './browser/browser-worker-lease-coordinator';
+import { BrowserRenderService } from './browser/browser-render-service';
+import { ConcurrentSchedulingPolicy, TaskDeferredError } from './scheduler';
+import { ApiSecurityService, resolveApiSecurityPolicy } from './security/api-security';
 
 async function main(): Promise<void> {
   try {
@@ -29,8 +34,6 @@ async function main(): Promise<void> {
     const eventBus = new EventBus();
     const bootstrapRuntime = resolveRuntimeConfig();
     await ensureDataDirectoryLayout(bootstrapRuntime.dataLayout);
-    await importLegacyRuntimeState(bootstrapRuntime.dataPath);
-    timing.mark('legacy runtime import');
     const storage = new JsonFileStore({ basePath: bootstrapRuntime.dataPath });
     await storage.initialize();
     timing.mark('storage initialize');
@@ -39,30 +42,90 @@ async function main(): Promise<void> {
     await configManager.load();
     const config = await configManager.get();
     const runtime = resolveRuntimeConfig(config);
+    const apiSecurity = await ApiSecurityService.create(resolveApiSecurityPolicy(config.apiSecurity));
     timing.mark('config load');
 
     const adapterRegistry = new AdapterRegistry(eventBus);
+    const browserClientRegistry = new BrowserClientRegistry(storage);
+    await browserClientRegistry.initialize();
+    const browserSessionGateway = new BrowserSessionGateway(browserClientRegistry, apiSecurity);
+    const browserLeaseCoordinator = new BrowserWorkerLeaseCoordinator(browserSessionGateway);
+    const browserRenderService = new BrowserRenderService(browserSessionGateway);
+    timing.mark('browser client gateway initialize');
 
     await registerProjectAdapters(storage, (adapter) => adapterRegistry.register(adapter));
 
-    const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
-    const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-      getBrowserConfig: async () => (await configManager.get()).browser,
-      getNetworkConfig: async () => (await configManager.get()).network,
-    });
     const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
       workspaceRoot: runtime.agentWorkspacePath,
       getBrowserConfig: async () => (await configManager.get()).browser,
       getNetworkConfig: async () => (await configManager.get()).network,
+      browserRenderService,
+      acquireBrowserSession: async ({ jobId, ownerUserId, url, browserTarget }) => {
+        const browser = (await configManager.get()).browser;
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `challenge:${jobId}`,
+          ownerUserId,
+          target: browserTarget,
+          initialUrl: url,
+          timeoutMs: browser.workerWaitTimeoutMs,
+        });
+        return { sessionId: lease.sessionId, release: () => lease.release() };
+      },
     });
     const adapterDraftService = new AdapterDraftService(runtime.dataLayout.userPath, adapterRegistry);
     const fixtureCaptureService = new FixtureCaptureService(challengeDiscoveryService, runtime.agentWorkspacePath);
+    const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
+    const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
+      getBrowserConfig: async () => (await configManager.get()).browser,
+      renderBrowserPage: (sessionId, url, options) =>
+        browserRenderService.render(sessionId, url, { timeoutMs: options.timeoutMs }),
+      acquireBrowserSession: async ({ job, browserTarget }) => {
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `selector:${job.id}`,
+          ownerUserId: job.ownerUserId ?? 'public',
+          target: browserTarget,
+          initialUrl: job.normalizedUrl,
+          timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
+        });
+        return { sessionId: lease.sessionId, release: () => lease.release() };
+      },
+      getNetworkConfig: async () => (await configManager.get()).network,
+      captureApprovalFixture: async ({ job, adapter }) => {
+        const lease = await browserLeaseCoordinator.acquire({
+          taskId: `selector-fixture:${job.id}`,
+          ownerUserId: job.ownerUserId ?? 'public',
+          target: job.browserTarget,
+          initialUrl: job.normalizedUrl,
+          timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
+        });
+        try {
+          const page = await browserRenderService.render(lease.sessionId, job.normalizedUrl, {
+            timeoutMs: (await configManager.get()).browser.timeout,
+          });
+          return fixtureCaptureService.captureApprovedAdapterFixture({
+            sourceDiscoveryId: job.id,
+            adapter,
+            target: job.target ?? 'full',
+            url: page.url,
+            html: page.html,
+          });
+        } finally {
+          await lease.release();
+        }
+      },
+      schedulingPolicy: new ConcurrentSchedulingPolicy({
+        maxConcurrency: config.concurrency.siteLevel,
+        maxConcurrencyPerGroup: 1,
+        groupBy: (task) => new URL(task.data.url).hostname,
+      }),
+    });
 
     const crawlerEngine = new CrawlerEngine({
       downloadDir: config.download.directory,
       concurrency: config.download.concurrency,
       browser: config.browser,
       network: config.network,
+      browserRenderService,
       eventBus,
     });
 
@@ -72,17 +135,54 @@ async function main(): Promise<void> {
         throw new ComicError(`Adapter "${task.data.adapterId}" not found`, ErrorType.ADAPTER_ERROR);
       }
 
+      let browserLease: BrowserWorkerLease | undefined;
+      let retainLeaseForVerification = false;
+      let reconnectAttempts = 0;
+
       try {
-        await crawlerEngine.crawl(adapter as any, task.data.url, {
-          chapters: task.data.chapters,
-          chapterUrls: task.data.chapterUrls,
+        const browserConfig = (await configManager.get()).browser;
+        browserLease = await browserLeaseCoordinator.tryAcquire({
           taskId: task.id,
-          checkpoint: taskManager.getCheckpoint(task.id),
-          onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
+          ownerUserId: task.data.ownerUserId ?? 'public',
+          target: task.data.browserTarget,
+          initialUrl: task.data.url,
         });
+        if (!browserLease) {
+          const targetMessage = task.data.browserTarget?.mode === 'existing-tab' || task.data.browserTarget?.workerId
+            ? `Waiting for browser worker "${task.data.browserTarget.workerId}".`
+            : 'Waiting for an available managed-profile browser worker.';
+          await taskManager.markWaitingForBrowserWorker(task.id, targetMessage);
+          const waitStartedAt = Date.parse(task.data.browserWaitStartedAt ?? new Date().toISOString());
+          const waitTimeoutMs = browserConfig.workerWaitTimeoutMs ?? 30 * 60 * 1000;
+          const remainingMs = waitTimeoutMs - (Date.now() - waitStartedAt);
+          if (remainingMs <= 0) throw new Error(targetMessage.replace(/^Waiting/, 'Timed out waiting'));
+          throw new TaskDeferredError(targetMessage, Math.min(5_000, remainingMs));
+        }
+        await taskManager.markBrowserWorkerAcquired(task.id);
+        while (true) {
+          try {
+            await crawlerEngine.crawl(adapter as any, task.data.url, {
+              chapters: task.data.chapters,
+              chapterUrls: task.data.chapterUrls,
+              taskId: task.id,
+              browserSessionId: browserLease.sessionId,
+              checkpoint: taskManager.getCheckpoint(task.id),
+              onCheckpoint: (checkpoint) => taskManager.updateCheckpoint(task.id, checkpoint),
+            });
+            break;
+          } catch (error) {
+            if (!isBrowserTransportDisconnect(error) || reconnectAttempts >= 3) throw error;
+            reconnectAttempts += 1;
+            await taskManager.markWaitingForBrowserWorker(task.id, `Browser worker disconnected; waiting to resume (${reconnectAttempts}/3).`);
+            if (!await browserLeaseCoordinator.waitForReconnect(browserLease, 120_000)) throw error;
+          }
+        }
       } catch (error) {
         if (isHumanVerificationRequiredError(error)) {
-          const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
+          const errorUrl = error instanceof ComicError && typeof error.context.url === 'string'
+            ? error.context.url
+            : undefined;
+          const verificationUrl = errorUrl ?? task.data.chapterUrls?.[0] ?? task.data.url;
           eventBus.emit('task:progress', {
             taskId: task.id,
             progress: {
@@ -94,7 +194,14 @@ async function main(): Promise<void> {
               currentChapter: 'human verification detected; queued verification handoff',
             },
           });
-          const challengeJob = await challengeDiscoveryService.createDeferred({ url: verificationUrl });
+          retainLeaseForVerification = true;
+          const challengeJob = await challengeDiscoveryService.createDeferred({
+            url: verificationUrl,
+            browserLease,
+            ownerUserId: task.data.ownerUserId,
+            browserTarget: task.data.browserTarget,
+          });
+          browserLease = undefined;
           throw new ComicError(
             `Human verification is required before crawling can continue. Challenge discovery job: ${challengeJob.id}`,
             ErrorType.AUTH_ERROR,
@@ -109,6 +216,8 @@ async function main(): Promise<void> {
           );
         }
         throw error;
+      } finally {
+        if (!retainLeaseForVerification) await browserLease?.release();
       }
     };
 
@@ -121,11 +230,10 @@ async function main(): Promise<void> {
     timing.mark('agent trigger monitor initialize');
     const agentAdminService = new AgentAdminService(runtime.agentWorkspacePath, storage, eventBus, agentNotifier, agentTriggerMonitor);
     await selectorDiscoveryService.loadActiveDynamicAdapters();
+    await selectorDiscoveryService.initializeScheduler();
     timing.mark('dynamic adapter load');
     await challengeDiscoveryService.loadActiveStrategies();
     timing.mark('challenge strategy load');
-    await challengeDiscoveryService.loadVerifiedBrowserSessions();
-    timing.mark('verified browser session load');
     const maintenanceService = new MaintenanceService({
       storage,
       taskManager,
@@ -138,9 +246,7 @@ async function main(): Promise<void> {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       },
     });
@@ -159,8 +265,13 @@ async function main(): Promise<void> {
       adapterDraftService,
       fixtureCaptureService,
       maintenanceService,
+      browserClientRegistry,
+      browserSessionGateway,
+      browserLeaseCoordinator,
+      browserRenderService,
       storage,
       staticDir: runtime.staticDir,
+      apiSecurity,
     });
 
     await server.start();
@@ -223,44 +334,6 @@ function writeBootstrapTiming(step: string, durationMs: number, totalMs: number)
   process.stderr.write(`[bootstrap] ${step} +${durationMs}ms total=${totalMs}ms\n`);
 }
 
-async function importLegacyRuntimeState(dataPath: string): Promise<void> {
-  const targetDir = resolve(dataPath);
-  const legacyDir = resolve(
-    basename(process.cwd()).toLowerCase() === 'backend'
-      ? join(process.cwd(), 'data')
-      : join(process.cwd(), 'backend', 'data')
-  );
-  if (legacyDir === targetDir) return;
-
-  const keys = [
-    'global',
-    'selector-discovery-settings',
-    'selector-discovery-provider',
-    'selector-discovery-active-adapters',
-    'challenge-discovery-active-strategies',
-  ];
-
-  await fs.mkdir(targetDir, { recursive: true });
-  for (const key of keys) {
-    const fileName = `${key}.json`;
-    const legacyFile = join(legacyDir, fileName);
-    const targetFile = join(targetDir, fileName);
-    try {
-      await fs.access(targetFile);
-      continue;
-    } catch {
-      // Target is missing; import from legacy location if it exists.
-    }
-
-    try {
-      await fs.copyFile(legacyFile, targetFile);
-      logger.info({ key, legacyDir, targetDir }, 'Imported legacy runtime state');
-    } catch {
-      // Legacy file does not exist or is unreadable; leave target absent.
-    }
-  }
-}
-
 function startMaintenanceScheduler(maintenanceService: MaintenanceService, configManager: ConfigManager): void {
   void (async () => {
     let policy;
@@ -301,4 +374,9 @@ function hasHumanVerificationContext(value: unknown): boolean {
     context.humanVerificationProfileUnavailable === true
   ) return true;
   return Object.values(context).some((entry) => hasHumanVerificationContext(entry));
+}
+
+function isBrowserTransportDisconnect(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /websocket|browser has been closed|browser closed|connection closed|target page, context or browser has been closed|econnreset|socket hang up/i.test(message);
 }

@@ -11,17 +11,15 @@ class FixtureAdapter extends AdapterBase {
   readonly id = 'fixture';
   readonly name = 'Fixture';
   readonly domains = ['example.com'];
-  readonly parseMode: 'static' | 'dynamic' | 'interactive';
+  readonly parseMode = 'playwright' as const;
 
   constructor(
     private readonly handlers: {
       metadata?: (html: string, url: string) => ComicMetadata;
       images?: (html: string, url: string) => ImageInfo[];
-    },
-    parseMode: 'static' | 'dynamic' | 'interactive' = 'static'
+    }
   ) {
     super();
-    this.parseMode = parseMode;
   }
 
   matchUrl(url: string): boolean {
@@ -73,6 +71,18 @@ class FixtureAdapter extends AdapterBase {
     }
     return this.handlers.metadata(String(document), url);
   }
+}
+
+class VerificationFixtureAdapter extends FixtureAdapter {
+  readonly capabilities = {
+    verification: true,
+    metadata: false,
+    chapterImages: true,
+  };
+  readonly verification = {
+    detectVerificationRequired: (input: string) => input.includes('site-specific-verification'),
+    describeVerificationHandoff: () => ({ supported: true }),
+  };
 }
 
 describe('CrawlerEngine progress tracking', () => {
@@ -297,42 +307,13 @@ describe('CrawlerEngine progress tracking', () => {
     await engine.dispose();
   });
 
-  it('should not use Playwright renderer in static mode', async () => {
+  it('should always use Playwright-rendered HTML', async () => {
     const engine = new CrawlerEngine({
       downloadDir: 'D:/downloads',
       browser: {
-        mode: 'static',
-        headless: true,
-        maxInstances: 1,
         timeout: 30000,
-        waitUntil: 'domcontentloaded',
-      },
-    });
-    const metadata = createSingleChapterMetadata();
-    const adapter = new FixtureAdapter({
-      metadata: () => metadata,
-      images: () => [{ url: 'https://img.example.com/1.jpg', index: 0 }],
-    });
-    jest.spyOn(adapter as any, 'fetchHtml').mockResolvedValue('<html>static</html>');
-    (engine as any).htmlRenderer = { render: jest.fn(), dispose: jest.fn() };
-    await stubDownloader(engine);
-
-    await engine.crawl(adapter, 'https://example.com/manga/demo');
-
-    expect((engine as any).htmlRenderer.render).not.toHaveBeenCalled();
-    await adapter.dispose();
-    await engine.dispose();
-  });
-
-  it('should use Playwright-rendered HTML in headless mode', async () => {
-    const engine = new CrawlerEngine({
-      downloadDir: 'D:/downloads',
-      browser: {
-        mode: 'headless',
-        headless: true,
-        maxInstances: 1,
-        timeout: 30000,
-        waitUntil: 'domcontentloaded',
+        workerWaitTimeoutMs: 30 * 60 * 1000,
+        postLoadDelayMs: 0,
       },
     });
     const render = jest.fn(async (url: string) => `<html>rendered ${url}</html>`);
@@ -356,130 +337,27 @@ describe('CrawlerEngine progress tracking', () => {
     await engine.dispose();
   });
 
-  it('should not fallback in auto mode when static extraction succeeds', async () => {
-    const engine = new CrawlerEngine({
-      downloadDir: 'D:/downloads',
-      browser: {
-        mode: 'auto',
-        headless: true,
-        maxInstances: 1,
-        timeout: 30000,
-        waitUntil: 'domcontentloaded',
-      },
-    });
-    const render = jest.fn(async () => '<html>rendered</html>');
-    (engine as any).htmlRenderer = { render, dispose: jest.fn() };
-    const adapter = new FixtureAdapter({
-      metadata: () => createSingleChapterMetadata(),
+  it('should honor adapter-specific verification detection in the crawl path', async () => {
+    const engine = new CrawlerEngine({ downloadDir: 'D:/downloads' });
+    (engine as any).htmlRenderer = {
+      render: jest.fn(async () => '<html>site-specific-verification</html>'),
+      dispose: jest.fn(),
+    };
+    const chapterUrl = 'https://example.com/title/demo/1-chapter-1';
+    const adapter = new VerificationFixtureAdapter({
       images: () => [{ url: 'https://img.example.com/1.jpg', index: 0 }],
     });
-    jest.spyOn(adapter as any, 'fetchStaticHtml').mockResolvedValue('<html>static</html>');
-    await stubDownloader(engine);
 
-    await engine.crawl(adapter, 'https://example.com/manga/demo');
-
-    expect(render).not.toHaveBeenCalled();
-    await adapter.dispose();
-    await engine.dispose();
-  });
-
-  it('should fallback to headless in auto mode when static extraction fails with parsing error', async () => {
-    const engine = new CrawlerEngine({
-      downloadDir: 'D:/downloads',
-      browser: {
-        mode: 'auto',
-        headless: true,
-        maxInstances: 1,
-        timeout: 30000,
-        waitUntil: 'domcontentloaded',
+    await expect(engine.crawl(adapter, chapterUrl, { chapterUrls: [chapterUrl] })).rejects.toMatchObject({
+      type: ErrorType.AUTH_ERROR,
+      context: {
+        adapterId: 'fixture',
+        url: chapterUrl,
+        antiBotChallenge: true,
+        challengeType: 'adapter_verification_required',
       },
     });
-    const render = jest.fn(async () => '<html>rendered</html>');
-    (engine as any).htmlRenderer = { render, dispose: jest.fn() };
-    const adapter = new FixtureAdapter({
-      metadata: (html) => {
-        if (!html.includes('rendered')) {
-          throw new ComicError('No chapters found', ErrorType.PARSING_ERROR);
-        }
-        return createSingleChapterMetadata();
-      },
-      images: () => [{ url: 'https://img.example.com/1.jpg', index: 0 }],
-    });
-    jest.spyOn(adapter as any, 'fetchStaticHtml').mockResolvedValue('<html>static</html>');
-    await stubDownloader(engine);
 
-    await engine.crawl(adapter, 'https://example.com/manga/demo');
-
-    expect(render).toHaveBeenCalled();
-    await adapter.dispose();
-    await engine.dispose();
-  });
-
-  it('should fallback to headless in auto mode when static fetch is blocked with HTTP 403', async () => {
-    const engine = new CrawlerEngine({
-      downloadDir: 'D:/downloads',
-      browser: {
-        mode: 'auto',
-        headless: true,
-        maxInstances: 1,
-        timeout: 30000,
-        waitUntil: 'domcontentloaded',
-      },
-    });
-    const render = jest.fn(async () => '<html>rendered</html>');
-    (engine as any).htmlRenderer = { render, dispose: jest.fn() };
-    const adapter = new FixtureAdapter({
-      metadata: (html) => {
-        expect(html).toContain('rendered');
-        return createSingleChapterMetadata();
-      },
-      images: () => [{ url: 'https://img.example.com/1.jpg', index: 0 }],
-    });
-    jest.spyOn(adapter as any, 'fetchStaticHtml').mockImplementation(async (urlValue: unknown) => {
-      const url = String(urlValue);
-      if (url === 'https://example.com/manga/demo') {
-        throw new ComicError('HTTP 403 for https://example.com/manga/demo', ErrorType.NETWORK_ERROR, true, {
-          statusCode: 403,
-          url,
-        });
-      }
-      return '<html>static chapter</html>';
-    });
-    await stubDownloader(engine);
-
-    await engine.crawl(adapter, 'https://example.com/manga/demo');
-
-    expect(render).toHaveBeenCalledWith('https://example.com/manga/demo');
-    await adapter.dispose();
-    await engine.dispose();
-  });
-
-  it('should include static and headless errors when fallback also fails', async () => {
-    const engine = new CrawlerEngine({
-      downloadDir: 'D:/downloads',
-      browser: {
-        mode: 'auto',
-        headless: true,
-        maxInstances: 1,
-        timeout: 30000,
-        waitUntil: 'domcontentloaded',
-      },
-    });
-    (engine as any).htmlRenderer = { render: jest.fn(async () => '<html>rendered</html>'), dispose: jest.fn() };
-    const adapter = new FixtureAdapter({
-      metadata: () => {
-        throw new ComicError('No chapters found', ErrorType.PARSING_ERROR);
-      },
-    });
-    jest.spyOn(adapter as any, 'fetchStaticHtml').mockResolvedValue('<html>static</html>');
-
-    await expect(engine.crawl(adapter, 'https://example.com/manga/demo')).rejects.toMatchObject({
-      type: ErrorType.PARSING_ERROR,
-      context: expect.objectContaining({
-        staticError: expect.any(Object),
-        headlessError: expect.any(Object),
-      }),
-    });
     await adapter.dispose();
     await engine.dispose();
   });

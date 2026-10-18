@@ -42,7 +42,7 @@ describe('Agent routes', () => {
       readonly id = 'kuronavi';
       readonly name = 'Kuronavi';
       readonly domains = ['kuronavi.one'];
-      readonly parseMode = 'static' as const;
+      readonly parseMode = 'playwright' as const;
       matchUrl(url: string): boolean { return url.includes('kuronavi.one'); }
     }
 

@@ -39,4 +39,57 @@ describe('DomReadinessChecker', () => {
     expect(report.status).toBe('needs_fixture_or_manual_review');
     expect(report.recommendedAction).toBe('capture_verified_fixture');
   });
+
+  it('rejects a partially hydrated reader DOM', () => {
+    const report = checker.check({
+      url: 'https://example.com/read/1',
+      target: 'chapterImages',
+      html: `
+        <main class="reader">
+          <div class="rpage-page" data-page="1"><img src="/1.jpg"></div>
+          <div class="rpage-page" data-page="2"><img src="/2.jpg"></div>
+          <div class="rpage-page" data-page="3"><div class="loader"></div></div>
+        </main>
+      `,
+    });
+
+    expect(report.status).toBe('needs_fixture_or_manual_review');
+    expect(report.confidence).toBe(0.45);
+    expect(report.reasons.join(' ')).toContain('2 of 3 page containers');
+  });
+
+  it('rejects extraction with fewer URLs than reader pages', () => {
+    const report = checker.check({
+      url: 'https://example.com/read/1',
+      target: 'chapterImages',
+      html: `
+        <main class="reader">
+          <div class="reader-page"><img src="/1.jpg"></div>
+          <div class="reader-page"><img src="/2.jpg"></div>
+        </main>
+      `,
+      extractionResult: { imageUrls: ['https://example.com/1.jpg'] },
+    });
+
+    expect(report.status).toBe('needs_fixture_or_manual_review');
+    expect(report.recommendedAction).toBe('manual_review');
+    expect(report.reasons.join(' ')).toContain('1 image URLs for 2 reader pages');
+  });
+
+  it('accepts Browser Client annotations for virtualized reader pages', () => {
+    const report = checker.check({
+      url: 'https://example.com/read/1',
+      target: 'chapterImages',
+      html: `
+        <main class="reader">
+          <div class="rpage-page" data-page="1" data-comiccrawler-image-url="https://img.example/1.jpg"></div>
+          <div class="rpage-page" data-page="2" data-comiccrawler-image-url="https://img.example/2.jpg"></div>
+        </main>
+      `,
+      extractionResult: { imageUrls: ['https://img.example/1.jpg', 'https://img.example/2.jpg'] },
+    });
+
+    expect(report.status).toBe('ready');
+    expect(report.recommendedAction).toBe('continue');
+  });
 });

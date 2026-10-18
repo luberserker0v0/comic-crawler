@@ -16,6 +16,7 @@ import { MaintenanceService } from './maintenance/service';
 import { ComicCrawlerCli } from './cli';
 import { ComicError, ErrorType, errorToLogObject } from './error/types';
 import { logger } from './utils/logger';
+import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 
 async function main(): Promise<void> {
   try {
@@ -74,12 +75,14 @@ async function main(): Promise<void> {
       getNetworkConfig: async () => (await configManager.get()).network,
     });
     await selectorDiscoveryService.loadActiveDynamicAdapters();
+    await selectorDiscoveryService.initializeScheduler();
 
     const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
       workspaceRoot: runtime.agentWorkspacePath,
       getBrowserConfig: async () => (await configManager.get()).browser,
       getNetworkConfig: async () => (await configManager.get()).network,
     });
+    const fixtureCaptureService = new FixtureCaptureService(challengeDiscoveryService, runtime.agentWorkspacePath);
 
     const maintenanceService = new MaintenanceService({
       storage,
@@ -93,9 +96,7 @@ async function main(): Promise<void> {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       },
     });
@@ -108,6 +109,8 @@ async function main(): Promise<void> {
       agentAdminService,
       selectorDiscoveryService,
       maintenanceService,
+      fixtureCaptureService,
+      storage,
     });
 
     await cli.parse(process.argv);

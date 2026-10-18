@@ -45,7 +45,7 @@ export class DomReadinessChecker {
     }
 
     if (input.target === 'chapterImages') {
-      const imageCount = $('img[src], img[data-src], img[data-original], image[href]').length;
+      const imageCount = $('img[src], img[data-src], img[data-original], image[href], [data-comiccrawler-image-url]').length;
       const readerImageCount = $([
         'main img[src]',
         'main img[data-src]',
@@ -61,9 +61,37 @@ export class DomReadinessChecker {
         '.chapter img[data-src]',
         'img[src*="happymh"]',
         'img[data-src*="happymh"]',
+        'main [data-comiccrawler-image-url]',
+        'article [data-comiccrawler-image-url]',
+        '.reader [data-comiccrawler-image-url]',
+        '.comic [data-comiccrawler-image-url]',
+        '.chapter [data-comiccrawler-image-url]',
       ].join(', ')).length;
+      const pageContainers = $([
+        '.rpage-page',
+        '.reader-page',
+        '.chapter-page',
+        '[class*="reader-page"]',
+        '[class*="chapter-page"]',
+        '[data-page][class*="page"]',
+      ].join(', '));
+      const pageContainerCount = pageContainers.length;
+      const loadedPageCount = pageContainers.filter((_, element) => {
+        const node = $(element);
+        return node.is('img[src], img[data-src], img[data-original], image[href], [data-comiccrawler-image-url]')
+          || node.find('img[src], img[data-src], img[data-original], image[href], source[srcset]').length > 0;
+      }).length;
       if (imageCount === 0) reasons.push('No image elements were found in the chapter DOM.');
       if (imageCount > 0 && readerImageCount === 0) reasons.push('Images exist, but none look like reader images.');
+      if (pageContainerCount >= 2 && loadedPageCount < pageContainerCount) {
+        reasons.push(`Reader DOM is incomplete: ${loadedPageCount} of ${pageContainerCount} page containers contain loaded images.`);
+        return report(input.target, 0.45, reasons, 'capture_verified_fixture');
+      }
+      const extractedImageCount = getExtractedImageCount(input.extractionResult);
+      if (pageContainerCount >= 2 && extractedImageCount !== undefined && extractedImageCount < pageContainerCount) {
+        reasons.push(`Extraction is incomplete: ${extractedImageCount} image URLs for ${pageContainerCount} reader pages.`);
+        return report(input.target, 0.45, reasons, 'manual_review');
+      }
       const confidence = clamp(0.3 + (imageCount > 0 ? 0.25 : 0) + (readerImageCount > 0 ? 0.35 : 0));
       return report(input.target, confidence, reasons, confidence >= 0.75 ? 'continue' : 'capture_verified_fixture');
     }
@@ -75,6 +103,13 @@ export class DomReadinessChecker {
 
     return report(input.target, 0.85, reasons, 'continue');
   }
+}
+
+function getExtractedImageCount(value: unknown): number | undefined {
+  if (Array.isArray(value)) return value.length;
+  if (!value || typeof value !== 'object') return undefined;
+  const imageUrls = (value as { imageUrls?: unknown }).imageUrls;
+  return Array.isArray(imageUrls) ? imageUrls.length : undefined;
 }
 
 function report(

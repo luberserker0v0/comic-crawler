@@ -6,14 +6,11 @@ export type {
   ChallengeStrategyModule,
   ChallengeStrategyValidation,
 } from './types';
-export { BrowserChallengeHandler } from './browser-challenge-handler';
-export { getGlobalVerifiedBrowserSessionRegistry, VerifiedBrowserSessionRegistry } from './verified-browser-sessions';
 export {
   ChallengeStrategyRegistry,
   getGlobalChallengeStrategyRegistry,
   resetGlobalChallengeStrategyRegistryForTests,
 } from './registry';
-export { PlaywrightChallengeContext } from './challenge-context';
 export { defaultChallengeStrategy } from './default-strategy';
 export { loadChallengeStrategyFromSource } from './strategy-loader';
 export { validateChallengeStrategyModule, validateChallengeStrategySource } from './strategy-validator';

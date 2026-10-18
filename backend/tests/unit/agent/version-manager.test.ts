@@ -5,6 +5,16 @@ import { promises as fs } from 'node:fs';
 
 const TEST_WORKSPACE = join(__dirname, '__tmp__', 'version-manager');
 
+function addVersion(
+  manager: VersionManager,
+  adapterId: string,
+  selectorsContent: string,
+  parserContent: string,
+  testResults: { passed: number; failed: number }
+) {
+  return manager.createCandidateVersion({ adapterId, selectorsContent, parserContent, testResults });
+}
+
 describe('VersionManager', () => {
   let manager: VersionManager;
 
@@ -20,7 +30,7 @@ describe('VersionManager', () => {
   });
 
   it('should create candidate versions by default', async () => {
-    const version = await manager.addVersion(
+    const version = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".title" };',
       'export function parse() {}',
@@ -54,7 +64,7 @@ describe('VersionManager', () => {
   });
 
   it('should reject previous active version when promoting a new candidate', async () => {
-    const v1 = await manager.addVersion(
+    const v1 = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".title" };',
       'export function parse() {}',
@@ -62,7 +72,7 @@ describe('VersionManager', () => {
     );
     await manager.promoteVersion('test-adapter', v1);
 
-    const v2 = await manager.addVersion(
+    const v2 = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".headline" };',
       'export function parseLatest() {}',
@@ -80,7 +90,7 @@ describe('VersionManager', () => {
   });
 
   it('should rollback to a previous version and mark the replaced active version as rolled_back', async () => {
-    const v1 = await manager.addVersion(
+    const v1 = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".title" };',
       'export function parse() {}',
@@ -88,7 +98,7 @@ describe('VersionManager', () => {
     );
     await manager.promoteVersion('test-adapter', v1);
 
-    const v2 = await manager.addVersion(
+    const v2 = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".headline" };',
       'export function parseLatest() {}',
@@ -109,7 +119,7 @@ describe('VersionManager', () => {
   });
 
   it('should reject a candidate without promoting it', async () => {
-    const version = await manager.addVersion(
+    const version = await addVersion(manager,
       'test-adapter',
       'export const selectors = { title: ".title" };',
       'export function parse() {}',

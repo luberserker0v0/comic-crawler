@@ -11,8 +11,8 @@ outputs/review-notes.md
 ```
 
 The implementation must export one class that extends ComicCrawler
-`AdapterBase`. AO must not output JSON contracts and must not implement
-`fetchMetadata()` or `fetchChapterImages()`.
+`AdapterBase`. AO must not output JSON contracts and must implement the
+fine-grained capability methods described by the bundle contracts.
 
 ## Provider JSON
 

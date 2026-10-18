@@ -1,4 +1,6 @@
 import type { CrawlStage, TaskDetail } from '../../store';
+import { useI18n } from '../../text/i18n';
+import { formatText } from '../../text/format';
 
 export function formatDate(value?: string): string {
   if (!value) {
@@ -23,20 +25,6 @@ export function formatBytes(size: number): string {
   }
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export interface LocalBrowserProfile {
-  id: string;
-  name: string;
-  directory?: string;
-}
-
-export interface LocalBrowserOption {
-  id: string;
-  name: string;
-  executablePath: string;
-  profiles: LocalBrowserProfile[];
-  defaultProfileId?: string;
 }
 
 export type FlowNodeState = 'pending' | 'active' | 'done' | 'blocked' | 'failed' | 'skipped';
@@ -142,18 +130,29 @@ const nodeDotClass: Record<FlowNodeState, string> = {
 };
 
 export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
+  const { text } = useI18n();
   const nodes = buildFlowNodes(detail);
+  const flowLabels: Record<CrawlStage, string> = {
+    adapter: text.dashboard.adapter,
+    verification: text.taskManager.verification,
+    metadata: text.taskManager.metadata,
+    chapter_list: text.taskManager.chapterList,
+    chapter_images: text.taskManager.chapterImages,
+    downloading: text.taskManager.downloading,
+    completed: text.taskManager.done,
+    failed: text.taskManager.failedStage,
+  };
   const stageDetail = detail.progress?.stageDetail ?? detail.progress?.currentItems ?? detail.task.error ?? '-';
 
   return (
     <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4" data-testid="task-flow-chart">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Crawler flow</div>
-          <div className="mt-1 text-sm text-slate-600">High-level pipeline progress for this task.</div>
+          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.crawlerFlow}</div>
+          <div className="mt-1 text-sm text-slate-600">{text.taskManager.crawlerFlowDescription}</div>
         </div>
         <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-          {getDetailMode(detail) === 'chapters' ? 'Specific chapters' : 'All chapters'}
+          {getDetailMode(detail) === 'chapters' ? text.taskManager.specificChapters : text.taskManager.allChapters}
         </div>
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-7">
@@ -162,7 +161,7 @@ export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
             <div className={`rounded-xl border px-3 py-3 text-sm font-medium ${nodeStateClass[node.state]}`}>
               <div className="flex items-center gap-2">
                 <span className={`h-2.5 w-2.5 rounded-full ${nodeDotClass[node.state]}`} />
-                <span>{node.label}</span>
+                <span>{flowLabels[node.key]}</span>
               </div>
               <div className="mt-1 text-xs capitalize opacity-75">{node.state.replace('_', ' ')}</div>
             </div>
@@ -173,7 +172,7 @@ export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
         ))}
       </div>
       <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Current stage</div>
+        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.currentStage}</div>
         <div className="mt-1 font-medium text-slate-900">{stageDetail}</div>
       </div>
     </div>
@@ -181,6 +180,7 @@ export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
 }
 
 export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
+  const { text } = useI18n();
   const metadata = detail.result?.metadata ?? detail.progress?.metadata;
   const chapterListSummary = detail.progress?.chapterListSummary;
   const title = typeof metadata?.title === 'string' ? metadata.title : '-';
@@ -191,7 +191,7 @@ export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
   return (
     <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" data-testid="task-live-extraction-panel">
       <div className="rounded-xl border border-slate-200 p-4">
-        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Metadata</div>
+        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.metadata}</div>
         <div className="mt-3 flex gap-3">
           {coverUrl && (
             <img src={coverUrl} alt={title} className="h-20 w-14 rounded border border-slate-200 object-cover" loading="lazy" />
@@ -200,15 +200,15 @@ export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
             <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
             <div className="mt-1 break-all text-xs text-slate-500">{sourceUrl}</div>
             <div className="mt-2 text-xs text-slate-500">
-              Chapters: {chapterListSummary?.totalChapters ?? (Array.isArray((metadata as any)?.chapters) ? (metadata as any).chapters.length : 0)}
+              {text.taskManager.chapters}: {chapterListSummary?.totalChapters ?? (Array.isArray((metadata as any)?.chapters) ? (metadata as any).chapters.length : 0)}
             </div>
           </div>
         </div>
       </div>
       <div className="rounded-xl border border-slate-200 p-4">
         <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">Chapter list</div>
-          <div className="text-xs text-slate-500">{chapterListSummary?.totalChapters ?? 0} chapters</div>
+          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.chapterList}</div>
+          <div className="text-xs text-slate-500">{formatText(text.taskManager.chaptersCount, { count: chapterListSummary?.totalChapters ?? 0 })}</div>
         </div>
         {chapters.length > 0 ? (
           <div className="mt-3 max-h-52 overflow-auto divide-y divide-slate-100 rounded-lg border border-slate-100">
@@ -220,13 +220,13 @@ export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
             ))}
             {chapterListSummary && chapterListSummary.totalChapters > chapters.slice(0, 20).length && (
               <div className="px-3 py-2 text-xs text-slate-500">
-                Showing first {chapters.slice(0, 20).length} of {chapterListSummary.totalChapters} chapters.
+                {formatText(text.taskManager.showingChapters, { shown: chapters.slice(0, 20).length, total: chapterListSummary.totalChapters })}
               </div>
             )}
           </div>
         ) : (
           <div className="mt-3 rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-            Chapter list has not been extracted yet.
+            {text.taskManager.chapterListPending}
           </div>
         )}
       </div>

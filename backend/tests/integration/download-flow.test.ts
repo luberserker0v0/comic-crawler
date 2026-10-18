@@ -9,7 +9,7 @@ import { HtmlParser } from '../../src/crawler/html-parser';
 import { ChapterFetcher } from '../../src/crawler/chapter-fetcher';
 import { ImageDownloader } from '../../src/crawler/image-downloader';
 import { DedupChecker } from '../../src/image/dedup';
-import { TaskQueue } from '../../src/task/queue';
+import { TaskScheduler } from '../../src/scheduler';
 import { ProgressTracker } from '../../src/task/progress';
 import { AdapterBase } from '../../src/adapter/base';
 import type { ComicMetadata } from '../../../shared/types';
@@ -23,7 +23,7 @@ class MockAdapter extends AdapterBase {
   readonly id = 'mock';
   readonly name = 'Mock Adapter';
   readonly domains = ['mock.example.com'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
 
   matchUrl(url: string): boolean {
     return url.includes('mock.example.com');
@@ -64,7 +64,7 @@ describe('Integration: Download Flow', () => {
   let parser: HtmlParser;
   let dedup: DedupChecker;
   let progress: ProgressTracker;
-  let taskQueue: TaskQueue<{ url: string }>;
+  let taskScheduler: TaskScheduler<{ url: string }>;
 
   beforeEach(async () => {
     await fs.mkdir(TEST_DIR, { recursive: true });
@@ -78,7 +78,7 @@ describe('Integration: Download Flow', () => {
     parser = new HtmlParser();
     dedup = new DedupChecker();
     progress = new ProgressTracker(eventBus);
-    taskQueue = new TaskQueue<{ url: string }>(
+    taskScheduler = new TaskScheduler<{ url: string }>(
       async () => {},
       { concurrency: 2, autoStart: true }
     );

@@ -176,6 +176,62 @@ export async function listSelectorDiscoveryAoProviders(input: {
   }
 }
 
+export async function listSelectorDiscoveryAoProvidersByUrl(input: {
+  aoBaseUrl: string;
+}): Promise<SelectorDiscoveryAoProviderListResult> {
+  const aoBaseUrl = input.aoBaseUrl?.trim();
+  if (!aoBaseUrl) {
+    throw new Error('AO URL is required.');
+  }
+  const steps: SelectorDiscoveryPreflightStep[] = [];
+  const client = new AoClient(aoBaseUrl);
+  let conversationId: string | undefined;
+
+  try {
+    conversationId = await client.createConversation();
+    steps.push({ name: 'create-conversation', ok: true, detail: { conversationId } });
+
+    await client.start(conversationId);
+    steps.push({ name: 'start', ok: true });
+
+    const providerSummary = summarizeAoProviders(await client.listProviders(conversationId));
+    steps.push({
+      name: 'providers',
+      ok: true,
+      detail: {
+        providerCount: providerSummary.providers.length,
+        modelCount: providerSummary.models.length,
+      },
+    });
+
+    return {
+      conversationId,
+      providers: providerSummary.providers,
+      models: providerSummary.models,
+      steps,
+    };
+  } catch (error) {
+    steps.push({
+      name: inferFailedStep(steps),
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+      steps,
+      conversationId,
+    });
+  } finally {
+    if (conversationId) {
+      try {
+        await client.deleteConversation(conversationId);
+        steps.push({ name: 'cleanup', ok: true });
+      } catch (error) {
+        steps.push({ name: 'cleanup', ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+}
+
 function inferFailedStep(steps: SelectorDiscoveryPreflightStep[]): SelectorDiscoveryPreflightStep['name'] {
   const last = steps.at(-1)?.name;
   if (!last) return 'load-bundle';

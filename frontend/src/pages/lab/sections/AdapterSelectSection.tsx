@@ -5,13 +5,13 @@ import type {
   AdapterFunctionCapability,
 } from '@comiccrawler/shared';
 import {
-  capabilityLabels,
   capabilityOrder,
   isCapabilityAllowedForUrlKind,
   urlKindDescription,
   type AdapterChoice,
   type AdapterLabUrlKind,
 } from '../widgets';
+import { useI18n } from '../../../text/i18n';
 
 export function AdapterSelectSection(props: {
   adapterChoices: AdapterChoice[];
@@ -47,13 +47,20 @@ export function AdapterSelectSection(props: {
     selectedFunctionId,
     handleFunctionChange,
   } = props;
+  const { text } = useI18n();
+  const labels: Record<AdapterFunctionCapability, string> = {
+    common: text.lab.commonCapability,
+    verification: text.agent.capabilityVerification,
+    metadata: text.agent.capabilityMetadata,
+    chapterImages: text.agent.capabilityChapterImages,
+  };
 
   return (
     <section className="space-y-4 rounded-lg bg-white p-5 shadow">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900">1. Adapter</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{text.lab.adapterStep}</h2>
         {adapterChoices.length === 0 ? (
-          <p className="mt-2 text-sm text-gray-500">Resolve a URL to choose an adapter.</p>
+          <p className="mt-2 text-sm text-gray-500">{text.lab.resolveToChoose}</p>
         ) : (
           <select
             value={selectedAdapterId}
@@ -71,7 +78,7 @@ export function AdapterSelectSection(props: {
 
       {selectedAdapterId && draftsForSelectedAdapter.length > 0 && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-          <h3 className="text-sm font-semibold text-amber-950">Saved drafts</h3>
+          <h3 className="text-sm font-semibold text-amber-950">{text.lab.savedDrafts}</h3>
           <div className="mt-2 space-y-2">
             {draftsForSelectedAdapter.map((item) => (
               <button
@@ -86,7 +93,7 @@ export function AdapterSelectSection(props: {
                 }`}
               >
                 <div className="font-mono">{item.draftId}</div>
-                <div className="mt-1 text-amber-700">{item.sourceKind} · updated {new Date(item.updatedAt).toLocaleString()}</div>
+                <div className="mt-1 text-amber-700">{item.sourceKind} · {text.lab.updated} {new Date(item.updatedAt).toLocaleString()}</div>
               </button>
             ))}
           </div>
@@ -96,8 +103,8 @@ export function AdapterSelectSection(props: {
       {capabilityDetail && (
         <>
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">2. Capability</h2>
-            <p className="mt-1 text-xs text-gray-500">{urlKindDescription(urlKind)}</p>
+            <h2 className="text-lg font-semibold text-gray-900">{text.lab.capabilityStep}</h2>
+            <p className="mt-1 text-xs text-gray-500">{urlKindDescription(urlKind, text.lab)}</p>
             <div className="mt-2 grid grid-cols-1 gap-2">
               {capabilityOrder.map((capability) => {
                 const implemented = capabilityDetail.functions.some((fn) => fn.capability === capability && fn.implemented);
@@ -116,11 +123,11 @@ export function AdapterSelectSection(props: {
                           : 'border-gray-100 bg-gray-50 text-gray-400'
                     }`}
                   >
-                    <span className="font-medium">{capabilityLabels[capability]}</span>
+                    <span className="font-medium">{labels[capability]}</span>
                     <span className={implemented ? 'ml-2 text-emerald-700' : 'ml-2 text-rose-700'}>
                       {implemented ? 'O' : 'X'}
                     </span>
-                    {!allowed && <div className="mt-1 text-xs text-gray-400">Locked for this URL type</div>}
+                    {!allowed && <div className="mt-1 text-xs text-gray-400">{text.lab.lockedForUrlType}</div>}
                   </button>
                 );
               })}
@@ -128,11 +135,11 @@ export function AdapterSelectSection(props: {
           </div>
 
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">3. Function</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{text.lab.functionStep}</h2>
             <div className="mt-2 space-y-2">
               {!selectedCapabilityAllowed && (
                 <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                  This capability is locked for the current URL type.
+                  {text.lab.capabilityLocked}
                 </div>
               )}
               {functionsForCapability.map((fn) => (
@@ -151,7 +158,7 @@ export function AdapterSelectSection(props: {
                 >
                   <div className="font-mono text-xs">{fn.label}</div>
                   <div className={fn.implemented ? 'text-emerald-700' : 'text-rose-700'}>
-                    {fn.implemented ? 'Implemented' : 'Not implemented'}
+                    {fn.implemented ? text.lab.implemented : text.lab.notImplemented}
                   </div>
                 </button>
               ))}

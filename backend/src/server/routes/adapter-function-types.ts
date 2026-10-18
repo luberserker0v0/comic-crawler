@@ -14,7 +14,7 @@ export type AdapterFunctionId =
   | 'extractChapterList'
   | 'extractChapterImageUrls';
 
-export type AdapterCrawlerMode = 'static' | 'playwright';
+export type AdapterCrawlerMode = 'playwright';
 
 export type AdapterFunctionTiming = NonNullable<AdapterFunctionTestResponse['timings']>[number];
 

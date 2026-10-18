@@ -20,7 +20,11 @@ export async function recreateChallengeJobForTask(
     throw new Error(`Task "${taskId}" was not found.`);
   }
   const verificationUrl = task.data.chapterUrls?.[0] ?? task.data.url;
-  const challengeJob = await challengeDiscoveryService.create({ url: verificationUrl });
+  const challengeJob = await challengeDiscoveryService.create({
+    url: verificationUrl,
+    ownerUserId: task.data.ownerUserId,
+    browserTarget: task.data.browserTarget,
+  });
   const message = `Verification handoff expired or was removed. New challenge discovery job: ${challengeJob.id}`;
   await taskManager.updateResult(taskId, {
     challengeDiscoveryId: challengeJob.id,

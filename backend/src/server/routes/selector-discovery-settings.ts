@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { SelectorDiscoverySettingsStore } from '../../selector-discovery';
-import { listSelectorDiscoveryAoProviders, runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '../../selector-discovery';
+import { listSelectorDiscoveryAoProviders, listSelectorDiscoveryAoProvidersByUrl, runSelectorDiscoveryPreflight, SelectorDiscoveryBundleManager } from '../../selector-discovery';
 import { listBundleEvaluations } from './selector-discovery-helpers';
 
 export function setupSelectorDiscoverySettingsRoutes(
@@ -28,8 +28,14 @@ export function setupSelectorDiscoverySettingsRoutes(
     }
   });
 
-  app.get('/api/config/selector-discovery/models', async (_request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/config/selector-discovery/models', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
+      const query = request.query as { aoBaseUrl?: string };
+      if (query.aoBaseUrl?.trim()) {
+        const result = await listSelectorDiscoveryAoProvidersByUrl({ aoBaseUrl: query.aoBaseUrl.trim() });
+        reply.send({ data: result });
+        return;
+      }
       const { settings, providerDocument } = await settingsStore.getRequired();
       const result = await listSelectorDiscoveryAoProviders({
         aoBaseUrl: settings.aoBaseUrl,

@@ -9,10 +9,7 @@ describe('Selector discovery routes', () => {
       list: async () => [],
       get: async () => null,
       retry: async () => { throw new Error('not used'); },
-      revalidate: async () => { throw new Error('not used'); },
-      validateCandidate: async () => { throw new Error('not used'); },
       promote: async () => { throw new Error('not used'); },
-      shadowPromote: async () => { throw new Error('not used'); },
       reject: async () => { throw new Error('not used'); },
       ...overrides,
     } as any;
@@ -48,7 +45,9 @@ describe('Selector discovery routes', () => {
           };
         },
       }),
-      createSettingsStore()
+      createSettingsStore(),
+      undefined,
+      { htmlRenderer: { render: async () => '<html></html>', dispose: async () => undefined } }
     );
 
     const response = await app.inject({
@@ -78,42 +77,6 @@ describe('Selector discovery routes', () => {
     await app.close();
   });
 
-  it('keeps /api/site-discovery as a backwards-compatible alias', async () => {
-    const app = fastify();
-    let called = false;
-
-    setupSelectorDiscoveryRoutes(
-      app,
-      createDiscoveryService({
-        create: async (input: any) => {
-          called = true;
-          return {
-            id: 'disc-alias',
-            url: input.url,
-            normalizedUrl: input.url,
-            hostname: new URL(input.url).hostname,
-            status: 'queued',
-            target: input.target,
-            createdAt: '2026-06-26T00:00:00.000Z',
-            updatedAt: '2026-06-26T00:00:00.000Z',
-          };
-        },
-      }),
-      createSettingsStore()
-    );
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/site-discovery',
-      payload: { url: 'https://example.com/manga/demo', forceDiscovery: true },
-    });
-
-    expect(response.statusCode).toBe(202);
-    expect(called).toBe(true);
-
-    await app.close();
-  });
-
   it('exposes and tests AO-generated TypeScript implementation drafts', async () => {
     const app = fastify();
     const source = `
@@ -123,7 +86,7 @@ export class GeneratedDemoAdapter extends AdapterBase {
   readonly id = 'generated-demo';
   readonly name = 'Generated Demo';
   readonly domains = ['example.com'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   override readonly capabilities = { verification: true, metadata: true, chapterImages: false };
 
   override matchUrl(url: string): boolean {
@@ -154,7 +117,9 @@ export class GeneratedDemoAdapter extends AdapterBase {
             }
           : null,
       }),
-      createSettingsStore()
+      createSettingsStore(),
+      undefined,
+      { htmlRenderer: { render: async () => '<html></html>', dispose: async () => undefined } }
     );
 
     const implementation = await app.inject({

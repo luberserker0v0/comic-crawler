@@ -6,7 +6,6 @@ import { DynamicSiteAdapter } from '../../adapter/dynamic-site-adapter';
 import { PROJECT_ADAPTER_SOURCE } from '../../adapter/runtime-state';
 import type {
   AdapterFunctionCapability,
-  AdapterFunctionSourceResponse,
   AdapterImplementationResponse,
   AdapterImplementationSymbol,
 } from '@comiccrawler/shared';
@@ -73,7 +72,6 @@ export async function getAdapterImplementation(
     notes: `Full adapter implementation from ${relativePath}. Function selection highlights a test target; the source is reviewed as one implementation artifact.`,
   };
 }
-
 export function createDynamicImplementationOutline(adapter: DynamicSiteAdapter): AdapterImplementationSymbol[] {
   const capabilities = adapter.capabilities;
   const outline: AdapterImplementationSymbol[] = [
@@ -165,123 +163,10 @@ export function findBlockEndLine(lines: string[], start: number): number | undef
   return undefined;
 }
 
-export async function getAdapterFunctionSource(
-  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
-  functionId: AdapterFunctionId
-): Promise<AdapterFunctionSourceResponse> {
-  if (functionId === 'detectVerificationRequired' || functionId === 'describeVerificationHandoff') {
-    return {
-      adapterId: adapter.id,
-      functionId,
-      language: 'markdown',
-      sourceKind: 'pipeline-summary',
-      source: [
-        '# Verification capability',
-        '',
-        '- detectVerificationRequired(input): detects anti-bot or human-verification signals.',
-        '- describeVerificationHandoff(): describes the official task-detail browser handoff.',
-        '',
-        'The browser handoff itself is implemented by the crawler/task pipeline. Adapter Lab can create the same handoff job for diagnosis, then retry the selected fine-grained function against the verified browser page.',
-      ].join('\n'),
-      notes: 'Adapter Lab uses the official verification handoff service when a test URL is blocked.',
-    };
-  }
-
-  if (adapter instanceof DynamicSiteAdapter) {
-    const manifest = adapter.getManifest();
-    return {
-      adapterId: adapter.id,
-      functionId,
-      language: 'json',
-      sourceKind: 'dynamic-manifest',
-      source: JSON.stringify({
-        genericImplementation: 'DynamicSiteAdapter',
-        functionId,
-        capabilities: manifest.capabilities,
-        domains: manifest.domains,
-        urlPatterns: manifest.urlPatterns,
-        selectors: manifest.selectors,
-      }, null, 2),
-      notes: 'Dynamic adapters use the generic DynamicSiteAdapter implementation plus this selector manifest.',
-    };
-  }
-
-  const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
-  if (!relativePath) {
-    return {
-      adapterId: adapter.id,
-      functionId,
-      language: 'markdown',
-      sourceKind: 'project-source',
-      source: `Source snippet is not allowlisted for adapter "${adapter.id}".`,
-      notes: 'Only project adapter source files registered in the source map are exposed.',
-    };
-  }
-
-  const sourcePath = resolveAllowlistedSourcePath(relativePath);
-  if (!existsSync(sourcePath)) {
-    return {
-      adapterId: adapter.id,
-      functionId,
-      language: 'markdown',
-      sourceKind: 'project-source',
-      source: `Allowlisted source file was not found: ${relativePath}`,
-      notes: 'The application may be running from compiled output without source files.',
-    };
-  }
-
-  const source = await readFile(sourcePath, 'utf-8');
-  return {
-    adapterId: adapter.id,
-    functionId,
-    language: 'typescript',
-    sourceKind: 'project-source',
-    source: extractFunctionSnippet(source, functionId),
-    notes: `Source snippet from ${relativePath}.`,
-  };
-}
-
 export function resolveAllowlistedSourcePath(relativePath: string): string {
   const candidates = [
     join(process.cwd(), relativePath),
     join(process.cwd(), '..', relativePath),
   ];
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
-}
-
-export function extractFunctionSnippet(source: string, functionId: AdapterFunctionId): string {
-  const lines = source.split(/\r?\n/);
-  const start = lines.findIndex((line) => {
-    if (functionId === 'matchUrl') return /\bmatchUrl\s*\(/.test(line);
-    if (functionId === 'detectVerificationRequired') return /\bdetectVerificationRequired\s*\(/.test(line);
-    if (functionId === 'describeVerificationHandoff') return /\bdescribeVerificationHandoff\s*\(/.test(line);
-    if (functionId === 'extractTitle') return /\bextractTitle\s*\(/.test(line);
-    if (functionId === 'extractAuthor') return /\bextractAuthor\s*\(/.test(line);
-    if (functionId === 'extractDescription') return /\bextractDescription\s*\(/.test(line);
-    if (functionId === 'extractCoverUrl') return /\bextractCoverUrl\s*\(/.test(line);
-    if (functionId === 'extractTags') return /\bextractTags\s*\(/.test(line);
-    if (functionId === 'extractStatus') return /\bextractStatus\s*\(/.test(line);
-    if (functionId === 'extractChapterList') return /\bextractChapterList\s*\(/.test(line);
-    if (functionId === 'extractChapterImageUrls') return /\bextractChapterImageUrls\s*\(/.test(line);
-    return false;
-  });
-  if (start < 0) return `Function "${functionId}" was not found in the allowlisted source file.`;
-
-  const snippet: string[] = [];
-  let depth = 0;
-  let started = false;
-  for (let index = start; index < lines.length; index += 1) {
-    const line = lines[index] ?? '';
-    snippet.push(line);
-    for (const char of line) {
-      if (char === '{') {
-        depth += 1;
-        started = true;
-      } else if (char === '}') {
-        depth -= 1;
-      }
-    }
-    if (started && depth <= 0) break;
-  }
-  return snippet.join('\n');
 }

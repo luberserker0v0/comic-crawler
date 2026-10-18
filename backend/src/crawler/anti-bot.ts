@@ -1,4 +1,3 @@
-import type { Page } from 'playwright';
 import { ComicError, ErrorType } from '../error/types';
 
 export function looksLikeAntiBotChallenge(html: string): boolean {
@@ -14,6 +13,10 @@ export function looksLikeAntiBotChallenge(html: string): boolean {
     lower.includes('you are unable to access') ||
     lower.includes('verify you are human') ||
     lower.includes('checking if the site connection is secure') ||
+    lower.includes('<title>請稍候') ||
+    lower.includes('<title>请稍候') ||
+    lower.includes('正在執行安全驗證') ||
+    lower.includes('正在执行安全验证') ||
     lower.includes('人机验证') ||
     lower.includes('人機驗證') ||
     lower.includes('嗨皮漫画——人机验证') ||
@@ -45,34 +48,9 @@ export function assertNotAntiBotChallenge(html: string, url: string): void {
   }
 
   throw new ComicError(
-    `Anti-bot challenge page detected while fetching ${url}. Playwright rendered the challenge page instead of the comic DOM. Configure a user-provided browser session storageStatePath or userDataDir after solving the challenge manually.`,
+    `Anti-bot challenge page detected while fetching ${url}. Complete verification in the task-bound Browser Worker session, then resume the task.`,
     ErrorType.NETWORK_ERROR,
     false,
     { url, antiBotChallenge: true }
   );
-}
-
-export async function waitForAntiBotChallengeToClear(
-  page: Page,
-  url: string,
-  options: { timeoutMs?: number; pollIntervalMs?: number } = {}
-): Promise<string> {
-  const timeoutMs = options.timeoutMs ?? 0;
-  const pollIntervalMs = options.pollIntervalMs ?? 1000;
-  let html = await page.content();
-  if (!looksLikeAntiBotChallenge(html)) {
-    return html;
-  }
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    await page.waitForTimeout(Math.min(pollIntervalMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
-    html = await page.content();
-    if (!looksLikeAntiBotChallenge(html)) {
-      return html;
-    }
-  }
-
-  assertNotAntiBotChallenge(html, url);
-  return html;
 }

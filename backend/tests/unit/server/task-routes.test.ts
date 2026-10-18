@@ -35,7 +35,7 @@ describe('Task routes persistence', () => {
       id: 'kuronavi',
       name: 'Kuronavi',
       domains: ['kuronavi.one'],
-      parseMode: 'static',
+      parseMode: 'playwright',
       capabilities: { verification: false, metadata: true, chapterImages: true },
       matchUrl: (url: string) => url.includes('kuronavi.one'),
       loadDocument: async () => ({}),
@@ -265,6 +265,82 @@ describe('Task routes persistence', () => {
     expect(task?.data.mode).toBe('chapters');
     expect(task?.data.url).toBe(chapterUrl);
     expect(task?.data.chapterUrls).toEqual([chapterUrl]);
+  });
+
+  it('persists the default worker selection and rejects the removed session input', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+
+    const response = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        mode: 'chapters',
+        url: chapterUrl,
+        chapterUrls: [chapterUrl],
+        browserTarget: { mode: 'managed-profile' },
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.browserTarget).toEqual({ mode: 'managed-profile' });
+    expect(taskManager.getTask(response.json().data.taskId)?.data).toMatchObject({
+      ownerUserId: 'public',
+      browserTarget: { mode: 'managed-profile' },
+    });
+
+    const unknownField = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: { mode: 'chapters', url: chapterUrl, chapterUrls: [chapterUrl], unexpected: true },
+    });
+    expect(unknownField.statusCode).toBe(400);
+    expect(unknownField.json()).toEqual({ error: 'Unknown task field "unexpected".' });
+  });
+
+  it('persists an exact existing-tab Worker and resource target', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+    const response = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        mode: 'chapters',
+        url: chapterUrl,
+        chapterUrls: [chapterUrl],
+        browserTarget: {
+          mode: 'existing-tab',
+          workerId: 'worker-extension',
+          resourceId: 'resource-current-tab',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.browserTarget).toEqual({
+      mode: 'existing-tab',
+      workerId: 'worker-extension',
+      resourceId: 'resource-current-tab',
+    });
+  });
+
+  it('rejects removed Browser Target modes and incomplete existing-tab targets', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+    for (const browserTarget of [
+      { mode: 'any' },
+      { mode: 'specific', workerId: 'worker-old' },
+      { mode: 'existing-tab', workerId: 'worker-extension' },
+    ]) {
+      const response = await server.getApp().inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: {
+          mode: 'chapters',
+          url: chapterUrl,
+          chapterUrls: [chapterUrl],
+          browserTarget,
+        },
+      });
+      expect(response.statusCode).toBe(400);
+    }
   });
 
   it('should reject a specific-chapters task without chapter URLs', async () => {

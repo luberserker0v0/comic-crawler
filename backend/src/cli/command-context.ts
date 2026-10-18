@@ -7,6 +7,8 @@ import type { AgentAdminService } from '../agent/admin-service';
 import type { SelectorDiscoveryService } from '../selector-discovery';
 import type { MaintenanceService } from '../maintenance/service';
 import type { TerminalUI } from './ui';
+import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
+import type { IStorage } from '../storage/types';
 
 export interface CliOptions {
   configManager: ConfigManager;
@@ -16,6 +18,8 @@ export interface CliOptions {
   agentAdminService: AgentAdminService;
   selectorDiscoveryService?: SelectorDiscoveryService;
   maintenanceService?: MaintenanceService;
+  fixtureCaptureService?: FixtureCaptureService;
+  storage?: IStorage;
 }
 
 export interface CliCommandContext {

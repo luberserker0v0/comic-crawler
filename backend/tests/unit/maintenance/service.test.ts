@@ -68,9 +68,7 @@ describe('MaintenanceService', () => {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       }),
     });
@@ -81,7 +79,7 @@ describe('MaintenanceService', () => {
     expect(await storage.read(`tasks/old-task`)).not.toBeNull();
   });
 
-  it('deletes expired tasks with files, expired jobs and orphan profiles', async () => {
+  it('deletes expired tasks with files and expired discovery jobs', async () => {
     const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
     const outputDir = join(TEST_ROOT, 'downloads', 'example', 'old-comic');
     await fs.mkdir(outputDir, { recursive: true });
@@ -104,10 +102,6 @@ describe('MaintenanceService', () => {
 
     const selector = stubDiscovery([{ id: 'old-disc', updatedAt: old.toISOString() }]);
     const challenge = stubDiscovery([{ id: 'old-chal', updatedAt: old.toISOString() }]);
-    const profileDir = join(TEST_ROOT, 'workspaces', 'challenge-discoveries', 'old-chal');
-    await fs.mkdir(join(profileDir, 'external-browser-profile'), { recursive: true });
-    await fs.writeFile(join(profileDir, 'external-browser-profile', 'prefs.json'), '{}');
-
     const service = new MaintenanceService({
       storage,
       taskManager,
@@ -120,9 +114,7 @@ describe('MaintenanceService', () => {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       }),
     });
@@ -136,9 +128,6 @@ describe('MaintenanceService', () => {
 
     expect(result.discoveryJobs.deleted).toContain('old-disc');
     expect(result.discoveryJobs.deleted).toContain('old-chal');
-    await expect(fs.stat(profileDir)).rejects.toThrow();
-    expect(result.browserProfiles.deleted).toContain('old-chal');
-    expect(result.browserProfiles.bytesFreed).toBeGreaterThan(0);
   });
 
   it('skips discovery jobs referenced by remaining tasks', async () => {    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
@@ -154,9 +143,7 @@ describe('MaintenanceService', () => {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       }),
     });
@@ -165,14 +152,12 @@ describe('MaintenanceService', () => {
     expect(result.discoveryJobs.skipped.join(' ')).toMatch(/referenced/);
   });
 
-  it('deleteJob removes implementation, manifest and shadow-promotion keys (no residual JSON)', async () => {
+  it('deleteJob removes the implementation key without residual JSON', async () => {
     const service = new SelectorDiscoveryService(storage, new AdapterRegistry(new EventBus()));
     const job: any = { id: 'disc-1', url: 'https://example.com/', normalizedUrl: 'https://example.com/', hostname: 'example.com', status: 'awaiting_review', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     await storage.write('selector-discovery-job-disc-1', job);
     await storage.write('selector-discovery-index', ['disc-1']);
     await storage.write('selector-discovery-implementation-disc-1', { reviewNotesMarkdown: 'x' });
-    await storage.write('selector-discovery-manifest-disc-1', { markdown: 'y' });
-    await storage.write('selector-discovery-shadow-promotion-disc-1', { shadowPromotion: { id: 'shadow-disc-1' } });
     await storage.dispose();
 
     expect(await service.deleteJob('disc-1')).toBe(true);
@@ -214,9 +199,7 @@ describe('MaintenanceService', () => {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       }),
     });
@@ -262,9 +245,7 @@ describe('MaintenanceService', () => {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       }),
     });

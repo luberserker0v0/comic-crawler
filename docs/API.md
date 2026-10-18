@@ -78,13 +78,21 @@ POST /api/adapters/chapter-images
 
 ```json
 {
-  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}"
+  "url": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
+  "renderContext": {
+    "viewport": { "width": 390, "height": 844 },
+    "deviceScaleFactor": 3
+  }
 }
 ```
 
 The adapter is resolved from the URL. An optional `adapterId` selects a specific
 registered adapter, and an optional `challengeDiscoveryId` reuses a completed
-human-verification handoff. A successful response does not truncate the list.
+human-verification handoff. `renderContext` controls the isolated Playwright
+browser context for responsive pages. Viewport dimensions are CSS pixels from
+`1` through `10000`; `deviceScaleFactor` is optional and ranges from `0.1`
+through `10`. If omitted, the effective context is `1920x1080` at scale `1`.
+A successful response returns that effective context and does not truncate the list.
 `imageUrlCount` always equals `imageUrls.length`; the example below therefore
 contains two URLs and reports a count of `2`:
 
@@ -99,7 +107,11 @@ contains two URLs and reports a count of `2`:
       "https://cdn.example/002.jpg"
     ],
     "domSource": "static",
-    "durationMs": 42
+    "durationMs": 42,
+    "renderContext": {
+      "viewport": { "width": 390, "height": 844 },
+      "deviceScaleFactor": 3
+    }
   }
 }
 ```
@@ -129,6 +141,39 @@ Specific-chapter task:
 }
 ```
 
+To run the task in a new managed profile, omit `browserTarget` or select an
+optional managed-profile Worker:
+
+```json
+{
+  "browserTarget": {
+    "mode": "managed-profile",
+    "workerId": "bw_server_assigned_id"
+  }
+}
+```
+
+An extension first registers its current tab through the SDK, then binds the
+task to that exact process-memory resource:
+
+```json
+{
+  "browserTarget": {
+    "mode": "existing-tab",
+    "workerId": "bw_server_assigned_id",
+    "resourceId": "brr_sdk_generated_id"
+  }
+}
+```
+
+Use `GET /api/browser-workers` to list the requesting user's Workers. Omit
+`browserTarget`, or use `{ "mode": "managed-profile" }`, to let the scheduler
+choose a managed-profile Worker.
+If no matching Worker is idle, the task enters `waiting_for_browser_worker`
+until a Worker becomes available or the acquisition timeout expires. Session
+IDs are internal lease data and are not accepted by task APIs.
+Configure the timeout with `browser.workerWaitTimeoutMs` (default: 1,800,000 ms).
+
 Possible outcomes:
 
 - `201` with `kind: "taskCreated"` - crawl task was queued.
@@ -147,6 +192,7 @@ GET /api/tasks/:id
 Important task statuses:
 
 - `pending`
+- `waiting_for_browser_worker`
 - `running`
 - `waiting_verification`
 - `completed`
@@ -156,14 +202,14 @@ Important task statuses:
 
 `GET /api/tasks/:id` returns the task, progress, result, checkpoint summary, and
 preview metadata. `waiting_verification` is resumable and is not a failed state.
-While a task is waiting for verification, it does not occupy a worker slot.
+It does not occupy a scheduler execution slot, but it keeps its Browser Worker
+reserved so another task cannot modify the browser during verification.
 
 ### 4. Human verification handoff
 
 The current API namespace is `/api/challenge-discovery`, but the public crawl
-flow treats these records as human verification handoff jobs. Strategy discovery
-and CDP inspection endpoints are diagnostic/internal and are not part of the
-normal crawl flow.
+flow treats these records as human verification handoff jobs. Every browser
+operation uses the task-bound Browser Worker command session.
 
 Read the handoff job:
 
@@ -171,20 +217,14 @@ Read the handoff job:
 GET /api/challenge-discovery/:id
 ```
 
-Open the isolated browser for the user:
+Open the task URL through the selected Browser Worker:
 
 ```http
-POST /api/challenge-discovery/:id/open-external-browser
+POST /api/challenge-discovery/:id/open-browser
 ```
 
-Optional body:
-
-```json
-{
-  "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "profileId": "default"
-}
-```
+This opens or reuses the Browser Client's task-bound browser session. Later
+inspect, selector-discovery, and verification calls reuse that session.
 
 After the user completes verification in that browser:
 
@@ -202,6 +242,12 @@ If the handoff is not ready, resume returns `409` with the current handoff job.
 If the handoff expired or was removed, resume recreates a handoff job and
 returns `409` with the new job so the caller can open the browser again.
 
+Delete or abandon a handoff and release its Browser Worker:
+
+```http
+DELETE /api/challenge-discovery/:id
+```
+
 ### 5. AO adapter discovery and review
 
 When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
@@ -210,26 +256,23 @@ When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
 GET /api/selector-discovery/:id
 ```
 
-Validate/revalidate if needed:
-
-```http
-POST /api/selector-discovery/:id/validate
-POST /api/selector-discovery/:id/revalidate
-```
-
 Stage 1 AO discovery produces a TypeScript `AdapterBase` implementation draft
 and Markdown review notes. Review those artifacts before any runtime promotion.
-Legacy selector-manifest promotion endpoints may still exist, but AO
-TypeScript promotion is intentionally not automatic in Stage 1.
+Adapter discovery jobs use the same stable `browserTarget` selection as crawler
+tasks. The server creates and closes the short-lived browser session.
 
-After human review of a legacy selector draft, approve the draft:
+After human review, approve the TypeScript implementation draft:
 
 ```http
 POST /api/selector-discovery/:id/promote
 ```
 
-Then create the crawl task again. For AO TypeScript implementation drafts, use
-the WebUI review flow until the Stage 2 promotion policy is finalized.
+Promotion first fetches the reviewed page through the task-bound Browser Worker.
+It runs the draft, stores `page.html` and `expected.json`, and only then enables
+the adapter. A fixture or extraction failure leaves the discovery job in
+`awaiting_review` and does not register the adapter.
+
+Then create the crawl task again.
 
 ### 6. Result and previews
 
@@ -242,8 +285,73 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 
 ## Public support APIs
 
+### Browser Client enrollment and sessions
+
+Browser-backed operations use a registered user-side Browser Client. An
+SDK client first reads the service document:
+
+```http
+GET /.well-known/comiccrawler-browser-client
+```
+
+It contains the protocol version, API security mode, enrollment endpoint, and
+the single outbound command WebSocket endpoint.
+
+Enroll one Browser Client installation:
+
+```http
+POST /api/browser-clients/enroll
+X-ComicCrawler-User-Id: alice
+Authorization: Bearer <user-api-token>
+Content-Type: application/json
+
+{
+  "name": "Alice PC",
+  "capabilities": {
+    "executionMode": "existing-tab",
+    "navigation": true,
+    "renderedDom": true,
+    "humanHandoff": true,
+    "responsiveViewport": true
+  }
+}
+```
+
+The user headers are omitted in `public` mode. ComicCrawler returns the
+server-assigned `clientId`, `credentialId`, and Browser Client credential once.
+The consumer stores this state through its SDK `ClientStateStore`, then uses the
+credential for outbound WebSocket connections. Neither the user machine nor
+its browser exposes an inbound port.
+
+An existing-tab consumer calls `client.registerResource()` with an opaque local
+tab handle. The SDK returns the `resourceId` used by task APIs. ComicCrawler
+never receives or persists the browser's native tab ID.
+
+List the user's Workers before creating a task:
+
+```http
+GET /api/browser-workers
+```
+
+ComicCrawler reserves one idle Worker when a task starts. It creates the
+browser command session and closes it when the task completes. One Worker
+executes one task at a time in this version.
+
+Use these lifecycle endpoints to inspect Workers or manage credentials:
+
+```http
+GET /api/browser-clients
+GET /api/browser-workers
+POST /api/browser-clients/{clientId}/credentials/rotate
+```
+
+The command WebSocket carries ComicCrawler protocol messages; it does not relay
+Playwright. Protect the administrative API and Browser Client credential state.
+Use HTTPS/WSS for remote deployments.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/.well-known/comiccrawler-browser-client` | Discover the Browser Client protocol and outbound connection endpoint. |
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `POST` | `/api/adapters/chapter-images` | Resolve an adapter and return every ordered image URL extracted from one chapter. |
@@ -251,7 +359,6 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
 | `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
-| `GET` | `/api/adapters/:id/functions/:functionId/source` | Read the legacy function source snippet view. Prefer `/implementation` for review. |
 | `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
 | `POST` | `/api/adapters/:id/restore` | Restore a deleted adapter when a runtime backup or restored project source is available. |
@@ -260,7 +367,7 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
 | `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |
 | `POST` | `/api/adapter-drafts/:id/reset` | Reset draft content from the active adapter. |
-| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest draft with a temporary adapter. Project-source TS drafts are not executed. |
+| `POST` | `/api/adapter-drafts/:id/functions/:functionId/test` | Test a dynamic manifest, generated TypeScript, or project-source TypeScript draft with a temporary adapter. |
 | `DELETE` | `/api/adapter-drafts/:id` | Discard a draft. |
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |
@@ -273,6 +380,11 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 | `GET` | `/api/config/selector-discovery` | Read selector discovery settings without provider secrets. |
 | `PUT` | `/api/config/selector-discovery` | Save AO URL, provider document, and selected model. |
 | `POST` | `/api/config/selector-discovery/test` | Test selector discovery settings. |
+| `POST` | `/api/browser-clients/enroll` | Enroll a Browser Client and return its credential once. |
+| `GET` | `/api/browser-clients` | List visible registered Browser Client identities. |
+| `GET` | `/api/browser-workers` | List process-scoped Workers and their availability. |
+| `DELETE` | `/api/browser-clients/:clientId` | Revoke one Browser Client and disconnect its Workers. |
+| `POST` | `/api/browser-clients/:clientId/credentials/rotate` | Rotate one Browser Client credential and return the replacement once. |
 
 Adapter Lab function tests are diagnostic support APIs. The WebUI locks
 metadata tests to manga catalog URLs and chapter image tests to chapter URLs;
@@ -280,6 +392,9 @@ API callers should follow the same input contract. `extractChapterImageUrls`
 returns the full `imageUrls` list plus `imageUrlCount`; it does not return a
 shortened `firstImageUrls` preview. Test responses may include timing breakdown
 entries such as `dom_acquisition`, `extraction`, and `readiness`.
+Browser-backed test and chapter-image requests may use the same
+`browserTarget` object as crawl tasks. The Server owns and releases their
+short-lived browser lease when the request finishes.
 
 Verified fixture routes also exist for diagnostics:
 
@@ -289,21 +404,30 @@ Verified fixture routes also exist for diagnostics:
 | `POST` | `/api/fixtures/capture` | Capture verified DOM from a ready handoff browser session. |
 | `GET` | `/api/fixtures/:domain/:id` | Read captured fixture metadata, optionally with HTML. |
 | `POST` | `/api/fixtures/:domain/:id/test-adapter-function` | Test an adapter function against a captured fixture. |
+| `POST` | `/api/fixtures/:domain/:id/verify-approved-adapter` | Replay all approved functions and compare them with `expected.json`. |
+
+Approved-fixture verification accepts this request body:
+
+```json
+{
+  "adapterId": "comix"
+}
+```
+
+The response includes `passed`, `expected`, and `actual`. A mismatch returns a
+normal `200` response with `passed: false`, so test runners can show the diff.
 
 ## Internal or diagnostic endpoints
 
 These routes currently exist but should not be used as the normal crawl API:
 
-- `POST /api/adapters/register` - placeholder/test-oriented endpoint.
 - `POST /api/challenge-discovery`
 - `GET /api/challenge-discovery`
+- `DELETE /api/challenge-discovery/:id`
 - `POST /api/challenge-discovery/:id/retry`
 - `POST /api/challenge-discovery/:id/promote`
-- `POST /api/challenge-discovery/:id/open-browser`
-- `POST /api/challenge-discovery/cdp/test`
-- `POST /api/challenge-discovery/:id/inspect-cdp-page`
-- `POST /api/challenge-discovery/:id/create-selector-discovery-from-cdp`
-- `/api/site-discovery/*` - backwards-compatible alias for selector discovery.
+- `POST /api/challenge-discovery/:id/inspect-remote-page`
+- `POST /api/challenge-discovery/:id/create-selector-discovery-from-remote`
 - `/api/agent/adapters/*` - adapter review/admin routes.
 
 They may remain useful for tests, development, diagnostics, or future AO work,
@@ -311,8 +435,8 @@ but they are intentionally excluded from the public crawl flow above.
 
 ## WebSocket
 
-`/ws` emits task and image events for live UI updates. REST polling remains the
-contractual fallback for API-only clients.
+`/ws` emits task and image events for live UI updates. API-only clients can use
+the REST task resources directly.
 
 ## CLI boundary
 

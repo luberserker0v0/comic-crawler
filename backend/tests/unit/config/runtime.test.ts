@@ -10,9 +10,7 @@ afterEach(() => {
 describe('runtime config', () => {
   it('uses persisted server config when env overrides are absent', () => {
     delete process.env.COMICCRAWLER_PORT;
-    delete process.env.PORT;
     delete process.env.COMICCRAWLER_HOST;
-    delete process.env.HOST;
 
     const runtime = resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } });
     expect(runtime).toMatchObject({
@@ -49,7 +47,6 @@ describe('runtime config', () => {
 
   it('uses OS app data path for packaged or production runtime when data env is absent', () => {
     delete process.env.COMICCRAWLER_DATA_PATH;
-    delete process.env.DATA_PATH;
     process.env.COMICCRAWLER_PACKAGED = '1';
 
     const runtime = resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } });
@@ -66,15 +63,13 @@ describe('runtime config', () => {
     expect(() => resolveRuntimeConfig({ server: { port: 4200, host: 'localhost' } })).toThrow(/Invalid port/);
   });
 
-  it('normalizes legacy default host and port from existing stored config', () => {
+  it('uses stored host and port without rewriting them', () => {
     delete process.env.COMICCRAWLER_PORT;
-    delete process.env.PORT;
     delete process.env.COMICCRAWLER_HOST;
-    delete process.env.HOST;
 
     expect(resolveRuntimeConfig({ server: { port: 3000, host: 'localhost' } })).toMatchObject({
-      port: 4100,
-      host: '127.0.0.1',
+      port: 3000,
+      host: 'localhost',
     });
   });
 });

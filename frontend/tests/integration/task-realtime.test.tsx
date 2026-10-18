@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { DashboardPage } from '../../src/pages/DashboardPage';
 import { TaskManagerPage } from '../../src/pages/TaskManagerPage';
 import { api } from '../../src/api/client';
-import { useTaskStore } from '../../src/store';
+import { useAdapterStore, useTaskStore } from '../../src/store';
 
 let realtimeCallback: ((message: { event?: string; data?: Record<string, unknown> }) => void) | undefined;
 
@@ -29,12 +29,26 @@ describe('Task realtime updates', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     realtimeCallback = undefined;
+    jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: [] } as any);
+    jest.spyOn(api, 'getBrowserWorkers').mockResolvedValue({ data: { workers: [], resources: [] } } as any);
+    jest.spyOn(api, 'getTaskPriorityOrder').mockResolvedValue({ data: { taskIds: [] } } as any);
     useTaskStore.setState({
       tasks: [],
-      stats: { total: 0, pending: 0, running: 0, interrupted: 0, completed: 0, failed: 0, cancelled: 0 },
+      stats: {
+        total: 0,
+        pending: 0,
+        running: 0,
+        waitingForBrowserWorker: 0,
+        waitingVerification: 0,
+        interrupted: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+      },
       loading: false,
       error: null,
     });
+    useAdapterStore.setState({ adapters: [], loading: false, error: null });
   });
 
   it('should update dashboard progress without a manual refresh', async () => {
@@ -61,7 +75,7 @@ describe('Task realtime updates', () => {
     } as any);
 
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <DashboardPage />
       </MemoryRouter>
     );
@@ -141,10 +155,7 @@ describe('Task realtime updates', () => {
     } as any);
 
     render(
-      <MemoryRouter
-        initialEntries={['/tasks/task-1']}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
+      <MemoryRouter initialEntries={['/tasks/task-1']}>
         <Routes>
           <Route path="/tasks/:taskId" element={<TaskManagerPage />} />
         </Routes>

@@ -23,7 +23,7 @@ describe('HappyMhAdapter', () => {
       metadata: true,
       chapterImages: true,
     });
-    expect(adapter.parseMode).toBe('dynamic');
+    expect(adapter.parseMode).toBe('playwright');
   });
 
   it('extracts tags and same-manga chapter links from the catalog DOM contract', async () => {

@@ -1,11 +1,8 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { fetch } from 'undici';
-import { chromium } from 'playwright';
 import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import { assertNotAntiBotChallenge, looksLikeAntiBotChallenge } from '../crawler/anti-bot';
-import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
-import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
 
 export interface SafeHtmlFetchResult {
   url: string;
@@ -22,6 +19,13 @@ export interface SafeHtmlFetchOptions {
   timeoutMs?: number;
   browser?: Partial<BrowserConfig>;
   network?: NetworkConfig;
+  /**
+   * Skip the static fetch and go straight to Playwright-rendered DOM.
+   * Selector discovery always renders so AO evidence and runtime use the
+   * same mechanism; static stays available for other callers.
+   */
+  renderFirst?: boolean;
+  renderPage?: (url: string, options: { timeoutMs: number }) => Promise<{ url: string; html: string }>;
 }
 
 export async function fetchSafeHtml(
@@ -32,6 +36,13 @@ export async function fetchSafeHtml(
   const timeoutMs = options.timeoutMs ?? options.browser?.timeout ?? options.network?.timeout ?? 30000;
   let currentUrl = normalizeAndValidateUrl(url);
   const redirectChain: string[] = [];
+
+  if (options.renderFirst) {
+    await validateResolvedAddresses(currentUrl);
+    const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+    assertNotAntiBotChallenge(page.html, page.url);
+    return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
+  }
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     await validateResolvedAddresses(currentUrl);
@@ -60,9 +71,9 @@ export async function fetchSafeHtml(
       }
 
       if (!response.ok && shouldFallbackToHeadless(response.status)) {
-        const html = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(html, currentUrl);
-        return { url, finalUrl: currentUrl, redirectChain, html, contentType: 'text/html; rendered=playwright' };
+        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+        assertNotAntiBotChallenge(page.html, page.url);
+        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
       }
 
       if (!response.ok) {
@@ -75,10 +86,10 @@ export async function fetchSafeHtml(
       }
 
       const html = await readLimitedText(response as any, MAX_HTML_BYTES);
-      if (looksLikeAntiBotChallenge(html) && options.browser?.mode !== 'static') {
-        const renderedHtml = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(renderedHtml, currentUrl);
-        return { url, finalUrl: currentUrl, redirectChain, html: renderedHtml, contentType: 'text/html; rendered=playwright' };
+      if (looksLikeAntiBotChallenge(html)) {
+        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+        assertNotAntiBotChallenge(page.html, page.url);
+        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
       }
       assertNotAntiBotChallenge(html, currentUrl);
       return { url, finalUrl: currentUrl, redirectChain, html, contentType };
@@ -150,57 +161,14 @@ function shouldFallbackToHeadless(status: number): boolean {
   return status === 401 || status === 403 || status === 429 || status === 503;
 }
 
-async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { timeoutMs: number }): Promise<string> {
-  const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
-  const browserOptions = {
-    ...(options.browser ?? {}),
-    ...(verifiedSession ? { userDataDir: verifiedSession.userDataDir } : {}),
-  };
-  const launchOptions = {
-    headless: verifiedSession?.userDataDir ? false : browserOptions.headless ?? true,
-    channel: browserOptions.channel,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      ...(verifiedSession?.chromiumProfileDirectory ? [`--profile-directory=${verifiedSession.chromiumProfileDirectory}`] : []),
-    ],
-  };
-  const contextOptions = {
-    userAgent: options.network?.userAgent,
-    proxy: options.network?.proxy ? { server: options.network.proxy } : undefined,
-    storageState: browserOptions.storageStatePath,
-    viewport: { width: 1920, height: 1080 },
-  };
-  const browser = browserOptions.userDataDir ? undefined : await chromium.launch(launchOptions);
-  const context = browserOptions.userDataDir
-    ? await chromium.launchPersistentContext(browserOptions.userDataDir, {
-        ...launchOptions,
-        ...contextOptions,
-      })
-    : await browser!.newContext(contextOptions);
-  try {
-    const page = await context.newPage();
-    await page.goto(url, {
-      waitUntil: browserOptions.waitUntil ?? 'domcontentloaded',
-      timeout: options.timeoutMs,
-    });
-    if (browserOptions.waitForSelector?.trim()) {
-      await page.waitForSelector(browserOptions.waitForSelector.trim(), {
-        state: 'attached',
-        timeout: options.timeoutMs,
-      });
-    }
-    if (browserOptions.postLoadDelayMs && browserOptions.postLoadDelayMs > 0) {
-      await page.waitForTimeout(browserOptions.postLoadDelayMs);
-    }
-    return (await new BrowserChallengeHandler().ensureReady(page, url, {
-      challengeAutoAttempt: browserOptions.challengeAutoAttempt,
-      challengeWaitMs: browserOptions.challengeWaitMs,
-    })).html;
-  } finally {
-    await context.close().catch(() => undefined);
-    await browser?.close().catch(() => undefined);
+async function fetchRenderedPage(
+  url: string,
+  options: SafeHtmlFetchOptions & { timeoutMs: number }
+): Promise<{ url: string; html: string }> {
+  if (!options.renderPage) {
+    throw new Error('Browser Worker renderer is required for rendered HTML.');
   }
+  return options.renderPage(url, { timeoutMs: options.timeoutMs });
 }
 
 async function readLimitedText(response: { body?: { getReader?: () => any } }, maxBytes: number): Promise<string> {

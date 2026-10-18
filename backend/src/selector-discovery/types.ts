@@ -1,5 +1,3 @@
-import type { SiteSelectors } from '@comiccrawler/shared';
-
 export const DEFAULT_SELECTOR_DISCOVERY_MODEL = 'opencode/big-pickle';
 export const DEFAULT_SELECTOR_DISCOVERY_AGENT = 'selector-discovery';
 export const KURONAVI_DISCOVERY_TEST_URL = 'https://kuronavi.one/manga/an-haxing-jian-guo-jia-noe-de-ling-zhu';
@@ -52,19 +50,17 @@ export interface SelectorDiscoveryJob {
   createdAt: string;
   updatedAt: string;
   error?: string;
+  retriedFromId?: string;
   phase1Markdown?: string;
   inputSource?: 'live-fetch' | 'html-snapshot';
-  candidateMarkdown?: string;
   capabilityDrafts?: SelectorDiscoveryCapabilityDraft[];
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;
   functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: AdapterImplementationValidation;
-  parsedCandidate?: ParsedMarkdownCandidate;
-  validation?: MarkdownCandidateValidation;
-  extractionValidation?: SelectorExtractionValidation;
-  shadowPromotion?: SelectorDiscoveryShadowPromotion;
-  oracleComparison?: SelectorDiscoveryOracleComparison;
+  ownerUserId?: string;
+  browserTarget?: { mode: 'managed-profile'; workerId?: string } | { mode: 'existing-tab'; workerId: string; resourceId: string };
+  browserSessionId?: string;
 }
 
 export interface SelectorDiscoveryFunctionRevisionTask {
@@ -80,63 +76,6 @@ export interface SelectorDiscoveryFunctionRevisionTask {
   createdAt: string;
   updatedAt: string;
   error?: string;
-}
-
-export interface SelectorExtractionValidation {
-  valid: boolean;
-  checkedAt: string;
-  metadata?: {
-    title?: string;
-    chapterCount: number;
-    firstChapterUrl?: string;
-  };
-  images?: {
-    chapterUrl: string;
-    imageCount: number;
-    firstImageUrl?: string;
-  };
-  errors: string[];
-}
-
-export interface SelectorDiscoveryOracleComparison {
-  adapterId: string;
-  adapterName: string;
-  checkedAt: string;
-  candidate: {
-    title?: string;
-    chapterCount: number;
-    firstChapterUrl?: string;
-    imageCount?: number;
-    firstImageUrl?: string;
-  };
-  oracle: {
-    title?: string;
-    chapterCount: number;
-    firstChapterUrl?: string;
-    imageCount?: number;
-    firstImageUrl?: string;
-  };
-  titleMatched: boolean;
-  chapterCountDelta: number;
-  imageCountDelta?: number;
-  warnings: string[];
-}
-
-export interface SelectorDiscoveryShadowPromotion {
-  id: string;
-  jobId: string;
-  createdAt: string;
-  manifestAdapterId: string;
-  manifestName: string;
-  domains: string[];
-  storageKey: string;
-  note: string;
-}
-
-export interface MarkdownCandidateValidation {
-  valid: boolean;
-  missingHeadings: string[];
-  warnings: string[];
 }
 
 export interface AdapterImplementationValidation {
@@ -160,16 +99,6 @@ export interface SelectorDiscoveryCapabilityDraft {
   validation?: AdapterImplementationValidation;
 }
 
-export interface ParsedMarkdownCandidate {
-  adapterId?: string;
-  name?: string;
-  domains: string[];
-  urlPatterns: string[];
-  selectors: Partial<SiteSelectors>;
-  confidence?: string;
-  rawSections: Record<string, string>;
-}
-
 export interface DiscoveryInput {
   url: string;
   target?: 'full' | 'chapter-only';
@@ -183,4 +112,7 @@ export interface DiscoveryInput {
     finalUrl?: string;
     pageType?: 'chapter';
   };
+  ownerUserId?: string;
+  browserTarget?: { mode: 'managed-profile'; workerId?: string } | { mode: 'existing-tab'; workerId: string; resourceId: string };
+  browserSessionId?: string;
 }

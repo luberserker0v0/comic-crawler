@@ -13,15 +13,9 @@ export function renderBundleEvalResult(
 ): void {
   ui.renderStatus('bundle-eval job', result.job?.id ?? '-');
   ui.renderStatus('candidate status', result.job?.status ?? 'rejected');
-  ui.renderStatus('extraction validation', result.job?.extractionValidation?.valid ? 'passed' : 'failed');
+  ui.renderStatus('implementation validation', result.job?.implementationValidation?.valid ? 'passed' : 'failed');
   if (result.rejection) {
     ui.renderStatus('rejection', result.rejection);
-  }
-  if (result.job?.oracleComparison) {
-    ui.renderStatus('oracle adapter', `${result.job.oracleComparison.adapterName} (${result.job.oracleComparison.adapterId})`);
-    ui.renderStatus('title matched', String(result.job.oracleComparison.titleMatched));
-    ui.renderStatus('chapter count delta', String(result.job.oracleComparison.chapterCountDelta));
-    ui.renderStatus('image count delta', String(result.job.oracleComparison.imageCountDelta ?? 'n/a'));
   }
 
   if (result.passed) {
@@ -102,14 +96,13 @@ export function renderBundleEvalCaseInventory(
   ui.renderStatus('include disabled', String(Boolean(options.includeDisabled)));
   ui.renderStatus('include live negative', String(Boolean(options.liveNegative)));
   ui.renderTable(
-    ['case', 'type', 'enabled', 'live', 'defaultRuns', 'oracle', 'url'],
+    ['case', 'type', 'enabled', 'live', 'defaultRuns', 'url'],
     cases.map((testCase) => [
       testCase.id,
       testCase.type,
       testCase.enabled ? 'yes' : 'no',
       testCase.live ? 'yes' : 'no',
       String(testCase.defaultRuns),
-      testCase.oracleAdapterId ?? '-',
       testCase.url,
     ])
   );

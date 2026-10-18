@@ -26,7 +26,7 @@ export class DynamicSiteAdapter extends AdapterBase {
   readonly id: string;
   readonly name: string;
   readonly domains: string[];
-  readonly parseMode = 'dynamic' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities: AdapterCapabilities;
   readonly common: DynamicCommonCapability;
   readonly metadata: DynamicMetadataCapability;

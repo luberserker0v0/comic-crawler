@@ -27,9 +27,8 @@ evidence to the fine-grained methods in that reference, especially
 - Do not produce JSON.
 - Do not invent unavailable HTML.
 - Prefer selectors that are stable across pages over deeply positional selectors.
-- Keep site-specific expansion/filtering requirements visible so the adapter implementation can own that strategy.
-- Do not propose hidden generic runtime actions. If filtering, normalization, or
-  page-specific handling is needed, name the adapter method that should contain
-  it.
+- Browser preparation is upstream. Flag incomplete dynamic DOM instead of
+  proposing click, scroll, or navigation inside the adapter.
+- Keep filtering and normalization logic visible in the owning capability.
 - For chapter lists and image lists, reason about the complete returned array,
   not a preview or first few items.

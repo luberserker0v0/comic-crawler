@@ -11,21 +11,19 @@ runtime preparation code.
 A site adapter extends `AdapterBase` and declares:
 
 - identity: `id`, `name`, `domains`
-- `parseMode`: `static`, `dynamic`, or `interactive`
+- `parseMode`: `playwright`
 - capabilities: `verification`, `metadata`, `chapterImages`
 - fine-grained functions such as `extractTitle`, `extractChapterList`, and
   `extractChapterImageUrls`
 
-`parseMode` only tells the runtime how to obtain the DOM:
+`parseMode` only tells the runtime how to obtain the DOM. Its only supported
+value is `playwright`; all pages render through the task-bound Browser Worker
+before parsing, and there is no static fetch path. Human verification is a
+separate adapter capability (`capabilities.verification`) activated by challenge
+detection, not a parse mode.
 
-- `static` - fetch HTML directly.
-- `dynamic` - render the page with Playwright before parsing.
-- `interactive` - render with Playwright and expect human verification handoff
-  when the site blocks automation.
-
-Adapters should not expose old large façade functions such as `fetchMetadata()`
-or `fetchChapterImages()` as Agent-facing capabilities. ComicCrawler composes
-metadata and image results internally from the fine-grained functions.
+ComicCrawler composes metadata and image results internally from these
+fine-grained functions.
 
 ## Capabilities
 
@@ -39,6 +37,19 @@ All-chapter tasks require both `metadata` and `chapterImages`. Specific-chapter
 tasks require only `chapterImages`. A chapter-only adapter is valid, but it must
 not claim metadata support until metadata extraction has been implemented and
 reviewed.
+
+## Built-in adapter scope
+
+`comix` currently supports chapter URLs such as
+`https://comix.to/title/<slug>/<id>-chapter-<number>`. It declares
+`chapterImages` and `verification`, but not `metadata`. Comix reader images are
+lazy-loaded and use rotating CDN hosts without filename extensions, so the
+adapter selects reader page elements, preserves their `data-page` order, and
+rejects a partially loaded page list instead of returning truncated results.
+
+Comix human verification must be completed through the task-bound Browser
+Worker handoff. The adapter detects Comix/Cloudflare verification DOM; it does not
+bypass the verification step.
 
 ## Adapter Lab
 
@@ -98,13 +109,17 @@ The deleted adapter list shows whether an adapter can be restored:
 
 Adapter Lab can create user-owned editable drafts:
 
-- Project-source TypeScript drafts can be saved, reset, diffed, and discarded, but are
-  not executed yet.
+- Project-source TypeScript drafts can be saved, reset, diffed, discarded, and
+  executed in Adapter Lab without replacing the active adapter.
 - Dynamic manifest drafts can be tested through a temporary adapter without
   registering or promoting them.
 
 Drafts are stored under the user data area, not in the Git-tracked repo source.
 Discarding a draft removes that saved user copy.
+
+Project-source drafts are developer-authored code and execute with the backend's
+normal module access. Adapter Lab is a review workbench, not a security sandbox
+for untrusted TypeScript.
 
 ## Fixtures and verified DOM
 

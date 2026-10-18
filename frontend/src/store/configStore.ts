@@ -21,24 +21,9 @@ export interface GlobalConfig {
     userAgent?: string;
   };
   browser: {
-    mode: 'static' | 'headless' | 'auto';
-    headless: boolean;
-    maxInstances: number;
     timeout: number;
-    waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
-    waitForSelector?: string;
+    workerWaitTimeoutMs?: number;
     postLoadDelayMs?: number;
-    challengeAutoAttempt?: boolean;
-    challengeWaitMs?: number;
-    channel?: string;
-    storageStatePath?: string;
-    userDataDir?: string;
-    handoff?: {
-      mode: 'snapshot' | 'cdp' | 'managed';
-      cdpUrl?: string;
-      userDataDir?: string;
-      channel?: string;
-    };
   };
   server: {
     port: number;

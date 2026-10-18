@@ -10,7 +10,7 @@ export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
   readonly name = 'Demo';
   readonly domains = ['demo.test'];
-  readonly parseMode = 'static' as const;
+  readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommonCapability(this);
   readonly verification = new DemoVerificationCapability(this);
@@ -53,6 +53,16 @@ describe('validateAdapterImplementationDraft', () => {
     expect(result.syntaxValid).toBe(true);
   });
 
+  it('rejects non-playwright parseMode in generated drafts', () => {
+    const result = validateAdapterImplementationDraft(
+      VALID_CHAPTER_ONLY_ADAPTER.replace(`readonly parseMode = 'playwright' as const;`, `readonly parseMode = 'static' as const;`),
+      { target: 'chapter-only' }
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('parseMode must be "playwright".');
+  });
+
   it('rejects drafts that do not extend AdapterBase', () => {
     const result = validateAdapterImplementationDraft('export class Demo {}', { target: 'chapter-only' });
 
@@ -75,17 +85,6 @@ describe('validateAdapterImplementationDraft', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('Filesystem imports are not allowed.');
-  });
-
-  it('rejects old adapter facade functions', () => {
-    const result = validateAdapterImplementationDraft(`${VALID_CHAPTER_ONLY_ADAPTER}
-export function fetchMetadata() {
-  return undefined;
-}
-`, { target: 'chapter-only' });
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContain('Implementation must not mention old facade functions fetchMetadata or fetchChapterImages.');
   });
 
   it('rejects non-AdapterBase DOM APIs and constructor identity objects', () => {

@@ -3,7 +3,7 @@ import { HAPPYMH_SELECTORS } from './selectors';
 
 export const HAPPYMH_SITE_MANIFEST: SiteManifest = {
   id: 'happymh',
-  parseMode: 'dynamic',
+  parseMode: 'playwright',
   selectors: HAPPYMH_SELECTORS,
   maintenance: {
     repairMode: 'selector-only',

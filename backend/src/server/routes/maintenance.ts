@@ -36,16 +36,12 @@ function parseOverrides(query: Record<string, string | undefined>): MaintenanceP
     return undefined;
   };
   const tasksRetainDays = toNumber(query.tasksRetainDays);
-  const discoveryJobsRetainDays = toNumber(query.discoveryJobsRetainDays ?? query.jobsRetainDays);
-  const browserProfilesRetainDays = toNumber(query.browserProfilesRetainDays ?? query.profilesRetainDays);
+  const discoveryJobsRetainDays = toNumber(query.discoveryJobsRetainDays);
   const batchLimit = toNumber(query.batchLimit);
   const deleteFiles = toBoolean(query.deleteFiles);
-  const deleteOrphanProfiles = toBoolean(query.deleteOrphanProfiles);
   if (tasksRetainDays !== undefined) overrides.tasksRetainDays = tasksRetainDays;
   if (discoveryJobsRetainDays !== undefined) overrides.discoveryJobsRetainDays = discoveryJobsRetainDays;
-  if (browserProfilesRetainDays !== undefined) overrides.browserProfilesRetainDays = browserProfilesRetainDays;
   if (batchLimit !== undefined) overrides.batchLimit = batchLimit;
   if (deleteFiles !== undefined) overrides.deleteFiles = deleteFiles;
-  if (deleteOrphanProfiles !== undefined) overrides.deleteOrphanProfiles = deleteOrphanProfiles;
   return overrides;
 }

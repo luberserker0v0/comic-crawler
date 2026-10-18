@@ -1,3 +1,5 @@
+import { useI18n } from '../../../text/i18n';
+
 export function PriorityOrderPanel(props: {
   priorityOrderDraft: string;
   setPriorityOrderDraft: (value: string) => void;
@@ -12,14 +14,15 @@ export function PriorityOrderPanel(props: {
     fillPriorityOrderFromVisibleTasks,
     savePriorityOrder,
   } = props;
+  const { text } = useI18n();
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Forced task order</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{text.taskManager.forcedOrder}</h2>
           <p className="mt-1 text-sm text-slate-600">
-            One task id per line. Pending tasks listed here run in this exact order before tasks outside the list.
+            {text.taskManager.forcedOrderDescription}
           </p>
         </div>
         <div className="flex gap-2">
@@ -28,14 +31,14 @@ export function PriorityOrderPanel(props: {
             onClick={fillPriorityOrderFromVisibleTasks}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            Fill visible
+            {text.taskManager.fillVisible}
           </button>
           <button
             type="button"
             onClick={() => void savePriorityOrder()}
             className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white"
           >
-            Save order
+            {text.taskManager.saveOrder}
           </button>
         </div>
       </div>

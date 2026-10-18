@@ -18,19 +18,20 @@ Partial files may be retried or replaced safely by the downloader.
 ## Human verification handoff
 
 If a crawl reaches a page that requires human verification, the task enters
-`waiting_verification`. This state is not a task failure. The worker slot is
-released so other pending tasks can continue.
+`waiting_verification`. This state is not a task failure. The scheduler slot is
+released, while the selected Browser Worker remains reserved for that handoff.
 
-The user completes verification from the task detail page by opening the
-isolated verification browser. After verification succeeds, `POST
+The user completes verification from the task detail page in the browser owned
+by the selected Browser Client. After verification succeeds, `POST
 /api/tasks/:id/resume` puts the task back into the queue. If the verification
 session is stale or missing, the resume API returns a conflict and tells the
 client which handoff step is still required.
 
 ## Queue behavior
 
-`waiting_verification` tasks do not occupy workers. Pending tasks are selected
-by the forced priority order first, then by normal task priority.
+`waiting_verification` tasks do not occupy scheduler execution slots. They do
+reserve their Browser Workers. Pending tasks can use other idle Browser Workers
+and are selected by forced priority order first, then by normal task priority.
 
 The forced order is managed through:
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from '@jest/globals';
 import {
   assertNotAntiBotChallenge,
   looksLikeAntiBotChallenge,
-  waitForAntiBotChallengeToClear,
 } from '../../../src/crawler/anti-bot';
 import { ComicError, ErrorType } from '../../../src/error/types';
 
@@ -72,6 +71,17 @@ describe('anti-bot challenge detection', () => {
     expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).toThrow(ComicError);
   });
 
+  it('detects localized Cloudflare waiting pages', () => {
+    const html = `<!doctype html>
+      <html>
+        <head><title>請稍候...</title></head>
+        <body><div>正在執行安全驗證</div></body>
+      </html>`;
+
+    expect(looksLikeAntiBotChallenge(html)).toBe(true);
+    expect(() => assertNotAntiBotChallenge(html, 'https://comix.to/title/demo')).toThrow(ComicError);
+  });
+
   it('does not flag normal HappyMH comic DOM that only keeps verification words in scripts', () => {
     const html = `<!doctype html>
       <html>
@@ -86,20 +96,5 @@ describe('anti-bot challenge detection', () => {
 
     expect(looksLikeAntiBotChallenge(html)).toBe(false);
     expect(() => assertNotAntiBotChallenge(html, 'https://m.happymh.com/manga/demo')).not.toThrow();
-  });
-
-  it('waits for JavaScript challenge pages to become normal DOM', async () => {
-    const challengeHtml = `<!doctype html><title>Attention Required! | Cloudflare</title><script src="/cdn-cgi/challenge-platform/x.js"></script>`;
-    const normalHtml = `<!doctype html><a href="/chapter-1">Chapter 1</a><img src="/page-1.jpg" />`;
-    const contents = [challengeHtml, challengeHtml, normalHtml];
-    const page = {
-      content: async () => contents.shift() ?? normalHtml,
-      waitForTimeout: async () => undefined,
-    };
-
-    await expect(waitForAntiBotChallengeToClear(page as any, 'https://example.com/chapter', {
-      timeoutMs: 5000,
-      pollIntervalMs: 1,
-    })).resolves.toBe(normalHtml);
   });
 });

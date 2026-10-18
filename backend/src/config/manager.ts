@@ -21,9 +21,10 @@ export class ConfigManager {
   async load(): Promise<GlobalConfig> {
     const stored = await this.storage.read<GlobalConfig>(CONFIG_KEY);
     if (stored) {
-      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(validateGlobalConfig(stored)));
+      const validated = validateGlobalConfig(stored);
+      this.cache = applyMaintenanceEnvOverrides(validated);
     } else {
-      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(this.getDefaultConfig()));
+      this.cache = applyMaintenanceEnvOverrides(this.getDefaultConfig());
       await this.save(this.cache);
     }
     return this.cache;
@@ -112,15 +113,9 @@ export class ConfigManager {
         retryDelay: DEFAULTS.network.retryDelay,
       },
       browser: {
-        mode: DEFAULTS.browser.mode,
-        headless: DEFAULTS.browser.headless,
-        maxInstances: DEFAULTS.browser.maxInstances,
         timeout: DEFAULTS.browser.timeout,
-        waitUntil: DEFAULTS.browser.waitUntil,
+        workerWaitTimeoutMs: DEFAULTS.browser.workerWaitTimeoutMs,
         postLoadDelayMs: DEFAULTS.browser.postLoadDelayMs,
-        challengeAutoAttempt: DEFAULTS.browser.challengeAutoAttempt,
-        challengeWaitMs: DEFAULTS.browser.challengeWaitMs,
-        handoff: resolveBrowserHandoffDefaults(),
       },
       server: {
         port: DEFAULTS.server.port,
@@ -138,56 +133,12 @@ export class ConfigManager {
         intervalHours: 24,
         tasksRetainDays: 30,
         discoveryJobsRetainDays: 14,
-        browserProfilesRetainDays: 14,
         deleteFiles: true,
-        deleteOrphanProfiles: true,
         batchLimit: 100,
       },
+      apiSecurity: { ...DEFAULTS.apiSecurity, rules: [] },
     };
   }
-}
-
-function resolveBrowserHandoffDefaults(): GlobalConfig['browser']['handoff'] {
-  const mode = process.env.COMICCRAWLER_BROWSER_HANDOFF_MODE;
-  const normalizedMode = mode === 'cdp' || mode === 'managed' || mode === 'snapshot'
-    ? mode
-    : DEFAULTS.browser.handoff.mode;
-  return {
-    mode: normalizedMode,
-    cdpUrl: process.env.COMICCRAWLER_BROWSER_CDP_URL,
-    userDataDir: process.env.COMICCRAWLER_BROWSER_USER_DATA_DIR,
-    channel: process.env.COMICCRAWLER_BROWSER_CHANNEL,
-  };
-}
-
-function applyBrowserEnvOverrides(config: GlobalConfig): GlobalConfig {
-  const handoff = resolveBrowserHandoffDefaults();
-  const browserOverrides: Partial<GlobalConfig['browser']> = {};
-  if (process.env.COMICCRAWLER_BROWSER_USER_DATA_DIR) {
-    browserOverrides.userDataDir = process.env.COMICCRAWLER_BROWSER_USER_DATA_DIR;
-  }
-  if (process.env.COMICCRAWLER_BROWSER_CHANNEL) {
-    browserOverrides.channel = process.env.COMICCRAWLER_BROWSER_CHANNEL;
-  }
-  if (
-    process.env.COMICCRAWLER_BROWSER_HANDOFF_MODE ||
-    process.env.COMICCRAWLER_BROWSER_CDP_URL ||
-    process.env.COMICCRAWLER_BROWSER_USER_DATA_DIR ||
-    process.env.COMICCRAWLER_BROWSER_CHANNEL
-  ) {
-    browserOverrides.handoff = {
-      ...(config.browser.handoff ?? { mode: 'snapshot' as const }),
-      ...handoff,
-    };
-  }
-
-  return {
-    ...config,
-    browser: {
-      ...config.browser,
-      ...browserOverrides,
-    },
-  };
 }
 
 function parseEnvBoolean(value: string | undefined): boolean | undefined {
@@ -210,23 +161,19 @@ function applyMaintenanceEnvOverrides(config: GlobalConfig): GlobalConfig {
     intervalHours: 24,
     tasksRetainDays: 30,
     discoveryJobsRetainDays: 14,
-    browserProfilesRetainDays: 14,
     deleteFiles: true,
-    deleteOrphanProfiles: true,
     batchLimit: 100,
   };
   const enabled = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_ENABLED);
   const intervalHours = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS);
   const tasksRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS);
   const jobsRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS);
-  const profilesRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_PROFILES_RETAIN_DAYS);
   const deleteFiles = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_DELETE_FILES);
   if (
     enabled === undefined &&
     intervalHours === undefined &&
     tasksRetainDays === undefined &&
     jobsRetainDays === undefined &&
-    profilesRetainDays === undefined &&
     deleteFiles === undefined
   ) {
     return { ...config, maintenance: base };
@@ -239,7 +186,6 @@ function applyMaintenanceEnvOverrides(config: GlobalConfig): GlobalConfig {
       ...(intervalHours !== undefined ? { intervalHours } : {}),
       ...(tasksRetainDays !== undefined ? { tasksRetainDays } : {}),
       ...(jobsRetainDays !== undefined ? { discoveryJobsRetainDays: jobsRetainDays } : {}),
-      ...(profilesRetainDays !== undefined ? { browserProfilesRetainDays: profilesRetainDays } : {}),
       ...(deleteFiles !== undefined ? { deleteFiles } : {}),
     },
   };

@@ -1,8 +1,20 @@
 import { describe, expect, it } from '@jest/globals';
-import { validateGlobalConfig } from '../../../src/config/schema';
+import { BrowserConfigSchema, validateGlobalConfig } from '../../../src/config/schema';
 
 describe('global config schema', () => {
-  it('adds default browser crawler config for legacy configs', () => {
+  it('requires a secret path when API security uses token mode', () => {
+    expect(() => validateGlobalConfig({
+      download: { directory: './downloads', concurrency: 5, namingTemplate: '{title}', imageFormat: 'original', imageQuality: 100 },
+      concurrency: { taskLevel: 1, siteLevel: 1 },
+      network: { timeout: 30000, retries: 3, retryDelay: 1000 },
+      server: { port: 4100, host: '127.0.0.1' },
+      log: { level: 'info' },
+      i18n: { language: 'zh-TW', fallback: 'en' },
+      apiSecurity: { mode: 'token', defaultEffect: 'deny', rules: [] },
+    })).toThrow(/secretPath/);
+  });
+
+  it('applies Browser Worker timing defaults when browser config is omitted', () => {
     const config = validateGlobalConfig({
       download: {
         directory: './downloads',
@@ -34,21 +46,13 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toEqual({
-      mode: 'auto',
-      headless: true,
-      maxInstances: 2,
       timeout: 30000,
-      waitUntil: 'domcontentloaded',
+      workerWaitTimeoutMs: 1800000,
       postLoadDelayMs: 0,
-      challengeAutoAttempt: true,
-      challengeWaitMs: 15000,
-      handoff: {
-        mode: 'snapshot',
-      },
     });
   });
 
-  it('accepts Cloudflare challenge browser session settings', () => {
+  it('accepts Browser Worker command timing settings', () => {
     const config = validateGlobalConfig({
       download: {
         directory: './downloads',
@@ -67,21 +71,9 @@ describe('global config schema', () => {
         retryDelay: 1000,
       },
       browser: {
-        mode: 'headless',
-        headless: false,
-        maxInstances: 1,
         timeout: 45000,
-        waitUntil: 'domcontentloaded',
+        workerWaitTimeoutMs: 60000,
         postLoadDelayMs: 1000,
-        challengeAutoAttempt: true,
-        challengeWaitMs: 60000,
-        channel: 'chrome',
-        storageStatePath: 'D:/secrets/storage-state.json',
-        userDataDir: 'D:/profiles/comiccrawler',
-        handoff: {
-          mode: 'cdp',
-          cdpUrl: 'http://127.0.0.1:9222',
-        },
       },
       server: {
         port: 4100,
@@ -97,15 +89,18 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toMatchObject({
-      channel: 'chrome',
-      storageStatePath: 'D:/secrets/storage-state.json',
-      userDataDir: 'D:/profiles/comiccrawler',
-      handoff: {
-        mode: 'cdp',
-        cdpUrl: 'http://127.0.0.1:9222',
-      },
-      challengeAutoAttempt: true,
-      challengeWaitMs: 60000,
+      timeout: 45000,
+      workerWaitTimeoutMs: 60000,
+      postLoadDelayMs: 1000,
     });
+  });
+
+  it('rejects unknown Browser Worker transport settings', () => {
+    expect(() => BrowserConfigSchema.parse({
+      timeout: 30000,
+      workerWaitTimeoutMs: 60000,
+      postLoadDelayMs: 0,
+      transport: { protocol: 'custom' },
+    })).toThrow(/Unrecognized key/);
   });
 });

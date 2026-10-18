@@ -6,6 +6,8 @@ import type {
   AdapterFunctionTestRequest,
   ChapterImagesRequest,
   ChapterImagesResponse,
+  EffectiveRenderContext,
+  RenderContext,
   DeletedAdapterListResponse,
   DeleteAdapterResponse,
   RestoreAdapterResponse,
@@ -29,15 +31,28 @@ import type { DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adap
 import type { ActiveImplementationAdapterRecord } from '../../selector-discovery/service';
 import type { IStorage } from '../../storage/types';
 import type { ChallengeDiscoveryService } from '../../challenge';
-import { getAdapterFunctionSource, getAdapterImplementation } from './adapter-function-source';
+import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
 import type { AdapterFunctionId } from './adapter-function-types';
+import type { BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserRenderService } from '../../browser/browser-render-service';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
 
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
+  withBrowserSession?: <T>(
+    request: FastifyRequest,
+    target: BrowserTarget | undefined,
+    initialUrl: string,
+    renderContext: EffectiveRenderContext | undefined,
+    action: (sessionId: string) => Promise<T>
+  ) => Promise<T>;
+  browserRenderService?: BrowserRenderService;
+  htmlRenderer?: HtmlRenderer;
+  getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
 }
 
@@ -247,30 +262,50 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
-    const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-      challengeDiscoveryId: body.challengeDiscoveryId,
-      challengeDiscoveryService: options.challengeDiscoveryService,
-    });
-    if (!extraction.ok) {
-      reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
-        error: extraction.error ?? 'Chapter image extraction failed.',
-        data: extraction,
-      });
+    const renderContext = parseRenderContext(body.renderContext);
+    if (renderContext instanceof Error) {
+      reply.code(400).send({ error: renderContext.message });
       return;
     }
 
-    const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
-      ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
-      : [];
-    const data: ChapterImagesResponse = {
-      adapterId: adapter.id,
-      chapterUrl,
-      imageUrlCount: imageUrls.length,
-      imageUrls,
-      domSource: extraction.domSource,
-      durationMs: extraction.durationMs,
-    };
-    reply.send({ data });
+    const network = await options.getNetworkConfig?.();
+    if (options.htmlRenderer) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+        htmlRenderer: options.htmlRenderer,
+      });
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    }
+    if (body.challengeDiscoveryId) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+      });
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    }
+    if (!options.withBrowserSession || !options.browserRenderService) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+      });
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    }
+    const extraction = await options.withBrowserSession(request, body.browserTarget, chapterUrl, renderContext, (sessionId) =>
+      testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+      }));
+    return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
   });
 
   app.get('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -311,23 +346,6 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     reply.send({ data });
   });
 
-  app.get('/api/adapters/:id/functions/:functionId/source', async (request: FastifyRequest, reply: FastifyReply) => {
-    const adapter = getAdapterFromRequest(request, registry);
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
-
-    const { functionId } = request.params as { functionId: AdapterFunctionId };
-    if (!isKnownAdapterFunction(functionId)) {
-      reply.code(400).send({ error: 'Unknown adapter function.' });
-      return;
-    }
-
-    const source = await getAdapterFunctionSource(adapter, functionId);
-    reply.send({ data: source });
-  });
-
   app.post('/api/adapters/:id/functions/:functionId/test', async (request: FastifyRequest, reply: FastifyReply) => {
     const adapter = getAdapterFromRequest(request, registry);
     if (!adapter) {
@@ -347,23 +365,110 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       return;
     }
 
+    const network = await options.getNetworkConfig?.();
+    if (options.htmlRenderer) {
       const result = await testAdapterFunction(adapter, functionId, body.url, {
         challengeDiscoveryId: body.challengeDiscoveryId,
         challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        htmlRenderer: options.htmlRenderer,
       });
+      reply.send({ data: result });
+      return;
+    }
+    if (body.challengeDiscoveryId) {
+      const result = await testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+      });
+      reply.send({ data: result });
+      return;
+    }
+    if (!options.withBrowserSession || !options.browserRenderService) {
+      const result = await testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+      });
+      reply.send({ data: result });
+      return;
+    }
+    const result = await options.withBrowserSession(request, body.browserTarget, body.url, undefined, (sessionId) =>
+      testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+      }));
     reply.send({ data: result });
   });
 
-  app.post('/api/adapters/register', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as { id: string; name: string; domains: string[] };
+}
 
-    if (!body.id || !body.name || !body.domains) {
-      reply.code(400).send({ error: 'id, name, and domains are required' });
-      return;
-    }
+function sendChapterImagesResponse(
+  reply: FastifyReply,
+  adapterId: string,
+  chapterUrl: string,
+  extraction: Awaited<ReturnType<typeof testAdapterFunction>>,
+  renderContext: EffectiveRenderContext
+): void {
+  if (!extraction.ok) {
+    reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
+      error: extraction.error ?? 'Chapter image extraction failed.',
+      data: extraction,
+    });
+    return;
+  }
+  const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
+    ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
+    : [];
+  const data: ChapterImagesResponse = {
+    adapterId,
+    chapterUrl,
+    imageUrlCount: imageUrls.length,
+    imageUrls,
+    domSource: extraction.domSource,
+    durationMs: extraction.durationMs,
+    renderContext,
+  };
+  reply.send({ data });
+}
 
-    reply.send({ data: { message: 'Adapter registration endpoint' } });
-  });
+function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
+  return {
+    render: async (url) => (await renderService.render(sessionId, url)).html,
+    dispose: async () => undefined,
+  };
+}
+
+const DEFAULT_RENDER_CONTEXT: EffectiveRenderContext = {
+  viewport: { width: 1920, height: 1080 },
+  deviceScaleFactor: 1,
+};
+
+function parseRenderContext(value: RenderContext | undefined): EffectiveRenderContext | Error {
+  if (value === undefined) {
+    return {
+      viewport: { ...DEFAULT_RENDER_CONTEXT.viewport },
+      deviceScaleFactor: DEFAULT_RENDER_CONTEXT.deviceScaleFactor,
+    };
+  }
+  if (!value || typeof value !== 'object' || !value.viewport || typeof value.viewport !== 'object') {
+    return new Error('renderContext.viewport is required when renderContext is provided.');
+  }
+  const { width, height } = value.viewport;
+  if (!Number.isInteger(width) || width < 1 || width > 10_000) {
+    return new Error('renderContext.viewport.width must be an integer between 1 and 10000 CSS pixels.');
+  }
+  if (!Number.isInteger(height) || height < 1 || height > 10_000) {
+    return new Error('renderContext.viewport.height must be an integer between 1 and 10000 CSS pixels.');
+  }
+  const deviceScaleFactor = value.deviceScaleFactor ?? DEFAULT_RENDER_CONTEXT.deviceScaleFactor;
+  if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor < 0.1 || deviceScaleFactor > 10) {
+    return new Error('renderContext.deviceScaleFactor must be a finite number between 0.1 and 10.');
+  }
+  return { viewport: { width, height }, deviceScaleFactor };
 }
 
 function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>) {

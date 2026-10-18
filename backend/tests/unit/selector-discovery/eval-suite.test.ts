@@ -13,7 +13,6 @@ describe('selector-discovery eval suite', () => {
       type: 'positive',
       enabled: true,
       url: 'https://example.com/manga/a',
-      oracleAdapterId: 'example',
       defaultRuns: 3,
     });
     await writeCase(root, 'negative-b', {
@@ -39,7 +38,6 @@ describe('selector-discovery eval suite', () => {
     expect(all[0]).toMatchObject({
       id: 'positive-a',
       type: 'positive',
-      oracleAdapterId: 'example',
       defaultRuns: 3,
     });
     expect(filtered.map((testCase) => testCase.id)).toEqual(['positive-a']);

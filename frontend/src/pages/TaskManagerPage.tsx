@@ -35,15 +35,10 @@ export const TaskManagerPage: React.FC = () => {
     challengeJob,
     challengeAction,
     challengeError,
-    browserOptions,
-    browserExecutablePath,
-    setBrowserExecutablePath,
     shouldReopenVerificationBrowser,
     isVerificationBrowserOpening,
-    isExternalVerificationUnreadable,
     isChallengeJobUnavailable,
     refreshChallengeJob,
-    browseBrowserExecutable,
     openVerificationBrowser,
   } = useChallengeFlow(challengeDiscoveryId);
 
@@ -168,7 +163,6 @@ export const TaskManagerPage: React.FC = () => {
               detail={detail}
               taskAction={taskAction}
               isVerificationBrowserOpening={isVerificationBrowserOpening}
-              isExternalVerificationUnreadable={isExternalVerificationUnreadable}
               pauseTask={pauseTask}
               cancelTask={cancelTask}
               handleResumeTask={handleResumeTask}
@@ -183,13 +177,8 @@ export const TaskManagerPage: React.FC = () => {
                   challengeJob={challengeJob}
                   challengeAction={challengeAction}
                   challengeError={challengeError}
-                  browserOptions={browserOptions}
-                  browserExecutablePath={browserExecutablePath}
-                  setBrowserExecutablePath={setBrowserExecutablePath}
                   shouldReopenVerificationBrowser={shouldReopenVerificationBrowser}
-                  isExternalVerificationUnreadable={isExternalVerificationUnreadable}
                   isChallengeJobUnavailable={isChallengeJobUnavailable}
-                  browseBrowserExecutable={browseBrowserExecutable}
                   openVerificationBrowser={openVerificationBrowser}
                 />
               )}

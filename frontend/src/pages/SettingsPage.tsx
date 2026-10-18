@@ -1,6 +1,7 @@
 import React from 'react';
 import { useConfigStore } from '../store';
 import { useI18n } from '../text/i18n';
+import { formatText } from '../text/format';
 import { api } from '../api/client';
 import { useConfigForm } from './settings/useConfigForm';
 import { useSelectorDiscoverySettings } from './settings/useSelectorDiscoverySettings';
@@ -10,7 +11,7 @@ import { SelectorDiscoverySection } from './settings/sections/SelectorDiscoveryS
 
 export const SettingsPage: React.FC = () => {
   const { config, loading, error, fetchConfig, updateConfig, resetConfig, clearError } = useConfigStore();
-  const { form, handleChange, handleNestedChange, handleSave, handleReset } = useConfigForm({ config, updateConfig, resetConfig });
+  const { form, handleChange, handleSave, handleReset } = useConfigForm({ config, updateConfig, resetConfig });
   const {
     selectorDiscoveryConfig,
     selectorDiscoveryBundleStatus,
@@ -25,28 +26,16 @@ export const SettingsPage: React.FC = () => {
     setProviderJson,
     selectorDiscoveryMessage,
     selectorDiscoveryPreflight,
+    selectorDiscoverySaveState,
     refreshSelectorDiscoveryBundleStatus,
     refreshSelectorDiscoveryBundleEvaluations,
-    handleSelectorDiscoverySave,
     handleLoadDefaultSelectorDiscoveryProvider,
     handleSelectorDiscoveryClear,
     handleSelectorDiscoveryTest,
     handleRefreshSelectorDiscoveryAoModels,
   } = useSelectorDiscoverySettings({ fetchConfig });
-  const [cdpTestMessage, setCdpTestMessage] = React.useState<string | null>(null);
   const [downloadDirectoryMessage, setDownloadDirectoryMessage] = React.useState<string | null>(null);
   const { text } = useI18n();
-
-  const handleCdpTest = async () => {
-    setCdpTestMessage(null);
-    try {
-      const cdpUrl = (form as any).browser?.handoff?.cdpUrl;
-      const response = await api.testChallengeDiscoveryCdp(cdpUrl);
-      setCdpTestMessage(`Connected. Pages: ${response.data.pageCount}. ${response.data.pages?.[0]?.title ?? response.data.pages?.[0]?.url ?? ''}`);
-    } catch (err: any) {
-      setCdpTestMessage(err.response?.data?.error ?? err.message);
-    }
-  };
 
   const handleBrowseDownloadDirectory = async () => {
     setDownloadDirectoryMessage(null);
@@ -65,7 +54,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const directory = (form as any).download?.directory;
       const response = await api.openDownloadDirectory(directory);
-      setDownloadDirectoryMessage(`Opened ${response.data.directory}`);
+      setDownloadDirectoryMessage(formatText(text.settings.openedDirectory, { directory: response.data.directory }));
     } catch (err: any) {
       setDownloadDirectoryMessage(err.response?.data?.error ?? err.message);
     }
@@ -101,9 +90,6 @@ export const SettingsPage: React.FC = () => {
       <BrowserSettingsSection
         form={form}
         handleChange={handleChange}
-        handleNestedChange={handleNestedChange}
-        cdpTestMessage={cdpTestMessage}
-        handleCdpTest={handleCdpTest}
       />
 
       <SelectorDiscoverySection
@@ -120,9 +106,9 @@ export const SettingsPage: React.FC = () => {
         selectorDiscoveryAoModelsLoading={selectorDiscoveryAoModelsLoading}
         selectorDiscoveryMessage={selectorDiscoveryMessage}
         selectorDiscoveryPreflight={selectorDiscoveryPreflight}
+        selectorDiscoverySaveState={selectorDiscoverySaveState}
         refreshSelectorDiscoveryBundleStatus={refreshSelectorDiscoveryBundleStatus}
         refreshSelectorDiscoveryBundleEvaluations={refreshSelectorDiscoveryBundleEvaluations}
-        handleSelectorDiscoverySave={handleSelectorDiscoverySave}
         handleLoadDefaultSelectorDiscoveryProvider={handleLoadDefaultSelectorDiscoveryProvider}
         handleSelectorDiscoveryClear={handleSelectorDiscoveryClear}
         handleSelectorDiscoveryTest={handleSelectorDiscoveryTest}
