@@ -140,7 +140,7 @@ valid source for adapter promotion.
 
 Accepting a selector-discovery adapter performs these steps:
 
-1. Fetch the reviewed page through the active Browser Provider.
+1. Fetch the reviewed page through the selected Browser Worker.
 2. Reject pages that still show human verification.
 3. Run the reviewed adapter against the rendered page.
 4. Save the rendered DOM as `page.html`.
@@ -204,25 +204,16 @@ adapter drafts can be tested before promotion.
 Adapter Lab tests use the adapter's `playwright` DOM acquisition automatically. If a site requires
 human verification, use the verification handoff shown in the test result,
 complete verification in the opened browser, then continue the test. Adapter Lab
-does not secretly click generic "show all" buttons or rewrite the page before
-calling the selected adapter function.
+runs bounded scrolling to hydrate lazy content, but does not click generic
+"show all" controls or rewrite the page before calling the selected function.
 
 Adapter Lab is for diagnosis and draft testing. It does not create crawl tasks
 and does not promote adapter versions by itself.
 
-## Browser Provider
+## Browser Client
 
-Browser-backed features require a user-side Browser Provider.
-The backend and Docker container do not launch Chromium.
-
-On the user-side machine, run Browser Provider npm commands from the
-source-of-truth repository root:
-
-```bash
-cd repo
-```
-
-Do not run the workspace commands from `browser-provider-sdk/` directly.
+Browser-backed features require a user-side Browser Client consumer. The
+backend and Docker container do not launch Chromium.
 
 The client uses outbound connections.
 No inbound user port is required.
@@ -230,20 +221,26 @@ No inbound user port is required.
 Setup follows this order:
 
 1. Configure the Server security policy.
-2. Create the Browser Provider config.
-3. Run the client `connect` command.
-4. Let the client register automatically.
+2. Configure the consumer's SDK state store.
+3. Enroll the Browser Client once.
+4. Connect its outbound command WebSocket.
 5. Select an available Browser Worker when creating a task.
 
-A Browser Worker creates internal Playwright sessions for these features:
+A Browser Worker exposes one task-scoped browser session for these features:
 
 - Normal Playwright crawling.
 - Selector discovery.
 - Human verification.
-- Browser-assisted downloads.
+- Adapter Lab tests and fixture capture.
 
-See the [Browser Provider SDK guide](../browser-provider-sdk/README.md) for the
-configuration and CLI commands.
+See the [Browser Client SDK guide](../browser-client-sdk/README.md) for the
+consumer contract. A browser extension may implement the executor with the
+current tab and existing Chrome profile.
+
+Developers can use the first-party
+[production acceptance consumer](../tools/browser-client-acceptance/README.md)
+to enroll a real managed-profile Worker against a deployed Server. The tool
+uses headed Chrome and supports manual verification.
 
 ## Human verification
 
@@ -254,7 +251,7 @@ To continue:
 
 1. Open the task from Task Manager.
 2. Click **Open browser for verification** in the task detail panel.
-3. Complete verification in the browser opened by your remote Playwright service.
+3. Complete verification in the focused tab owned by the selected Browser Client.
 4. Return to the task detail page and click **Continue**.
 
 ComicCrawler then resumes from the latest checkpoint. A waiting task releases

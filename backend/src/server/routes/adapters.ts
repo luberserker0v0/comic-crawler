@@ -34,15 +34,24 @@ import type { ChallengeDiscoveryService } from '../../challenge';
 import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
 import type { AdapterFunctionId } from './adapter-function-types';
-import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserRenderService } from '../../browser/browser-render-service';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
 
 interface AdapterRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
-  getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
-  withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
+  withBrowserSession?: <T>(
+    request: FastifyRequest,
+    target: BrowserTarget | undefined,
+    initialUrl: string,
+    renderContext: EffectiveRenderContext | undefined,
+    action: (sessionId: string) => Promise<T>
+  ) => Promise<T>;
+  browserRenderService?: BrowserRenderService;
+  htmlRenderer?: HtmlRenderer;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
 }
@@ -260,37 +269,43 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     }
 
     const network = await options.getNetworkConfig?.();
-    const runExtraction = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-      browser,
-      challengeDiscoveryId: body.challengeDiscoveryId,
-      challengeDiscoveryService: options.challengeDiscoveryService,
-      network,
-      renderContext,
-    });
-    const extraction = await (options.withBrowserConfig
-      ? options.withBrowserConfig(request, body.browserTarget, runExtraction)
-      : runExtraction(await options.getBrowserConfig?.()));
-    if (!extraction.ok) {
-      reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
-        error: extraction.error ?? 'Chapter image extraction failed.',
-        data: extraction,
+    if (options.htmlRenderer) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+        htmlRenderer: options.htmlRenderer,
       });
-      return;
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
     }
-
-    const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
-      ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
-      : [];
-    const data: ChapterImagesResponse = {
-      adapterId: adapter.id,
-      chapterUrl,
-      imageUrlCount: imageUrls.length,
-      imageUrls,
-      domSource: extraction.domSource,
-      durationMs: extraction.durationMs,
-      renderContext,
-    };
-    reply.send({ data });
+    if (body.challengeDiscoveryId) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+      });
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    }
+    if (!options.withBrowserSession || !options.browserRenderService) {
+      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+      });
+      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    }
+    const extraction = await options.withBrowserSession(request, body.browserTarget, chapterUrl, renderContext, (sessionId) =>
+      testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        renderContext,
+        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+      }));
+    return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
   });
 
   app.get('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -351,18 +366,80 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
     }
 
     const network = await options.getNetworkConfig?.();
-    const runTest = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, functionId, body.url, {
-      browser,
-      challengeDiscoveryId: body.challengeDiscoveryId,
-      challengeDiscoveryService: options.challengeDiscoveryService,
-      network,
-    });
-    const result = options.withBrowserConfig
-      ? await options.withBrowserConfig(request, body.browserTarget, runTest)
-      : await runTest(await options.getBrowserConfig?.());
+    if (options.htmlRenderer) {
+      const result = await testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        htmlRenderer: options.htmlRenderer,
+      });
+      reply.send({ data: result });
+      return;
+    }
+    if (body.challengeDiscoveryId) {
+      const result = await testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+      });
+      reply.send({ data: result });
+      return;
+    }
+    if (!options.withBrowserSession || !options.browserRenderService) {
+      const result = await testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+      });
+      reply.send({ data: result });
+      return;
+    }
+    const result = await options.withBrowserSession(request, body.browserTarget, body.url, undefined, (sessionId) =>
+      testAdapterFunction(adapter, functionId, body.url, {
+        challengeDiscoveryId: body.challengeDiscoveryId,
+        challengeDiscoveryService: options.challengeDiscoveryService,
+        network,
+        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+      }));
     reply.send({ data: result });
   });
 
+}
+
+function sendChapterImagesResponse(
+  reply: FastifyReply,
+  adapterId: string,
+  chapterUrl: string,
+  extraction: Awaited<ReturnType<typeof testAdapterFunction>>,
+  renderContext: EffectiveRenderContext
+): void {
+  if (!extraction.ok) {
+    reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
+      error: extraction.error ?? 'Chapter image extraction failed.',
+      data: extraction,
+    });
+    return;
+  }
+  const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
+    ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
+    : [];
+  const data: ChapterImagesResponse = {
+    adapterId,
+    chapterUrl,
+    imageUrlCount: imageUrls.length,
+    imageUrls,
+    domSource: extraction.domSource,
+    durationMs: extraction.durationMs,
+    renderContext,
+  };
+  reply.send({ data });
+}
+
+function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
+  return {
+    render: async (url) => (await renderService.render(sessionId, url)).html,
+    dispose: async () => undefined,
+  };
 }
 
 const DEFAULT_RENDER_CONTEXT: EffectiveRenderContext = {

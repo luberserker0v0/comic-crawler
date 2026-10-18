@@ -78,6 +78,11 @@ export class SelectorDiscoveryService {
     browserTarget?: DiscoveryInput['browserTarget'];
   }) => Promise<{ sessionId: string; release(): Promise<void> }>;
   private readonly getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  private readonly renderBrowserPage?: (
+    sessionId: string,
+    url: string,
+    options: { timeoutMs: number }
+  ) => Promise<{ url: string; html: string }>;
   private readonly captureApprovalFixture?: (input: {
     job: SelectorDiscoveryJob;
     adapter: IComicAdapter;
@@ -92,6 +97,11 @@ export class SelectorDiscoveryService {
       getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
       acquireBrowserSession?: (input: { job: SelectorDiscoveryJob; browserTarget?: DiscoveryInput['browserTarget'] }) => Promise<{ sessionId: string; release(): Promise<void> }>;
       getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+      renderBrowserPage?: (
+        sessionId: string,
+        url: string,
+        options: { timeoutMs: number }
+      ) => Promise<{ url: string; html: string }>;
       captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }) => Promise<FixtureSummary>;
       schedulingPolicy?: SchedulingPolicy<DiscoveryInput>;
     }
@@ -103,6 +113,7 @@ export class SelectorDiscoveryService {
       this.getBrowserConfig = bundleManagerOrOptions?.getBrowserConfig;
       this.acquireBrowserSession = bundleManagerOrOptions?.acquireBrowserSession;
       this.getNetworkConfig = bundleManagerOrOptions?.getNetworkConfig;
+      this.renderBrowserPage = bundleManagerOrOptions?.renderBrowserPage;
       this.captureApprovalFixture = bundleManagerOrOptions?.captureApprovalFixture;
     }
     const schedulingPolicy = bundleManagerOrOptions instanceof SelectorDiscoveryBundleManager
@@ -674,25 +685,9 @@ ${retryFeedback}`,
       const templateInstruction = draft.stage === 'common-verification'
         ? `
 
-Common/verification stage has a strict capability-only boundary:
-
-- Use task.md only for site context and evidence.
-- Use contracts/common-verification-template.ts only for TypeScript structure.
-- Do not use contracts/adapter-base-api.md for this stage.
-- Write ${draft.sourcePath} by copying the skeleton below and replacing only
-  URL matching and verification keywords if needed.
-- The output must keep the same imports, class shape, and method names as this
-  skeleton.
-- The source must include this hostname exactly: ${job.hostname}
-- Do not leave example.com, my-site-adapter, Generic Comic Site, or Example Site
-  anywhere in the source.
-- Do not declare AdapterBase, CommonCapability, VerificationCapability, DOM,
-  Document, enum ParseMode, interfaces, or any framework types.
-- Do not export or implement an AdapterBase shell.
-- Do not declare id, name, domains, parseMode, capabilities, common,
-  verification, metadata, chapterImages, constructor, or super().
-- Do not add verifyDom, extractTitle, extractAuthor, extractChapterList,
-  extractChapterImageUrls, placeholder extraction methods, or sample data.
+Copy this skeleton. Change URL matching and challenge signals only. Keep its
+imports, classes, and methods; include hostname ${job.hostname} and remove all
+example placeholders.
 
 \`\`\`ts
 ${concreteCommonVerificationSkeleton}
@@ -700,29 +695,9 @@ ${concreteCommonVerificationSkeleton}
         : draft.stage === 'metadata'
           ? `
 
-Metadata stage has a strict single-capability boundary:
-
-- Use task.md for trusted metadata DOM evidence and Phase 1 analysis.
-- Use contracts/metadata-template.ts only for TypeScript structure.
-- Do not use contracts/common-verification-template.ts for this stage.
-- Write ${draft.sourcePath} by copying the skeleton below and replacing
-  selectors, cleanup logic, URL filters, and status keywords with site-specific
-  behavior from task.md.
-- The skeleton selectors are placeholders. Do not keep three or more of these
-  unchanged selectors: main h1, .author a, .description, .cover img, .tags a,
-  .status, .chapter-list a[href*="/read/"].
-- The skeleton throws placeholder errors. Replace every throw with working
-  extraction code using selectors from task.md.
-- Keep exactly one site-specific MetadataCapability subclass.
-- Do not export an AdapterBase shell.
-- Do not implement CommonCapability, VerificationCapability, or
-  ChapterImagesCapability in this file.
-- Do not implement extractChapterImageUrls in this metadata-only stage.
-- Before writing extractStatus or extractChapterList, read the Runtime DTO field
-  semantics in contracts/adapter-base-api.md. ChapterInfo requires id, title,
-  and absolute url; do not fill status/sourceUrl/placeholder dates.
-- extractChapterList must return the full catalog available in the trusted DOM,
-  not a preview, sample, recommendation list, or first few chapters.
+Copy this skeleton. Replace every placeholder selector and throw with evidence
+from task.md. Keep one MetadataCapability subclass. Follow ChapterInfo rules in
+adapter-base-api.md and return the complete supplied catalog.
 
 \`\`\`ts
 ${concreteMetadataSkeleton}
@@ -732,47 +707,15 @@ ${concreteMetadataSkeleton}
         conversationId,
         `# Capability Stage Task
 
-Read task.md and only the contract files needed for this capability stage.
+Read task.md plus the named contracts. Produce only stage \`${draft.stage}\`:
 
-## Required AO Output
+- TypeScript: ${draft.sourcePath}
+- Markdown review: ${draft.reviewPath}
 
-Produce only the ${draft.stage} capability draft.
-
-Write TypeScript capability source to ${draft.sourcePath}.
-Write human review notes for this capability to ${draft.reviewPath}.
-
-Important file-writing rules:
-
-- The TypeScript source must be written to ${draft.sourcePath}, not embedded
-  inside ${draft.reviewPath}.
-- The review notes must be Markdown prose only. Do not put the full TypeScript
-  source in the review notes.
-- Do not import from contracts/adapter-base-api.md or any contracts path.
-- For common-verification, use the concrete skeleton in this message as the
-  exact source shape.
-- For metadata, use the concrete skeleton in this message as the exact source
-  shape.
-- For later stages, use the exact signatures documented in
-  contracts/adapter-base-api.md.
-
-Do not write outputs/adapter-implementation.ts.
-Do not compose the final adapter in this stage. ComicCrawler composes the
-AdapterBase shell after capability review.
-Do not output JSON.
-
-Stage rules:
-
-- common-verification: write one CommonCapability subclass and one separate
-  VerificationCapability subclass. Do not write an AdapterBase shell. Do not
-  combine them with implements. Do not write constructor() or call super().
-- metadata: write only one MetadataCapability subclass.
-- chapter-images: write only one ChapterImagesCapability subclass.
-- Every method must use the exact signature documented for this capability
-  stage.
-- The trusted DOM in task.md was captured with Playwright rendering
-  (Content-Type "rendered=playwright"). Write selectors against rendered DOM;
-  never assume static-HTML fetch. The composed adapter always declares
-  parseMode "playwright".
+Use exact capability signatures. Keep source out of review notes and chat. Do
+not output JSON, import Markdown contracts, write the AdapterBase shell, or mix
+capabilities. The supplied DOM is prepared Playwright output; capability code
+extracts from it and does not perform browser actions.
 ${templateInstruction}
 ${retryFeedback ? `
 ## Retry Feedback
@@ -780,11 +723,7 @@ ${retryFeedback ? `
 ${retryFeedback}
 ` : ''}
 
-Chat response rule:
-
-- After writing both files, reply with one short sentence confirming the two
-  file paths.
-- Do not include the TypeScript source in chat.`,
+After writing both files, reply with one short confirmation sentence.`,
         model,
         DEFAULT_SELECTOR_DISCOVERY_AGENT
       );
@@ -1076,15 +1015,20 @@ ${finalUrl}
     return `disc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  private async getSafeFetchOptions(sessionId?: string): Promise<{ browser?: BrowserConfig; network?: NetworkConfig; renderFirst: boolean }> {
+  private async getSafeFetchOptions(sessionId?: string): Promise<{
+    browser?: BrowserConfig;
+    network?: NetworkConfig;
+    renderFirst: boolean;
+    renderPage?: (url: string, options: { timeoutMs: number }) => Promise<{ url: string; html: string }>;
+  }> {
     const [browser, network] = await Promise.all([
       this.getBrowserConfig?.(sessionId),
       this.getNetworkConfig?.(),
     ]);
-    // Selector discovery always uses Playwright-rendered DOM so AO evidence
-    // and runtime extraction run on the same mechanism. Static fetch stays
-    // available for existing hand-written adapters and other callers.
-    return { browser, network, renderFirst: true };
+    const renderPage = sessionId && this.renderBrowserPage
+      ? (url: string, options: { timeoutMs: number }) => this.renderBrowserPage!(sessionId, url, options)
+      : undefined;
+    return { browser, network, renderFirst: true, renderPage };
   }
 
   private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<ActiveImplementationAdapterRecord> {

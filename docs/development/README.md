@@ -14,9 +14,14 @@
 
 - `SRS.md`：現行產品需求與驗收邊界。
 - `SDD.md`：現行系統元件、資料流與互動設計。
-- `TDD.md`：長期測試策略與合併門檻。
-- `TEST_SCENARIOS.md`：自動化使用情境與短步驟。
+- `TDD.md`：Software Test Design、追溯表與合併門檻。
+- `TEST_SCENARIOS.md`：Scenario ID、驗收步驟與預期結果。
 - `AUTHENTICATION_CREDENTIALS.md`：token、credential 與 runtime identifier 契約。
+- `BROWSER_CLIENT_FRAMEWORK.md`：目前單一 Browser Client SDK 與 command protocol 設計基線。
+
+## Browser execution contract
+
+- `BROWSER_EXECUTION_MODES.md`：existing tab、managed Profile、resource binding 與 handoff 的現行設計。
 
 不適合放在這裡：
 

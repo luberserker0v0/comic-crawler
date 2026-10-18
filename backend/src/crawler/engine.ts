@@ -5,16 +5,14 @@ import type { AdapterBase } from '../adapter/base';
 import { composeChapterImages, composeMetadata } from '../adapter/runtime-composer';
 import type { EventBus } from '../events/bus';
 import { HtmlParser } from './html-parser';
-import type { BrowserPool } from './browser-pool';
-import type { RemoteBrowserConfigResolver } from './types';
 import { ChapterFetcher } from './chapter-fetcher';
 import { ImageDownloader, type DownloadOptions } from './image-downloader';
 import { SearchEngine } from './search';
 import { selectChapters } from './chapter-selection';
 import { ComicError, ErrorType, errorToLogObject } from '../error/types';
 import { logger } from '../utils/logger';
-import { PlaywrightHtmlRenderer, type HtmlRenderer } from './html-renderer';
-import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
+import { GatewayHtmlRenderer, type HtmlRenderer } from './html-renderer';
+import type { BrowserRenderService } from '../browser/browser-render-service';
 import { createEmptyCheckpoint, type ChapterCheckpoint, type CrawlCheckpoint } from '../task/checkpoint';
 import {
   createChapterListSummary,
@@ -32,7 +30,7 @@ export interface CrawlerEngineOptions {
   eventBus?: EventBus;
   browser?: BrowserConfig;
   network?: NetworkConfig;
-  resolveRemoteBrowser?: RemoteBrowserConfigResolver;
+  browserRenderService?: BrowserRenderService;
 }
 
 export interface CrawlResult {
@@ -67,7 +65,6 @@ export class CrawlerEngine {
   private chapterFetcher: ChapterFetcher;
   private imageDownloader: ImageDownloader;
   private searchEngine: SearchEngine;
-  private browserPool?: BrowserPool;
   private htmlRenderer?: HtmlRenderer;
   private browserConfig: BrowserConfig;
   private eventBus?: EventBus;
@@ -84,19 +81,26 @@ export class CrawlerEngine {
     this.downloadDir = options.downloadDir;
     this.concurrency = options.concurrency ?? 5;
     this.browserConfig = options.browser ?? {
-      mode: 'remote',
-      maxInstances: 2,
       timeout: 30000,
-      waitUntil: 'domcontentloaded',
+      workerWaitTimeoutMs: 30 * 60 * 1000,
       postLoadDelayMs: 0,
     };
-    this.htmlRenderer = new PlaywrightHtmlRenderer(
-      this.browserConfig,
-      options.network,
-      options.resolveRemoteBrowser
-        ? () => options.resolveRemoteBrowser!(this.browserContext.getStore()?.sessionId)
-        : undefined
-    );
+    this.htmlRenderer = options.browserRenderService
+      ? new GatewayHtmlRenderer(
+          options.browserRenderService,
+          () => this.browserContext.getStore()?.sessionId,
+          this.browserConfig
+        )
+      : {
+          render: async () => {
+            throw new ComicError(
+              'Browser Worker renderer is required for rendered DOM.',
+              ErrorType.CONFIG_ERROR,
+              false
+            );
+          },
+          dispose: async () => undefined,
+        };
   }
 
   async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
@@ -329,14 +333,10 @@ export class CrawlerEngine {
       try {
 
         const chapterDir = join(outputRoot, chapter.title);
-        const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(chapter.url);
         const previewEventPromises: Array<Promise<void>> = [];
         const downloadOptions: DownloadOptions = {
           outputDir: chapterDir,
           concurrency: this.concurrency,
-          ...(verifiedSession
-            ? { verifiedBrowser: { context: verifiedSession.context, pageUrl: chapter.url } }
-            : {}),
           onProgress: (completed, _total, result, image) => {
             const progressImage = image ?? remainingImages[completed - 1];
             if (!progressImage) {
@@ -496,18 +496,11 @@ export class CrawlerEngine {
     if (this.htmlRenderer) {
       await this.htmlRenderer.dispose();
     }
-    if (this.browserPool) {
-      await this.browserPool.dispose();
-    }
   }
 
   private attachRenderer(adapter: AdapterBase): void {
     const renderer = this.htmlRenderer;
-    if (!renderer) {
-      throw new ComicError('Remote HTML renderer is not configured.', ErrorType.CONFIG_ERROR, false, {
-        adapterId: adapter.id,
-      });
-    }
+    if (!renderer) return;
     const rendererAttachableAdapter = adapter as AdapterBase & {
       setHtmlRenderer?: (renderer: HtmlRenderer | undefined) => void;
     };

@@ -26,7 +26,9 @@ describe('Adapter draft routes', () => {
     }));
     const service = new AdapterDraftService(userPath, registry);
     const app = fastify();
-    setupAdapterDraftRoutes(app, service);
+    setupAdapterDraftRoutes(app, service, {
+      htmlRenderer: { render: async () => '<html></html>', dispose: async () => undefined },
+    });
     return { app, userPath, service };
   }
 

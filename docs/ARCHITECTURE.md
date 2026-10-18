@@ -14,7 +14,7 @@ adapter implementation discovery.
 - [Adapters and capabilities](#adapters-and-capabilities)
 - [Crawler rendering](#crawler-rendering)
 - [Responsive rendering](#responsive-rendering)
-- [Browser Provider boundary](#browser-provider-boundary)
+- [Browser Client boundary](#browser-client-boundary)
 - [Task reliability](#task-reliability)
 - [Human verification handoff](#human-verification-handoff)
 - [AO adapter discovery](#ao-adapter-discovery-and-verification-handoff)
@@ -33,13 +33,13 @@ flowchart LR
     Tasks --> Crawler["Crawler engine"]
     Crawler --> Adapters["Adapter registry"]
     Crawler --> Storage["Runtime state + downloads"]
-    API --> BrowserRegistry["Browser Provider registry"]
-    Crawler --> BrowserRegistry
+    API --> BrowserGateway["Browser session gateway"]
+    Crawler --> BrowserGateway
     API --> Selector["Selector discovery"]
   end
 
-  Provider["User-side Browser Provider"] -->|"outbound WebSockets"| BrowserRegistry
-  Provider --> Browser["Temporary browser profile"]
+  Provider["User-side Browser Client"] -->|"outbound command WebSocket"| BrowserGateway
+  Provider --> Browser["User browser / tab"]
   Browser --> Sites["Comic websites"]
   Crawler -->|"image requests"| Sites
   Selector --> AO["Optional AO service"]
@@ -55,8 +55,8 @@ The AO service is required only for adapter generation.
 |---|---|---|---|
 | ComicCrawler backend | Container process | `npm run dev` | Operator |
 | WebUI | Served by backend | Vite dev server | ComicCrawler launcher |
-| Browser Provider | Separate user process | Separate user process | User |
-| Browser | Started per session | Started per session | Browser Provider |
+| Browser Client | Separate GUI, extension, or local process | Same | User |
+| Browser | Existing or consumer-managed | Existing or consumer-managed | User |
 | AO service | Optional external service | Optional fixture or service | Administrator |
 | Runtime storage | Named volume or app-data path | `repo/data/` | ComicCrawler backend |
 
@@ -98,7 +98,7 @@ flowchart TD
   Resolve -->|adapter covers requested mode| Queue["Create crawl task"]
   Resolve -->|missing or capability mismatch| Discovery["Queue adapter implementation discovery"]
   Queue --> Crawl["Crawler engine"]
-  Crawl --> Remote["Remote Playwright render HTML"]
+  Crawl --> Remote["Browser Worker command session"]
   Remote --> Extract["Adapter extraction"]
   Extract --> Download["Download images"]
   Remote -->|human verification needed| Wait["waiting_verification"]
@@ -122,7 +122,7 @@ internally. Agent-generated TypeScript implements the `AdapterBase` capability
 contract.
 
 `parseMode` is only the DOM acquisition strategy. Its sole value is
-`playwright`, which renders through the remote browser provider before parsing.
+`playwright`, which renders through the task-bound Browser Worker before parsing.
 Human verification is modeled separately by `capabilities.verification` and
 runtime challenge detection.
 
@@ -164,16 +164,17 @@ an adapter draft.
 
 ## Crawler rendering
 
-The crawler always renders pages through a remote Playwright service. The
-endpoint comes from the task's internal Browser Lease:
+The crawler renders pages through a task-bound Browser Worker session. The
+Server sends semantic commands such as navigate, wait, bounded content
+preparation, get-content, and focus:
 
-- Remote mode opens a Playwright page, waits for rendering, and passes
-  `page.content()` into the parser path.
+- The consumer-owned executor chooses how to drive its browser and returns the
+  rendered DOM to the Server.
 - There is no static fetch path; every adapter declares `parseMode: playwright`.
   Verification handoff does not introduce another parse mode.
 
-Image downloading remains URL-based. Browser image fallback exists only for
-specific verified-session cases.
+Image downloading remains URL-based. Browser file transfer and screenshot
+fallback are not part of the command protocol.
 
 ### Responsive rendering
 
@@ -192,36 +193,37 @@ This is viewport emulation, not complete device emulation. ComicCrawler does
 not currently set a mobile user agent, `isMobile`, or `hasTouch`; sites that
 branch on those signals may still return their desktop variant.
 
-### Browser Provider boundary
+### Browser Client boundary
 
-The Browser Provider SDK is the stable integration boundary for a desktop GUI,
-browser companion, or standalone local service. Its provider strategy owns the
-browser lifecycle, while the outbound client adapts that strategy to the common
-control and relay protocol.
+The Browser Client SDK is the stable integration boundary for a desktop GUI,
+browser extension, or standalone local process. It is runtime-neutral and uses
+consumer-injected `BrowserExecutor`, `ClientStateStore`, and optional
+`WebSocketFactory` implementations.
 
 ```mermaid
 flowchart LR
-  Client[GUI / extension companion / local process] --> Provider[Browser Provider SDK]
-  Provider -->|outbound control + relay WebSockets| Cloud[ComicCrawler backend]
-  Cloud -->|task-scoped lease and session request| Provider
-  Provider --> Browser[User-side Chromium]
-  Cloud --> Lease[Browser Lease Coordinator]
-  Lease --> Crawl[Crawl / discovery / handoff / download fallback]
+  App[GUI / extension / local process] --> SDK[Browser Client SDK]
+  SDK -->|outbound command WebSocket| Cloud[ComicCrawler backend]
+  Cloud -->|session + semantic commands| SDK
+  SDK --> Executor[Consumer BrowserExecutor]
+  Executor --> Browser[User browser / tab]
+  Cloud --> Lease[Browser Worker Lease Coordinator]
+  Lease --> Crawl[Crawl / discovery / handoff]
 ```
 
-The backend registry persists Worker identities and tracks outbound control
-connections. Jobs persist `browserTarget`, which is either a specific stable
-`workerId` or `any`. The Browser Lease Coordinator reserves one Worker per task,
-creates and renews its internal Playwright session, then closes the session and
-returns the Worker to `idle`. A specific target is never silently replaced by
-another device. `reverse-relay` is the only transport: user devices need
-outbound access to ComicCrawler but do not accept inbound connections.
+The registry persists Browser Client credentials. A live SDK connection creates
+a process-scoped Worker identity. A managed-profile job may select any matching
+Worker or one Worker ID. An existing-tab job stores an exact `workerId` and
+opaque `resourceId`. The lease coordinator never silently replaces that tab or
+device. Browser resources exist only in Server memory while their Worker is
+connected; native Chrome tab IDs stay inside the consumer.
 
-Profile lifecycle uses inheritance: `BrowserProfileStrategy` is the abstract
-parent and `EphemeralProfileStrategy` is currently its only production child.
-It launches a fresh Playwright-managed temporary Chromium profile for each
-provider session. Profile copying, persistent user-data directories, and attach
-to an existing Chrome process are outside the current implementation.
+There is one project WebSocket, owned by the ComicCrawler Server. The protocol
+does not tunnel Playwright and does not expose a Playwright endpoint. Browser
+profile lifecycle belongs to the consumer. The SDK provides an
+`ExistingTabExecutor` for an already-open tab and a `ManagedProfileExecutor`
+for a consumer-owned profile launcher. Both use the same semantic command
+protocol.
 
 ## Task reliability
 
@@ -263,16 +265,16 @@ When a matched adapter encounters a human verification page, the task enters
 
 1. Open the task detail page.
 2. Click **Open browser for verification**.
-3. Complete verification in the browser opened by the paired remote Playwright service.
+3. Complete verification in the browser controlled by the selected Browser Client.
 4. Click **Continue** to resume from checkpoint.
 
 If the challenge handoff expires or is removed, the task detail page prompts the
 user to click **Continue** to recreate the handoff before opening the browser
 again.
 
-Crawler rendering, selector discovery, verification, and browser-assisted image
-downloads share one remote Playwright provider. The backend never launches a
-local browser; the browser process and profile live on the user-side service.
+Crawler rendering, selector discovery, and verification share the task-bound
+Browser Worker session. The backend never launches a browser; the browser
+process and profile remain on the user-side Consumer Application.
 
 ## AO adapter discovery and verification handoff
 

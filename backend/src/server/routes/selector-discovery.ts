@@ -3,11 +3,13 @@ import type { SelectorDiscoveryService, SelectorDiscoverySettingsStore } from '.
 import { SelectorDiscoveryBundleManager } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
-import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
+import type { BrowserRenderService } from '../../browser/browser-render-service';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 import { setupSelectorDiscoverySettingsRoutes } from './selector-discovery-settings';
 import { setupDiscoveryDraftFunctionRoutes } from './selector-discovery-function-routes';
-import type { BrowserLeaseCoordinator } from '../../browser/lease-coordinator';
+import type { BrowserWorkerLeaseCoordinator } from '../../browser/browser-worker-lease-coordinator';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
 
@@ -19,10 +21,11 @@ export function setupSelectorDiscoveryRoutes(
   options: {
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
-    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
-    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
+    withBrowserSession?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, initialUrl: string, action: (sessionId: string) => Promise<T>) => Promise<T>;
+    browserRenderService?: BrowserRenderService;
+    htmlRenderer?: HtmlRenderer;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
-    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    browserLeaseCoordinator?: BrowserWorkerLeaseCoordinator;
     apiSecurity?: ApiSecurityService;
   } = {}
 ): void {
@@ -38,10 +41,11 @@ function setupDiscoveryJobRoutes(
   options: {
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
-    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
-    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
+    withBrowserSession?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, initialUrl: string, action: (sessionId: string) => Promise<T>) => Promise<T>;
+    browserRenderService?: BrowserRenderService;
+    htmlRenderer?: HtmlRenderer;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
-    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    browserLeaseCoordinator?: BrowserWorkerLeaseCoordinator;
     apiSecurity?: ApiSecurityService;
   } = {}
 ): void {
@@ -54,7 +58,7 @@ function setupDiscoveryJobRoutes(
         providerDocument?: unknown;
         model?: string;
         forceDiscovery?: boolean;
-        browserTarget?: { mode?: string; workerId?: string };
+        browserTarget?: { mode?: string; workerId?: string; resourceId?: string };
       };
       if (!body.url) {
         reply.code(400).send({ error: 'URL is required.' });
@@ -96,7 +100,7 @@ function setupDiscoveryJobRoutes(
         providerDocument?: unknown;
         model?: string;
         forceDiscovery?: boolean;
-        browserTarget?: { mode?: string; workerId?: string };
+        browserTarget?: { mode?: string; workerId?: string; resourceId?: string };
       };
       if (!body.url) {
         reply.code(400).send({ error: 'URL is required.' });
@@ -194,16 +198,24 @@ function setupDiscoveryJobRoutes(
 }
 
 function validateBrowserTarget(
-  value: { mode?: string; workerId?: string } | undefined,
+  value: { mode?: string; workerId?: string; resourceId?: string } | undefined,
   ownerUserId: string,
-  coordinator: BrowserLeaseCoordinator | undefined
+  coordinator: BrowserWorkerLeaseCoordinator | undefined
 ) {
-  if (value === undefined || value.mode === 'any') return { mode: 'any' as const };
+  if (value === undefined) return { mode: 'managed-profile' as const };
   const workerId = value.workerId?.trim();
-  if (value.mode !== 'specific' || !workerId) {
-    throw new Error('browserTarget must be { mode: "any" } or { mode: "specific", workerId: "..." }.');
+  if (value.mode === 'managed-profile') {
+    const target = workerId
+      ? { mode: 'managed-profile' as const, workerId }
+      : { mode: 'managed-profile' as const };
+    coordinator?.validateTarget(ownerUserId, target);
+    return target;
   }
-  const target = { mode: 'specific' as const, workerId };
+  const resourceId = value.resourceId?.trim();
+  if (value.mode !== 'existing-tab' || !workerId || !resourceId) {
+    throw new Error('browserTarget must select managed-profile or provide an existing-tab workerId and resourceId.');
+  }
+  const target = { mode: 'existing-tab' as const, workerId, resourceId };
   coordinator?.validateTarget(ownerUserId, target);
   return target;
 }

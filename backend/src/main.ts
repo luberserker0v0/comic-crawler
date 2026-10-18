@@ -21,9 +21,10 @@ import { AdapterDraftService } from './adapter-drafts/service';
 import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import { MaintenanceService } from './maintenance/service';
 import { logger } from './utils/logger';
-import { BrowserProviderRegistry } from './browser/provider-registry';
-import { BrowserLeaseCoordinator, type BrowserLease } from './browser/lease-coordinator';
-import { fetchSafeHtml } from './selector-discovery/safe-fetch';
+import { BrowserClientRegistry } from './browser/browser-client-registry';
+import { BrowserSessionGateway } from './browser/browser-session-gateway';
+import { BrowserWorkerLeaseCoordinator, type BrowserWorkerLease } from './browser/browser-worker-lease-coordinator';
+import { BrowserRenderService } from './browser/browser-render-service';
 import { ConcurrentSchedulingPolicy, TaskDeferredError } from './scheduler';
 import { ApiSecurityService, resolveApiSecurityPolicy } from './security/api-security';
 
@@ -45,26 +46,27 @@ async function main(): Promise<void> {
     timing.mark('config load');
 
     const adapterRegistry = new AdapterRegistry(eventBus);
-    const browserProviderRegistry = new BrowserProviderRegistry(storage);
-    await browserProviderRegistry.initialize();
-    const browserLeaseCoordinator = new BrowserLeaseCoordinator(browserProviderRegistry);
-    timing.mark('browser provider registry initialize');
-    const getBrowserConfig = async (sessionId?: string) =>
-      browserProviderRegistry.resolveBrowserConfig((await configManager.get()).browser, sessionId);
+    const browserClientRegistry = new BrowserClientRegistry(storage);
+    await browserClientRegistry.initialize();
+    const browserSessionGateway = new BrowserSessionGateway(browserClientRegistry, apiSecurity);
+    const browserLeaseCoordinator = new BrowserWorkerLeaseCoordinator(browserSessionGateway);
+    const browserRenderService = new BrowserRenderService(browserSessionGateway);
+    timing.mark('browser client gateway initialize');
 
     await registerProjectAdapters(storage, (adapter) => adapterRegistry.register(adapter));
 
     const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
       workspaceRoot: runtime.agentWorkspacePath,
-      getBrowserConfig,
+      getBrowserConfig: async () => (await configManager.get()).browser,
       getNetworkConfig: async () => (await configManager.get()).network,
-      acquireBrowserSession: async ({ jobId, ownerUserId, browserTarget }) => {
+      browserRenderService,
+      acquireBrowserSession: async ({ jobId, ownerUserId, url, browserTarget }) => {
         const browser = (await configManager.get()).browser;
         const lease = await browserLeaseCoordinator.acquire({
           taskId: `challenge:${jobId}`,
           ownerUserId,
           target: browserTarget,
-          baseBrowserConfig: browser,
+          initialUrl: url,
           timeoutMs: browser.workerWaitTimeoutMs,
         });
         return { sessionId: lease.sessionId, release: () => lease.release() };
@@ -74,13 +76,15 @@ async function main(): Promise<void> {
     const fixtureCaptureService = new FixtureCaptureService(challengeDiscoveryService, runtime.agentWorkspacePath);
     const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
     const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
-      getBrowserConfig,
+      getBrowserConfig: async () => (await configManager.get()).browser,
+      renderBrowserPage: (sessionId, url, options) =>
+        browserRenderService.render(sessionId, url, { timeoutMs: options.timeoutMs }),
       acquireBrowserSession: async ({ job, browserTarget }) => {
         const lease = await browserLeaseCoordinator.acquire({
           taskId: `selector:${job.id}`,
           ownerUserId: job.ownerUserId ?? 'public',
           target: browserTarget,
-          baseBrowserConfig: (await configManager.get()).browser,
+          initialUrl: job.normalizedUrl,
           timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
         });
         return { sessionId: lease.sessionId, release: () => lease.release() };
@@ -91,20 +95,18 @@ async function main(): Promise<void> {
           taskId: `selector-fixture:${job.id}`,
           ownerUserId: job.ownerUserId ?? 'public',
           target: job.browserTarget,
-          baseBrowserConfig: (await configManager.get()).browser,
+          initialUrl: job.normalizedUrl,
           timeoutMs: (await configManager.get()).browser.workerWaitTimeoutMs,
         });
         try {
-          const page = await fetchSafeHtml(job.normalizedUrl, {
-            browser: await getBrowserConfig(lease.sessionId),
-            network: (await configManager.get()).network,
-            renderFirst: true,
+          const page = await browserRenderService.render(lease.sessionId, job.normalizedUrl, {
+            timeoutMs: (await configManager.get()).browser.timeout,
           });
           return fixtureCaptureService.captureApprovedAdapterFixture({
             sourceDiscoveryId: job.id,
             adapter,
             target: job.target ?? 'full',
-            url: page.finalUrl,
+            url: page.url,
             html: page.html,
           });
         } finally {
@@ -123,7 +125,7 @@ async function main(): Promise<void> {
       concurrency: config.download.concurrency,
       browser: config.browser,
       network: config.network,
-      resolveRemoteBrowser: async (sessionId) => (await getBrowserConfig(sessionId)).remote,
+      browserRenderService,
       eventBus,
     });
 
@@ -133,7 +135,7 @@ async function main(): Promise<void> {
         throw new ComicError(`Adapter "${task.data.adapterId}" not found`, ErrorType.ADAPTER_ERROR);
       }
 
-      let browserLease: BrowserLease | undefined;
+      let browserLease: BrowserWorkerLease | undefined;
       let retainLeaseForVerification = false;
       let reconnectAttempts = 0;
 
@@ -143,12 +145,12 @@ async function main(): Promise<void> {
           taskId: task.id,
           ownerUserId: task.data.ownerUserId ?? 'public',
           target: task.data.browserTarget,
-          baseBrowserConfig: browserConfig,
+          initialUrl: task.data.url,
         });
         if (!browserLease) {
-          const targetMessage = task.data.browserTarget?.mode === 'specific'
+          const targetMessage = task.data.browserTarget?.mode === 'existing-tab' || task.data.browserTarget?.workerId
             ? `Waiting for browser worker "${task.data.browserTarget.workerId}".`
-            : 'Waiting for an available browser worker.';
+            : 'Waiting for an available managed-profile browser worker.';
           await taskManager.markWaitingForBrowserWorker(task.id, targetMessage);
           const waitStartedAt = Date.parse(task.data.browserWaitStartedAt ?? new Date().toISOString());
           const waitTimeoutMs = browserConfig.workerWaitTimeoutMs ?? 30 * 60 * 1000;
@@ -263,8 +265,10 @@ async function main(): Promise<void> {
       adapterDraftService,
       fixtureCaptureService,
       maintenanceService,
-      browserProviderRegistry,
+      browserClientRegistry,
+      browserSessionGateway,
       browserLeaseCoordinator,
+      browserRenderService,
       storage,
       staticDir: runtime.staticDir,
       apiSecurity,

@@ -1,116 +1,34 @@
-import type { BrowserConfig, EffectiveRenderContext, NetworkConfig } from '@comiccrawler/shared';
-import { BrowserPool } from './browser-pool';
-import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
-import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
-import { findPageHtmlInContexts, settleLazyLoadedImages } from '../challenge/remote-handoff';
+import type { BrowserConfig } from '@comiccrawler/shared';
 import { assertNotAntiBotChallenge } from './anti-bot';
 import { ComicError, ErrorType } from '../error/types';
-import type { RemoteBrowserConfigResolver } from './types';
+import type { BrowserRenderService } from '../browser/browser-render-service';
 
 export interface HtmlRenderer {
   render(url: string): Promise<string>;
   dispose(): Promise<void>;
 }
 
-export class PlaywrightHtmlRenderer implements HtmlRenderer {
-  private readonly browserPools = new Map<string, BrowserPool>();
-  private readonly challengeHandler = new BrowserChallengeHandler();
-
+export class GatewayHtmlRenderer implements HtmlRenderer {
   constructor(
-    private readonly browser: BrowserConfig,
-    private readonly network?: NetworkConfig,
-    private readonly resolveRemote?: RemoteBrowserConfigResolver,
-    private readonly renderContext?: EffectiveRenderContext
+    private readonly renderService: BrowserRenderService,
+    private readonly getSessionId: () => string | undefined,
+    private readonly browser: BrowserConfig
   ) {}
 
   async render(url: string): Promise<string> {
-    const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
-    if (verifiedSession) {
-      try {
-        const page = await findPageHtmlInContexts([verifiedSession.context], { targetUrl: url });
-        assertNotAntiBotChallenge(page.html, page.url);
-        return page.html;
-      } catch (error) {
-        throw new ComicError(
-          'The previously verified browser page is no longer available. Human verification must be completed again before crawling can continue.',
-          ErrorType.NETWORK_ERROR,
-          true,
-          {
-            humanVerificationProfileUnavailable: true,
-            challengeDiscoveryId: verifiedSession?.sourceJobId,
-            challengeStatus: 'challenge_required',
-            hostname: new URL(url).hostname,
-            wsEndpoint: verifiedSession.wsEndpoint,
-            cause: error instanceof Error ? error.message : String(error),
-          }
-        );
-      }
-    }
-
-    const browserPool = await this.getBrowserPool(url);
-    const page = await browserPool.createPage({
-      userAgent: this.network?.userAgent,
-      proxy: this.network?.proxy,
-    });
-
-    try {
-      await page.goto(url, {
-        waitUntil: this.browser.waitUntil,
-        timeout: this.browser.timeout,
+    const sessionId = this.getSessionId();
+    if (!sessionId) {
+      throw new ComicError('Browser Worker session is required for rendered DOM.', ErrorType.CONFIG_ERROR, false, {
+        url,
       });
-
-      if (this.browser.waitForSelector?.trim()) {
-        await page.waitForSelector(this.browser.waitForSelector.trim(), {
-          state: 'attached',
-          timeout: this.browser.timeout,
-        }).catch(async (error) => {
-          const html = await page.content().catch(() => '');
-          assertNotAntiBotChallenge(html, url);
-          throw error;
-        });
-      }
-
-      if (this.browser.postLoadDelayMs && this.browser.postLoadDelayMs > 0) {
-        await page.waitForTimeout(this.browser.postLoadDelayMs);
-      }
-
-      await this.challengeHandler.ensureReady(page, url, {
-        challengeAutoAttempt: this.browser.challengeAutoAttempt,
-        challengeWaitMs: this.browser.challengeWaitMs,
-      });
-      await settleLazyLoadedImages(page, { onlyDetectedTargets: true });
-      const html = await page.content();
-      assertNotAntiBotChallenge(html, page.url());
-      return html;
-    } finally {
-      await browserPool.closePage(page);
     }
-  }
-
-  async dispose(): Promise<void> {
-    await Promise.all([...this.browserPools.values()].map((pool) => pool.dispose()));
-    this.browserPools.clear();
-  }
-
-  private async getBrowserPool(_url: string): Promise<BrowserPool> {
-    const remote = await this.resolveRemote?.() ?? this.browser.remote;
-    const endpointKey = JSON.stringify({
-      wsEndpoint: remote?.wsEndpoint ?? '__remote_unconfigured__',
-      headers: remote?.headers ?? {},
+    const page = await this.renderService.render(sessionId, url, {
+      timeoutMs: this.browser.timeout,
+      postLoadDelayMs: this.browser.postLoadDelayMs,
     });
-    const existing = this.browserPools.get(endpointKey);
-    if (existing) return existing;
-
-    const pool = new BrowserPool({
-      maxInstances: this.browser.maxInstances,
-      timeout: this.browser.timeout,
-      userAgent: this.network?.userAgent,
-      proxy: this.network?.proxy,
-      viewport: this.renderContext?.viewport,
-      deviceScaleFactor: this.renderContext?.deviceScaleFactor,
-      remote,
-    }, async () => remote);
-    this.browserPools.set(endpointKey, pool);
-    return pool;
+    assertNotAntiBotChallenge(page.html, page.url);
+    return page.html;
   }
+
+  async dispose(): Promise<void> {}
 }

@@ -128,9 +128,6 @@ export function setupChallengeDiscoveryRoutes(
           allowNavigate: body?.allowNavigate,
         });
       reply.code(202).send({ data: job });
-      if (job.status === 'ready') {
-        await challengeDiscoveryService.releaseBrowserLease(id);
-      }
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

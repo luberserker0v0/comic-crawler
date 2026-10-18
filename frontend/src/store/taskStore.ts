@@ -149,7 +149,7 @@ interface TaskState {
 
   fetchTasks: () => Promise<void>;
   applyRealtimeEvent: (message: TaskRealtimeMessage) => void;
-  createTask: (url: string, options?: { adapterId?: string; mode?: 'all' | 'chapters'; chapters?: string[]; chapterUrls?: string[]; priority?: number; browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string } }) => Promise<CreateTaskResult>;
+  createTask: (url: string, options?: { adapterId?: string; mode?: 'all' | 'chapters'; chapters?: string[]; chapterUrls?: string[]; priority?: number; browserTarget?: { mode: 'managed-profile'; workerId?: string } | { mode: 'existing-tab'; workerId: string; resourceId: string } }) => Promise<CreateTaskResult>;
   pauseTask: (id: string) => Promise<void>;
   resumeTask: (id: string) => Promise<void>;
   cancelTask: (id: string) => Promise<void>;

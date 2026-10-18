@@ -61,4 +61,26 @@ describe('ComixAdapter', () => {
       },
     });
   });
+
+  it('extracts Browser Client image annotations left by virtualized reader pages', async () => {
+    const annotated = FIXTURE
+      .replace(
+        '<img class="rpage-page__img" alt="Page 2" data-src="https://447.reader-two.site/hi/page-two-token">',
+        ''
+      )
+      .replace(
+        '<div class="rpage-page" data-page="2">',
+        '<div class="rpage-page" data-page="2" data-comiccrawler-image-url="https://447.reader-two.site/hi/page-two-token">'
+      );
+    adapter.setHtmlRenderer({
+      render: async () => annotated,
+      dispose: async () => undefined,
+    });
+
+    await expect(composeChapterImages(adapter, CHAPTER_URL)).resolves.toEqual([
+      { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
+      { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
+      { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
+    ]);
+  });
 });

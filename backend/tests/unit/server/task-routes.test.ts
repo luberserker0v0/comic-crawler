@@ -10,7 +10,6 @@ import { TaskManager } from '../../../src/task/manager';
 import { createEmptyCheckpoint } from '../../../src/task/checkpoint';
 import { CrawlerEngine } from '../../../src/crawler/engine';
 import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
-import { BrowserProviderRegistry } from '../../../src/browser/provider-registry';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'task-routes');
 
@@ -21,7 +20,6 @@ describe('Task routes persistence', () => {
   let crawlerEngine: CrawlerEngine;
   let adapterRegistry: AdapterRegistry;
   let challengeJobs: Map<string, any>;
-  let browserProviderRegistry: BrowserProviderRegistry;
 
   beforeEach(async () => {
     await fs.rm(TEST_ROOT, { recursive: true, force: true });
@@ -53,7 +51,6 @@ describe('Task routes persistence', () => {
       concurrency: 1,
       eventBus,
     });
-    browserProviderRegistry = new BrowserProviderRegistry();
 
     await taskManager.createTask({
       id: 'task-1',
@@ -79,7 +76,6 @@ describe('Task routes persistence', () => {
       adapterRegistry,
       crawlerEngine,
       eventBus,
-      browserProviderRegistry,
       selectorDiscoveryService: {
         create: async (input: { url: string; target?: 'full' | 'chapter-only' }) => {
           const id = `disc-${Date.now()}`;
@@ -281,15 +277,15 @@ describe('Task routes persistence', () => {
         mode: 'chapters',
         url: chapterUrl,
         chapterUrls: [chapterUrl],
-        browserTarget: { mode: 'any' },
+        browserTarget: { mode: 'managed-profile' },
       },
     });
 
     expect(response.statusCode).toBe(201);
-    expect(response.json().data.browserTarget).toEqual({ mode: 'any' });
+    expect(response.json().data.browserTarget).toEqual({ mode: 'managed-profile' });
     expect(taskManager.getTask(response.json().data.taskId)?.data).toMatchObject({
       ownerUserId: 'public',
-      browserTarget: { mode: 'any' },
+      browserTarget: { mode: 'managed-profile' },
     });
 
     const unknownField = await server.getApp().inject({
@@ -299,6 +295,52 @@ describe('Task routes persistence', () => {
     });
     expect(unknownField.statusCode).toBe(400);
     expect(unknownField.json()).toEqual({ error: 'Unknown task field "unexpected".' });
+  });
+
+  it('persists an exact existing-tab Worker and resource target', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+    const response = await server.getApp().inject({
+      method: 'POST',
+      url: '/api/tasks',
+      payload: {
+        mode: 'chapters',
+        url: chapterUrl,
+        chapterUrls: [chapterUrl],
+        browserTarget: {
+          mode: 'existing-tab',
+          workerId: 'worker-extension',
+          resourceId: 'resource-current-tab',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.browserTarget).toEqual({
+      mode: 'existing-tab',
+      workerId: 'worker-extension',
+      resourceId: 'resource-current-tab',
+    });
+  });
+
+  it('rejects removed Browser Target modes and incomplete existing-tab targets', async () => {
+    const chapterUrl = 'https://kuronavi.one/manga/demo/chapter-1';
+    for (const browserTarget of [
+      { mode: 'any' },
+      { mode: 'specific', workerId: 'worker-old' },
+      { mode: 'existing-tab', workerId: 'worker-extension' },
+    ]) {
+      const response = await server.getApp().inject({
+        method: 'POST',
+        url: '/api/tasks',
+        payload: {
+          mode: 'chapters',
+          url: chapterUrl,
+          chapterUrls: [chapterUrl],
+          browserTarget,
+        },
+      });
+      expect(response.statusCode).toBe(400);
+    }
   });
 
   it('should reject a specific-chapters task without chapter URLs', async () => {

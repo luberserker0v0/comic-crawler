@@ -18,5 +18,4 @@ export type {
   SelectorConfig,
 } from './crawler/extraction/types';
 
-export type { BrowserPoolConfig, BrowserInstance, BrowserPoolStats } from './crawler/types';
 export type { HtmlParser } from './crawler/html-parser';

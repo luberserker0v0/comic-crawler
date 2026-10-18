@@ -17,7 +17,7 @@ A site adapter extends `AdapterBase` and declares:
   `extractChapterImageUrls`
 
 `parseMode` only tells the runtime how to obtain the DOM. Its only supported
-value is `playwright`; all pages render through the remote Playwright provider
+value is `playwright`; all pages render through the task-bound Browser Worker
 before parsing, and there is no static fetch path. Human verification is a
 separate adapter capability (`capabilities.verification`) activated by challenge
 detection, not a parse mode.
@@ -47,8 +47,8 @@ lazy-loaded and use rotating CDN hosts without filename extensions, so the
 adapter selects reader page elements, preserves their `data-page` order, and
 rejects a partially loaded page list instead of returning truncated results.
 
-Comix human verification must be completed through the remote Playwright
-handoff. The adapter detects Comix/Cloudflare verification DOM; it does not
+Comix human verification must be completed through the task-bound Browser
+Worker handoff. The adapter detects Comix/Cloudflare verification DOM; it does not
 bypass the verification step.
 
 ## Adapter Lab

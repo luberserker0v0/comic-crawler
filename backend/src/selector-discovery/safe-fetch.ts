@@ -3,10 +3,6 @@ import { isIP } from 'node:net';
 import { fetch } from 'undici';
 import type { BrowserConfig, NetworkConfig } from '@comiccrawler/shared';
 import { assertNotAntiBotChallenge, looksLikeAntiBotChallenge } from '../crawler/anti-bot';
-import { BrowserChallengeHandler } from '../challenge/browser-challenge-handler';
-import { getGlobalVerifiedBrowserSessionRegistry } from '../challenge/verified-browser-sessions';
-import { connectRemoteBrowser } from '../browser/remote-browser-provider';
-import { findPageHtmlInContexts } from '../challenge/remote-handoff';
 
 export interface SafeHtmlFetchResult {
   url: string;
@@ -29,6 +25,7 @@ export interface SafeHtmlFetchOptions {
    * same mechanism; static stays available for other callers.
    */
   renderFirst?: boolean;
+  renderPage?: (url: string, options: { timeoutMs: number }) => Promise<{ url: string; html: string }>;
 }
 
 export async function fetchSafeHtml(
@@ -42,9 +39,9 @@ export async function fetchSafeHtml(
 
   if (options.renderFirst) {
     await validateResolvedAddresses(currentUrl);
-    const html = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
-    assertNotAntiBotChallenge(html, currentUrl);
-    return { url, finalUrl: currentUrl, redirectChain, html, contentType: 'text/html; rendered=playwright' };
+    const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+    assertNotAntiBotChallenge(page.html, page.url);
+    return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
   }
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
@@ -74,9 +71,9 @@ export async function fetchSafeHtml(
       }
 
       if (!response.ok && shouldFallbackToHeadless(response.status)) {
-        const html = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(html, currentUrl);
-        return { url, finalUrl: currentUrl, redirectChain, html, contentType: 'text/html; rendered=playwright' };
+        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+        assertNotAntiBotChallenge(page.html, page.url);
+        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
       }
 
       if (!response.ok) {
@@ -90,9 +87,9 @@ export async function fetchSafeHtml(
 
       const html = await readLimitedText(response as any, MAX_HTML_BYTES);
       if (looksLikeAntiBotChallenge(html)) {
-        const renderedHtml = await fetchHeadlessHtml(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(renderedHtml, currentUrl);
-        return { url, finalUrl: currentUrl, redirectChain, html: renderedHtml, contentType: 'text/html; rendered=playwright' };
+        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+        assertNotAntiBotChallenge(page.html, page.url);
+        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
       }
       assertNotAntiBotChallenge(html, currentUrl);
       return { url, finalUrl: currentUrl, redirectChain, html, contentType };
@@ -164,51 +161,14 @@ function shouldFallbackToHeadless(status: number): boolean {
   return status === 401 || status === 403 || status === 429 || status === 503;
 }
 
-async function fetchHeadlessHtml(url: string, options: SafeHtmlFetchOptions & { timeoutMs: number }): Promise<string> {
-  const verifiedSession = getGlobalVerifiedBrowserSessionRegistry().getByUrl(url);
-  if (verifiedSession) {
-    return (await findPageHtmlInContexts([verifiedSession.context], {
-      targetUrl: url,
-    })).html;
+async function fetchRenderedPage(
+  url: string,
+  options: SafeHtmlFetchOptions & { timeoutMs: number }
+): Promise<{ url: string; html: string }> {
+  if (!options.renderPage) {
+    throw new Error('Browser Worker renderer is required for rendered HTML.');
   }
-  const browserOptions = {
-    ...(options.browser ?? {}),
-  };
-  const contextOptions = {
-    userAgent: options.network?.userAgent,
-    proxy: options.network?.proxy ? { server: options.network.proxy } : undefined,
-    viewport: { width: 1920, height: 1080 },
-  };
-  const browser = await connectRemoteBrowser({
-    wsEndpoint: browserOptions.remote?.wsEndpoint,
-    timeout: browserOptions.remote?.connectTimeout ?? options.timeoutMs,
-    exposeNetwork: browserOptions.remote?.exposeNetwork,
-    headers: browserOptions.remote?.headers,
-  });
-  const context = await browser.newContext(contextOptions);
-  try {
-    const page = await context.newPage();
-    await page.goto(url, {
-      waitUntil: browserOptions.waitUntil ?? 'domcontentloaded',
-      timeout: options.timeoutMs,
-    });
-    if (browserOptions.waitForSelector?.trim()) {
-      await page.waitForSelector(browserOptions.waitForSelector.trim(), {
-        state: 'attached',
-        timeout: options.timeoutMs,
-      });
-    }
-    if (browserOptions.postLoadDelayMs && browserOptions.postLoadDelayMs > 0) {
-      await page.waitForTimeout(browserOptions.postLoadDelayMs);
-    }
-    return (await new BrowserChallengeHandler().ensureReady(page, url, {
-      challengeAutoAttempt: browserOptions.challengeAutoAttempt,
-      challengeWaitMs: browserOptions.challengeWaitMs,
-    })).html;
-  } finally {
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
-  }
+  return options.renderPage(url, { timeoutMs: options.timeoutMs });
 }
 
 async function readLimitedText(response: { body?: { getReader?: () => any } }, maxBytes: number): Promise<string> {

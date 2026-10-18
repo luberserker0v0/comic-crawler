@@ -1,76 +1,43 @@
-# Capability Draft Output Contract
+# Capability Draft Review
 
-This file describes capability draft review notes. Agents do not write the
-final `AdapterBase` shell; ComicCrawler assembles it from reviewed capability
-classes.
+The TypeScript draft must contain only the requested site-specific capability
+subclass. Follow `adapter-base-api.md`; ComicCrawler assembles the adapter shell.
 
-## TypeScript Capability Requirements
-
-The requested TypeScript file must:
-
-- contain only the capability class or classes requested for the current stage;
-- create site-specific subclasses of `CommonCapability`,
-  `VerificationCapability`, `MetadataCapability`, or
-  `ChapterImagesCapability`;
-- not export a class that extends `AdapterBase`;
-- not declare adapter identity, domains, parseMode, capability flags, handler
-  fields, constructors, or `super(...)`;
-- implement only the fine-grained functions owned by the requested capability;
-- keep site-specific expansion, filtering, and extraction logic visible in the
-  capability source;
-- return full extraction results from capability methods:
-  - `extractChapterList` returns all catalog chapters visible in the trusted DOM;
-  - `extractChapterImageUrls` returns all comic page image URLs visible in the
-    trusted reader DOM;
-- avoid filesystem access, child processes, `process`, `eval`, `new Function`,
-  `this.dom`, browser document APIs, invalid `Capability` imports, and arbitrary
-  side effects.
-
-## Review Notes Requirements
-
-Use these sections where relevant to the requested capability stage.
+Review notes use the relevant sections below:
 
 ## Capability Scope
 
 - Stage:
-- Implemented capability class:
-- Intentionally omitted capabilities:
+- Implemented class:
+- Omitted capabilities:
 
 ## Implemented Functions
 
-List every implemented fine-grained function and the evidence used.
+List each method and its DOM evidence.
 
 ## Metadata Evidence
 
-For metadata stages, explain title, author, description, cover, tags, status,
-and chapter-list evidence. If chapter-only, state that metadata is intentionally
-not implemented.
+Explain field and chapter-list selectors when this is a metadata stage.
 
 ## Chapter Image Evidence
 
-For chapter image stages, explain reader containers, image nodes, lazy-loading
-attributes, and why selected images are comic pages rather than covers, logos,
-UI icons, tracking pixels, or ads.
+Explain the reader container, image nodes, URL attributes, ordering, and
+non-comic exclusions when this is a chapter-image stage.
 
 ## Verification Evidence
 
-For verification stages, explain how blocked/challenge pages are detected. Do
-not propose bypassing CAPTCHA or Cloudflare.
+Explain challenge detection without proposing a bypass.
 
 ## Known Risks
 
-List incomplete DOM evidence, collapsed chapter lists, dynamic rendering,
-verified browser DOM requirements, and URL mismatch risks.
+Record incomplete DOM, dynamic content, collapsed lists, URL mismatch, or weak
+selector evidence. Browser preparation is upstream; capability code must not
+perform browser actions.
 
 ## Reviewer Checklist
 
-- Capability subclass used:
-- No AdapterBase shell:
-- No constructor/super identity object:
-- No this.dom or browser document API:
-- No JSON output:
-- Only requested capability methods implemented:
-- URL matching checked:
-- Metadata functions checked:
-- Chapter image functions checked:
-- Verification handoff behavior checked:
+- Correct capability subclass and method signatures
+- No AdapterBase shell or cross-capability methods
+- No browser, filesystem, process, network, or dynamic-code side effects
+- Complete ordered results for the supplied DOM
+- Site-specific evidence and risks documented

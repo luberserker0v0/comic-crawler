@@ -5,7 +5,7 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/
-COPY browser-provider-sdk/package.json ./browser-provider-sdk/
+COPY browser-client-sdk/package.json ./browser-client-sdk/
 COPY backend/package.json ./backend/
 COPY frontend/package.json ./frontend/
 RUN npm ci
@@ -13,13 +13,13 @@ RUN npm ci
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/shared ./shared
-COPY --from=deps /app/browser-provider-sdk ./browser-provider-sdk
+COPY --from=deps /app/browser-client-sdk ./browser-client-sdk
 COPY --from=deps /app/backend ./backend
 COPY --from=deps /app/frontend ./frontend
 COPY . ./
 
 ENV NODE_ENV=production
-RUN npm run build:shared && npm run build:browser-provider-sdk && npm run build:backend && npm run build:frontend
+RUN npm run build:shared && npm run build:browser-client-sdk && npm run build:backend && npm run build:frontend
 RUN npm prune --omit=dev
 
 FROM base AS runner
@@ -39,8 +39,8 @@ COPY --from=builder /app/frontend/dist ./static
 COPY --from=builder /app/docs ./docs
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
-COPY --from=builder /app/browser-provider-sdk/dist ./browser-provider-sdk/dist
-COPY --from=builder /app/browser-provider-sdk/package.json ./browser-provider-sdk/
+COPY --from=builder /app/browser-client-sdk/dist ./browser-client-sdk/dist
+COPY --from=builder /app/browser-client-sdk/package.json ./browser-client-sdk/
 COPY --from=builder /app/backend/package.json ./backend/
 
 RUN mkdir -p /app/data /app/downloads && chown -R app:nodejs /app

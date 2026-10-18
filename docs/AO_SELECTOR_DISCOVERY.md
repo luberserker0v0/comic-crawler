@@ -1,115 +1,67 @@
-# AO Adapter Implementation Discovery
+# AO Selector Discovery
 
-ComicCrawler uses AO to help create adapter implementation drafts for unknown or
-capability-incomplete comic sites.
+AO creates reviewable adapter capability drafts from trusted DOM evidence.
+ComicCrawler validates and assembles the final adapter; a developer must accept
+it before promotion.
 
-## Two-stage rollout
+## Inputs
 
-### Stage 1: document and API-flow calibration
+Each short-lived AO workspace receives:
 
-Stage 1 does not promote AO output into runtime adapters.
+- the selector-discovery agent, skills, templates, and Markdown contracts;
+- `task.md` with the source URL, fetch summary, capability target, existing
+  adapter context, and sanitized DOM summary;
+- Phase 1 analysis when metadata discovery precedes chapter discovery;
+- retry feedback from static validation when needed.
 
-Goals:
+Provider configuration and credentials remain outside task artifacts.
 
-- verify that AO-facing Markdown files describe the correct `AdapterBase`
-  implementation contract;
-- verify that ComicCrawler calls the AO conversation/message API correctly;
-- save AO output artifacts for review;
-- statically validate the TypeScript implementation draft.
+## Capability pipeline
 
-Expected AO artifacts:
+1. `common-verification`: URL matching and challenge handoff.
+2. `metadata`: metadata and chapter catalog for full adapters.
+3. `chapter-images`: ordered comic page image URLs.
+4. System compose: ComicCrawler builds the final `AdapterBase` shell.
 
-- `outputs/adapter-implementation.ts`
-- `outputs/review-notes.md`
+AO writes only the requested capability subclass and Markdown review notes.
+Exact interfaces are defined in
+`agent/ao/selector-discovery/draft/contracts/adapter-base-api.md`.
 
-### Stage 2: live AO output analysis
+## Browser boundary
 
-Stage 2 uses a real AO instance and evaluates output quality.
+Browser Client navigates, waits, and runs bounded `scroll-through` content
+preparation before ComicCrawler captures the DOM. AO and adapter capabilities
+receive a Cheerio snapshot and perform pure extraction; they cannot click,
+scroll, navigate, fetch, or use browser globals.
 
-The team reviews:
+Virtualized reader URLs may be preserved in `data-comiccrawler-src` or
+`data-comiccrawler-image-url` attributes in that snapshot.
 
-- whether the adapter extends `AdapterBase`;
-- whether `id`, `name`, `domains`, `parseMode`, and `capabilities` are correct;
-- whether fine-grained functions return correct data;
-- whether chapter lists are complete;
-- whether image extraction excludes cover/logo/UI/ad images;
-- whether human verification requirements are represented correctly;
-- whether poor output was caused by weak DOM summaries, unclear contracts,
-  missing verified fixtures, or insufficient validation.
+If the DOM remains incomplete, AO records the evidence instead of inventing
+missing chapters or image URLs. DOM readiness rejects known reader-page
+containers that still contain unloaded placeholders.
 
-If output quality is poor, update AO-facing documents first, then rerun the same
-case and compare artifacts.
+## Review and promotion
 
-## AO-facing contract
+Before developer acceptance, ComicCrawler checks:
 
-AO receives Markdown task files and sanitized DOM summaries. AO must not read or
-write JSON contracts.
+- TypeScript syntax, capability structure, and exact method signatures;
+- prohibited imports and side effects;
+- challenge detection rules;
+- fixture readiness and non-empty extraction;
+- reader page count against extracted image count when the DOM exposes page
+  containers.
 
-Final output is a TypeScript adapter implementation draft, not a selector
-manifest:
+Acceptance stores the page fixture and expected extraction result. Future tests
+rerun the adapter against that fixture and compare the complete result.
 
-```text
-outputs/adapter-implementation.ts
-outputs/review-notes.md
-```
+## AO lifecycle
 
-> **Scope**: the full-shell file below is the **system-assembled artifact**:
-> ComicCrawler composes it from reviewed per-stage capability drafts
-> (see `agent/ao/selector-discovery/draft/contracts/capability-pipeline.md`
-> "System compose"). AO/agents write capability subclasses only and must NOT
-> export the `AdapterBase` shell in stage drafts; the validator rejects shells
-> in stage output (`backend/src/selector-discovery/adapter-implementation.ts`).
+For every phase ComicCrawler:
 
-The assembled TypeScript file must export one class that extends `AdapterBase`. It must
-declare:
-
-- `id`
-- `name`
-- `domains`
-- `parseMode`
-- `capabilities`
-
-It should implement supported capability handlers using ComicCrawler's adapter
-base classes:
-
-- `CommonCapability`
-- `VerificationCapability`
-- `MetadataCapability`
-- `ChapterImagesCapability`
-
-AO implements fine-grained extraction functions. ComicCrawler runtime composes
-their results into the public response models.
-
-## Backend AO API lifecycle
-
-For each AO phase, ComicCrawler:
-
-1. creates a short-lived AO conversation;
-2. uploads `opencode.json`, `AGENTS.md`, primary/subagent files, skills, and
-   Markdown contracts;
-3. uploads `task.md`;
-4. starts the conversation;
-5. polls AO conversation status until ready;
-6. sends a message with:
-   - `agent: "selector-discovery"`
-   - caller-selected `model`
-   - Markdown task text
-7. reads requested output files;
-8. deletes the conversation.
-
-The message timeout is 15 minutes. Provider credentials stay in system config and
-must not be written into task logs or AO-facing Markdown.
-
-## Current Stage 1 behavior
-
-ComicCrawler saves AO implementation artifacts on the discovery job:
-
-- `adapterImplementationTs`
-- `reviewNotesMarkdown`
-- `implementationValidation`
-
-It also stores an artifact under runtime storage using the discovery job id.
-
-Stage 1 does not load or promote AO TypeScript into the runtime registry. Runtime
-promotion of TypeScript adapters is a Stage 2 follow-up after validation,
-sandboxing, and review policy are finalized.
+1. creates a temporary conversation;
+2. uploads the bundle and `task.md`;
+3. invokes the `selector-discovery` agent with the caller-selected model;
+4. reads and validates the requested files;
+5. stores review artifacts;
+6. deletes the conversation.

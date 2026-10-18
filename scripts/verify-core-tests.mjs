@@ -10,7 +10,11 @@ const coreBackendTests = [
   'tests/unit/crawler/engine.test.ts',
   'tests/unit/crawler/image-downloader.test.ts',
   'tests/unit/crawler/anti-bot.test.ts',
-  'tests/unit/server/browser-provider-routes.test.ts',
+  'tests/unit/server/browser-client-routes.test.ts',
+  'tests/unit/browser/browser-client-registry.test.ts',
+  'tests/unit/browser/browser-session-gateway.test.ts',
+  'tests/unit/browser/browser-worker-lease-coordinator.test.ts',
+  'tests/unit/browser/browser-render-service.test.ts',
   'tests/unit/security/api-security.test.ts',
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
@@ -49,11 +53,10 @@ const nonCoreBackendTests = [
   'tests/unit/agent/workspace-factory.test.ts',
   // Challenge / config / server 其餘
   'tests/unit/challenge/registry.test.ts',
-  'tests/unit/challenge/remote-handoff.test.ts',
+  'tests/unit/challenge/browser-worker-handoff.test.ts',
   'tests/unit/challenge/strategy-loader.test.ts',
   'tests/unit/cli/ui.test.ts',
   'tests/unit/config/runtime.test.ts',
-  'tests/unit/config/manager.test.ts',
   'tests/unit/config/schema.test.ts',
   'tests/unit/server/agent-routes.test.ts',
   'tests/unit/server/api-docs-route.test.ts',
@@ -80,6 +83,7 @@ const nonCoreBackendTests = [
   'tests/unit/selector-discovery/service.test.ts',
   'tests/unit/selector-discovery/service-shell-compose.test.ts',
   'tests/unit/selector-discovery/settings-store.test.ts',
+  'tests/unit/selector-discovery/safe-fetch.test.ts',
   'tests/unit/selector-discovery/url-models.test.ts',
 ];
 

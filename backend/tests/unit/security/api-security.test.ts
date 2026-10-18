@@ -3,10 +3,12 @@ import fastify from 'fastify';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserProviderRegistry } from '../../../src/browser/provider-registry';
+import type { BrowserCapabilities } from '@comiccrawler/browser-client-sdk';
+import { BrowserClientRegistry } from '../../../src/browser/browser-client-registry';
+import { BrowserSessionGateway } from '../../../src/browser/browser-session-gateway';
 import { ApiSecurityService } from '../../../src/security/api-security';
 import { setupApiSecurity } from '../../../src/server/middleware/api-security';
-import { setupBrowserProviderRoutes } from '../../../src/server/routes/browser-providers';
+import { setupBrowserClientRoutes } from '../../../src/server/routes/browser-clients';
 
 const aliceToken = 'alice-token-00000000000000000000000000000000';
 const bobToken = 'bob-token-000000000000000000000000000000000';
@@ -18,22 +20,22 @@ function tokenSecurity() {
     secretPath: '/not-used-in-unit-test.json',
     rules: [
       {
-        id: 'provider-register',
+        id: 'browser-client-register',
         methods: ['POST'],
-        path: '/api/browser-providers/enroll',
-        permission: 'browser-provider:register',
+        path: '/api/browser-clients/enroll',
+        permission: 'browser-client:register',
       },
       {
-        id: 'provider-read',
+        id: 'browser-client-read',
         methods: ['GET'],
-        path: '/api/browser-providers',
-        permission: 'browser-provider:read-own',
+        path: '/api/browser-clients',
+        permission: 'browser-client:read-own',
       },
       {
-        id: 'provider-manage',
+        id: 'browser-client-manage',
         methods: ['DELETE'],
-        path: '/api/browser-providers/**',
-        permission: 'browser-provider:manage-own',
+        path: '/api/browser-clients/**',
+        permission: 'browser-client:manage-own',
       },
     ],
   }, {
@@ -41,11 +43,12 @@ function tokenSecurity() {
     roles: [{
       id: 'browser-user',
       permissions: [
-        'browser-provider:register',
-        'browser-provider:read-own',
-        'browser-provider:manage-own',
+        'browser-client:register',
+        'browser-client:read-own',
+        'browser-client:manage-own',
+        'browser-client:session-own',
       ],
-      limits: { maxRegisteredProviders: 2 },
+      limits: { maxRegisteredBrowserClients: 2 },
     }],
     users: [
       { id: 'alice', token: aliceToken, roles: ['browser-user'], enabled: true },
@@ -80,8 +83,8 @@ describe('API security policy', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.principal.userId).toBe('alice');
-    expect(security.hasPermission(result.principal, 'browser-provider:register')).toBe(true);
-    expect(result.principal.limits.maxRegisteredProviders).toBe(2);
+    expect(security.hasPermission(result.principal, 'browser-client:register')).toBe(true);
+    expect(result.principal.limits.maxRegisteredBrowserClients).toBe(2);
   });
 
   it('rejects missing and invalid user API tokens', () => {
@@ -112,12 +115,13 @@ describe('API security policy', () => {
     await app.close();
   });
 
-  it('isolates provider records by owner and blocks cross-user revocation', async () => {
+  it('isolates Browser Client records by owner and blocks cross-user revocation', async () => {
     const security = tokenSecurity();
-    const registry = new BrowserProviderRegistry();
+    const registry = new BrowserClientRegistry();
+    const gateway = new BrowserSessionGateway(registry, security);
     const app = fastify();
     setupApiSecurity(app, security);
-    setupBrowserProviderRoutes(app, registry, security);
+    setupBrowserClientRoutes(app, registry, gateway, security);
 
     const aliceHeaders = {
       'x-comiccrawler-user-id': 'alice',
@@ -129,22 +133,23 @@ describe('API security policy', () => {
     };
     const registered = await app.inject({
       method: 'POST',
-      url: '/api/browser-providers/enroll',
+      url: '/api/browser-clients/enroll',
       headers: aliceHeaders,
-      payload: { clientInstanceId: 'alice-pc' },
+      payload: { name: 'Alice PC', capabilities },
     });
-    const providerId = registered.json().data.providerId as string;
+    const clientId = registered.json().data.clientId as string;
 
-    const bobList = await app.inject({ method: 'GET', url: '/api/browser-providers', headers: bobHeaders });
-    expect(bobList.json().data.providers).toEqual([]);
+    const bobList = await app.inject({ method: 'GET', url: '/api/browser-clients', headers: bobHeaders });
+    expect(bobList.json().data.clients).toEqual([]);
 
     const revoke = await app.inject({
       method: 'DELETE',
-      url: `/api/browser-providers/${providerId}`,
+      url: `/api/browser-clients/${clientId}`,
       headers: bobHeaders,
     });
     expect(revoke.statusCode).toBe(403);
-    expect(registry.getRecord(providerId)?.revokedAt).toBeUndefined();
+    expect(registry.getRecord(clientId)?.revokedAt).toBeUndefined();
+    gateway.dispose();
     await app.close();
   });
 
@@ -171,3 +176,11 @@ describe('API security policy', () => {
     })).toThrow(/Duplicate user token/);
   });
 });
+
+const capabilities: BrowserCapabilities = {
+  executionMode: 'managed-profile',
+  navigation: true,
+  renderedDom: true,
+  humanHandoff: true,
+  responsiveViewport: true,
+};

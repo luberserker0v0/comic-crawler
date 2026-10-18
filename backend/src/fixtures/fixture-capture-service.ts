@@ -133,6 +133,9 @@ export class FixtureCaptureService {
     if (readiness.status === 'human_verification_required') {
       throw new Error('Accepted adapter page still requires human verification. Complete handoff before accepting it.');
     }
+    if (readiness.status !== 'ready') {
+      throw new Error(`Accepted adapter page is not complete: ${readiness.reasons.join(' ')}`);
+    }
 
     const functionIds = getApprovalFunctionIds(input.adapter, input.target);
     const document = cheerio.load(input.html);
@@ -141,6 +144,17 @@ export class FixtureCaptureService {
       results[functionId] = await runFixtureFunction(input.adapter, functionId, document, input.url);
     }
     assertUsefulApprovalResult(input.target, results);
+    if (input.target === 'chapter-only') {
+      const extractionReadiness = this.readiness.check({
+        url: input.url,
+        html: input.html,
+        target,
+        extractionResult: results.extractChapterImageUrls,
+      });
+      if (extractionReadiness.status !== 'ready') {
+        throw new Error(`Accepted adapter extraction is incomplete: ${extractionReadiness.reasons.join(' ')}`);
+      }
+    }
 
     const capturedAt = new Date().toISOString();
     const domain = new URL(input.url).hostname;

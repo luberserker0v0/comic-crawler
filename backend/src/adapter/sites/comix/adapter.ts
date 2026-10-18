@@ -36,7 +36,7 @@ class ComixVerificationCapability extends VerificationCapability {
   describeVerificationHandoff(): Record<string, unknown> {
     return {
       supported: true,
-      flow: 'Open the chapter through the remote Playwright handoff, complete the Comix/Cloudflare verification, then resume the task with the same browser context.',
+      flow: 'Open the chapter through the task-bound Browser Worker, complete the Comix/Cloudflare verification, then resume the task with the same browser session.',
     };
   }
 }
@@ -49,7 +49,9 @@ class ComixChapterImagesCapability extends ChapterImagesCapability {
       .map((index, element) => {
         const page = Number.parseInt($(element).attr('data-page') ?? '', 10);
         const image = $(element).find('img.rpage-page__img').first();
-        const raw = image.attr('src')
+        const raw = $(element).attr('data-comiccrawler-image-url')
+          ?? image.attr('data-comiccrawler-src')
+          ?? image.attr('src')
           ?? image.attr('data-src')
           ?? image.attr('data-lazy-src')
           ?? firstSrcsetUrl(image.attr('srcset'));

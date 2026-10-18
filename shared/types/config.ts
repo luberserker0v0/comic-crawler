@@ -34,23 +34,9 @@ export interface NetworkConfig {
 }
 
 export interface BrowserConfig {
-  mode: 'remote';
-  maxInstances: number;
   timeout: number;
   workerWaitTimeoutMs?: number;
-  waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
-  waitForSelector?: string;
   postLoadDelayMs?: number;
-  challengeAutoAttempt?: boolean;
-  challengeWaitMs?: number;
-  remote?: RemoteBrowserConfig;
-}
-
-export interface RemoteBrowserConfig {
-  wsEndpoint?: string;
-  connectTimeout?: number;
-  exposeNetwork?: string;
-  headers?: Record<string, string>;
 }
 
 export interface ServerConfig {

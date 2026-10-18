@@ -3,8 +3,10 @@ import { once } from 'node:events';
 import http from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -48,13 +50,15 @@ test('npm run dev cleans up backend when frontend exits before ready', async () 
   await assertPortClosed(backendPort);
 });
 
-test('real npm run dev reaches ready and releases ports on test shutdown', async () => {
+test('real npm run dev reaches ready and releases ports on test shutdown', async (context) => {
   const backendPort = await getFreePort();
   const frontendPort = await getFreePort();
+  const dataPath = await createTestDataPath(context);
 
   const child = spawnRealNpmDev({
     COMICCRAWLER_PORT: String(backendPort),
     COMICCRAWLER_FRONTEND_PORT: String(frontendPort),
+    COMICCRAWLER_DATA_PATH: dataPath,
     COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
     COMICCRAWLER_DEV_READY_TIMEOUT_MS: '30000',
     COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
@@ -70,13 +74,15 @@ test('real npm run dev reaches ready and releases ports on test shutdown', async
   await assertPortClosed(frontendPort);
 });
 
-test('real npm run dev falls back when the default frontend port is unavailable', async () => {
+test('real npm run dev falls back when the default frontend port is unavailable', async (context) => {
   const backendPort = await getFreePort();
   const defaultFrontendPortBlocker = await tryListen(5173);
+  const dataPath = await createTestDataPath(context);
 
   try {
     const child = spawnRealNpmDev({
       COMICCRAWLER_PORT: String(backendPort),
+      COMICCRAWLER_DATA_PATH: dataPath,
       COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
       COMICCRAWLER_DEV_READY_TIMEOUT_MS: '30000',
       COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
@@ -93,15 +99,17 @@ test('real npm run dev falls back when the default frontend port is unavailable'
   }
 });
 
-test('npm run dev fails fast when an explicitly configured frontend port is unavailable', async () => {
+test('npm run dev fails fast when an explicitly configured frontend port is unavailable', async (context) => {
   const backendPort = await getFreePort();
   const blockedFrontendPort = await getFreePort();
   const blocker = await listenOn(blockedFrontendPort);
+  const dataPath = await createTestDataPath(context);
 
   try {
     const child = spawnRealNpmDev({
       COMICCRAWLER_PORT: String(backendPort),
       COMICCRAWLER_FRONTEND_PORT: String(blockedFrontendPort),
+      COMICCRAWLER_DATA_PATH: dataPath,
       COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
       COMICCRAWLER_DEV_READY_TIMEOUT_MS: '5000',
       COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
@@ -254,4 +262,10 @@ function httpStatus(url) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createTestDataPath(context) {
+  const path = await mkdtemp(join(tmpdir(), 'comiccrawler-dev-test-'));
+  context.after(() => rm(path, { recursive: true, force: true }));
+  return path;
 }

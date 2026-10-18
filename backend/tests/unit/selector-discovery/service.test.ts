@@ -123,17 +123,17 @@ describe('SelectorDiscoveryService adapter strategies', () => {
     const job = await service.create({
       url: 'https://affinity.example/manga/demo',
       ownerUserId: 'alice',
-      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
     });
 
     expect(job).toMatchObject({
       ownerUserId: 'alice',
-      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
       status: 'configuration_required',
     });
     expect(await service.get(job.id)).toMatchObject({
       ownerUserId: 'alice',
-      browserTarget: { mode: 'specific', workerId: 'worker-alice' },
+      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
     });
   });
 

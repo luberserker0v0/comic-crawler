@@ -23,7 +23,8 @@ export function setupApiSecurity(app: FastifyInstance, security: ApiSecurityServ
       });
       return;
     }
-    if (permission.endsWith('-own') && !pathname.startsWith('/api/browser-providers')) {
+    if (permission.endsWith('-own')
+      && !pathname.startsWith('/api/browser-clients')) {
       reply.code(403).send({ error: `Ownership-aware permission "${permission}" is not implemented for this resource.` });
     }
   });
@@ -35,7 +36,7 @@ export function requestPrincipal(request: FastifyRequest, security: ApiSecurityS
 
 function isPublicPath(pathname: string): boolean {
   return pathname === '/api/status'
-    || pathname === '/.well-known/comiccrawler-browser-provider'
+    || pathname === '/.well-known/comiccrawler-browser-client'
     || pathname === '/api-docs'
     || pathname.startsWith('/api-docs/');
 }

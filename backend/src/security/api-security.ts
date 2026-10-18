@@ -10,9 +10,9 @@ export const API_PERMISSIONS = [
   'task:create', 'task:read', 'task:read-own', 'task:control', 'task:control-own', 'task:delete',
   'adapter:read', 'adapter:test', 'adapter:manage', 'adapter:review',
   'discovery:create', 'discovery:read', 'discovery:review',
-  'browser-provider:register', 'browser-provider:read', 'browser-provider:read-own',
-  'browser-provider:manage', 'browser-provider:manage-own',
-  'browser-provider:session', 'browser-provider:session-own',
+  'browser-client:register', 'browser-client:read', 'browser-client:read-own',
+  'browser-client:manage', 'browser-client:manage-own',
+  'browser-client:session', 'browser-client:session-own',
   'fixture:read', 'fixture:manage',
   'maintenance:run',
 ] as const;
@@ -22,9 +22,9 @@ export interface ApiPrincipal {
   roles: string[];
   permissions: Set<string>;
   limits: {
-    maxRegisteredProviders?: number;
-    maxOnlineProviders?: number;
     maxConcurrentSessions?: number;
+    maxRegisteredBrowserClients?: number;
+    maxOnlineBrowserWorkers?: number;
   };
   public: boolean;
 }
@@ -49,9 +49,9 @@ export type AuthenticationResult =
   | { ok: false; statusCode: 401 | 403; error: string };
 
 const LimitsSchema = z.object({
-  maxRegisteredProviders: z.number().int().positive().nullable().optional(),
-  maxOnlineProviders: z.number().int().positive().nullable().optional(),
   maxConcurrentSessions: z.number().int().positive().nullable().optional(),
+  maxRegisteredBrowserClients: z.number().int().positive().nullable().optional(),
+  maxOnlineBrowserWorkers: z.number().int().positive().nullable().optional(),
 }).strict();
 
 const SecretDocumentSchema = z.object({
@@ -192,7 +192,7 @@ function validateSecrets(secrets: SecretDocument): void {
   const roleIds = new Set(secrets.roles.map((role) => role.id));
   for (const role of secrets.roles) {
     if (role.id !== 'admin' && role.limits && Object.values(role.limits).some((value) => value === null)) {
-      throw new Error(`Unlimited Provider limits are reserved for the admin role; role "${role.id}" contains null.`);
+      throw new Error(`Unlimited Browser Client limits are reserved for the admin role; role "${role.id}" contains null.`);
     }
     for (const permission of role.permissions) {
       if (permission === '*' && role.id !== 'admin') throw new Error('The * permission is reserved for the admin role.');
@@ -210,7 +210,11 @@ function validateSecrets(secrets: SecretDocument): void {
 
 function mergeLimits(values: Array<ApiPrincipal['limits'] | undefined>): ApiPrincipal['limits'] {
   const result: ApiPrincipal['limits'] = {};
-  for (const key of ['maxRegisteredProviders', 'maxOnlineProviders', 'maxConcurrentSessions'] as const) {
+  for (const key of [
+    'maxConcurrentSessions',
+    'maxRegisteredBrowserClients',
+    'maxOnlineBrowserWorkers',
+  ] as const) {
     const limits = values.map((value) => value?.[key]);
     if (limits.some((value) => value === null)) continue;
     const numbers = limits.filter((value): value is number => typeof value === 'number');

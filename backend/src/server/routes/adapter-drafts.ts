@@ -1,15 +1,23 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AdapterFunctionTestRequest, BrowserConfig, BrowserTarget, NetworkConfig, SaveAdapterDraftContentRequest } from '@comiccrawler/shared';
+import type { AdapterFunctionTestRequest, BrowserTarget, NetworkConfig, SaveAdapterDraftContentRequest } from '@comiccrawler/shared';
 import type { AdapterDraftService } from '../../adapter-drafts/service';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
 import { isKnownAdapterFunction, testAdapterFunction } from './adapters';
 import { instantiateAdapterImplementationDraft, instantiateProjectAdapterDraft } from '../../selector-discovery/adapter-draft-runtime';
+import type { BrowserRenderService } from '../../browser/browser-render-service';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 
 interface AdapterDraftRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
-  getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
-  withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
+  withBrowserSession?: <T>(
+    request: FastifyRequest,
+    target: BrowserTarget | undefined,
+    initialUrl: string,
+    action: (sessionId: string) => Promise<T>
+  ) => Promise<T>;
+  browserRenderService?: BrowserRenderService;
+  htmlRenderer?: HtmlRenderer;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
 }
 
@@ -85,26 +93,36 @@ export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDr
           ? instantiateAdapterImplementationDraft(draft.content)
           : new DynamicSiteAdapter(parseDynamicManifestDraft(draft.content));
       const network = await options.getNetworkConfig?.();
-      const runTest = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter, functionId, body.url, {
-          browser,
+      if (options.htmlRenderer) {
+        const result = await testAdapterFunction(adapter, functionId, body.url, {
+          challengeDiscoveryId: body.challengeDiscoveryId,
+          challengeDiscoveryService: options.challengeDiscoveryService,
+          network,
+          htmlRenderer: options.htmlRenderer,
+        });
+        reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
+        return;
+      }
+      if (body.challengeDiscoveryId) {
+        const result = await testAdapterFunction(adapter, functionId, body.url, {
           challengeDiscoveryId: body.challengeDiscoveryId,
           challengeDiscoveryService: options.challengeDiscoveryService,
           network,
         });
-      const result = options.withBrowserConfig
-        ? await options.withBrowserConfig(request, body.browserTarget, runTest)
-        : await runTest(await options.getBrowserConfig?.());
-      reply.send({
-        data: {
-          ...result,
-          adapterId: draft.draft.draftId,
-          resultSummary: {
-            ...(result.resultSummary ?? {}),
-            draftId,
-            baseAdapterId: draft.draft.baseAdapterId,
-          },
-        },
-      });
+        reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
+        return;
+      }
+      if (!options.withBrowserSession || !options.browserRenderService) {
+        throw new Error('Browser Worker service is not configured.');
+      }
+      const result = await options.withBrowserSession(request, body.browserTarget, body.url, (sessionId) =>
+        testAdapterFunction(adapter, functionId, body.url, {
+          challengeDiscoveryId: body.challengeDiscoveryId,
+          challengeDiscoveryService: options.challengeDiscoveryService,
+          network,
+          htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+        }));
+      reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -115,6 +133,25 @@ export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDr
     await service.discard(draftId);
     reply.send({ data: { message: 'Adapter draft discarded.' } });
   });
+}
+
+function withDraftSummary<T extends { resultSummary?: Record<string, unknown> }>(
+  result: T,
+  draftId: string,
+  baseAdapterId: string
+) {
+  return {
+    ...result,
+    adapterId: draftId,
+    resultSummary: { ...(result.resultSummary ?? {}), draftId, baseAdapterId },
+  };
+}
+
+function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
+  return {
+    render: async (url) => (await renderService.render(sessionId, url)).html,
+    dispose: async () => undefined,
+  };
 }
 
 function parseDynamicManifestDraft(content: string): DynamicSiteAdapterManifest {

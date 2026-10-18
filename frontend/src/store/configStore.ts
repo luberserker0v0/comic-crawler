@@ -21,20 +21,9 @@ export interface GlobalConfig {
     userAgent?: string;
   };
   browser: {
-    mode: 'remote';
-    maxInstances: number;
     timeout: number;
     workerWaitTimeoutMs?: number;
-    waitUntil: 'load' | 'domcontentloaded' | 'networkidle';
-    waitForSelector?: string;
     postLoadDelayMs?: number;
-    challengeAutoAttempt?: boolean;
-    challengeWaitMs?: number;
-    remote?: {
-      connectTimeout?: number;
-      exposeNetwork?: string;
-      headers?: Record<string, string>;
-    };
   };
   server: {
     port: number;

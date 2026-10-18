@@ -61,7 +61,7 @@ export function setupDiscoverCommand(ctx: CliCommandContext): void {
         ctx.ui.renderSuccess(`Discovery job ${job.id} created with status ${job.status}`);
         ctx.ui.renderStatus('url', job.normalizedUrl);
         ctx.ui.renderStatus('target', job.target ?? 'full');
-        ctx.ui.renderStatus('browser', 'remote Playwright service');
+        ctx.ui.renderStatus('browser', 'task-bound Browser Worker');
         ctx.ui.renderStatus('model', options.model);
       } catch (error) {
         logger.error({ error: formatError(error) }, 'Failed to create selector discovery job');

@@ -8,7 +8,7 @@ export { setupAgentRoutes } from './routes/agent';
 export { setupSelectorDiscoveryRoutes } from './routes/selector-discovery';
 export { setupWebSocket } from './websocket';
 export { setupCors } from './middleware/cors';
-export { setupBrowserProviderRoutes } from './routes/browser-providers';
+export { setupBrowserClientRoutes } from './routes/browser-clients';
 export { setupApiSecurity, requestPrincipal } from './middleware/api-security';
 export type { ServerOptions } from './app';
 export type { CorsOptions } from './middleware/cors';

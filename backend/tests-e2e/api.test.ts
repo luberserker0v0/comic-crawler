@@ -379,7 +379,7 @@ test.describe('ComicCrawler E2E', () => {
     });
   });
 
-  test('BP-04 建立未知站點 handoff', async ({ request }) => {
+  test('BC-04 建立未知站點 handoff', async ({ request }) => {
     await configureSelectorDiscovery(request);
     const challengeUrl = 'http://127.0.0.1:4173/api/fixtures/challenge-never-clears';
 
@@ -405,7 +405,7 @@ test.describe('ComicCrawler E2E', () => {
     let taskId = '';
     let challengeDiscoveryId = '';
 
-    test('BP-05 建立 adapter handoff', async ({ request }) => {
+    test('BC-05 建立 adapter handoff', async ({ request }) => {
       test.setTimeout(90000);
       const register = await test.step('1. 註冊測試 adapter', async () => request.post('/__test/register-fixture-replay-generated-adapter', {
         data: {
@@ -677,10 +677,9 @@ test.describe('ComicCrawler E2E', () => {
   test('CFG-02 儲存 browser 設定', async ({ page, request }) => {
     await page.goto('/');
     await page.getByTestId('nav-settings').click();
-    await page.getByTestId('browser-wait-until-select').selectOption('load');
+    await page.getByTestId('browser-worker-wait-timeout-input').fill('120000');
     await page.getByTestId('browser-timeout-input').fill('45000');
-    await page.getByTestId('browser-wait-selector-input').fill('#reader img');
-    await page.getByTestId('browser-challenge-wait-input').fill('60000');
+    await page.getByTestId('browser-post-load-delay-input').fill('750');
     await page.getByTestId('settings-save-button').click();
 
     await expect.poll(async () => {
@@ -688,26 +687,20 @@ test.describe('ComicCrawler E2E', () => {
       const body = await response.json();
       return body.data.browser;
     }).toMatchObject({
-      mode: 'remote',
-      waitUntil: 'load',
       timeout: 45000,
-      waitForSelector: '#reader img',
-      challengeAutoAttempt: true,
-      challengeWaitMs: 60000,
+      workerWaitTimeoutMs: 120000,
+      postLoadDelayMs: 750,
     });
   });
 
-  test('CFG-03 拒絕手動 WS endpoint', async ({ request }) => {
+  test('CFG-03 拒絕未定義的 browser transport 設定', async ({ request }) => {
     const current = await request.get('/api/config');
     const config = (await current.json()).data;
     const response = await request.put('/api/config', {
       data: {
         browser: {
           ...config.browser,
-          remote: {
-            ...config.browser.remote,
-            wsEndpoint: 'wss://browser.example/ws/session-1',
-          },
+          transport: { protocol: 'custom' },
         },
       },
     });

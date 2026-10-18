@@ -89,6 +89,6 @@ describe('FixtureCaptureService approved adapter fixtures', () => {
       target: 'chapter-only',
       url: 'https://example.com/chapter/1',
       html: '<main id="reader"></main>',
-    })).rejects.toThrow('returned no image URLs');
+    })).rejects.toThrow('page is not complete');
   });
 });

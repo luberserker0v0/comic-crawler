@@ -24,8 +24,9 @@ describe('selector discovery task Markdown', () => {
     expect(markdown).toContain('chapter-only adapter');
     expect(markdown).toContain('Metadata extraction functions are not required.');
     expect(markdown).toContain('Chapter Image URL Extraction is required.');
-    expect(markdown).toContain('Do not write an AdapterBase shell');
+    expect(markdown).toContain('no JSON or\n  AdapterBase shell');
     expect(markdown).toContain('Capability Implementation Contract');
+    expect(markdown).toContain('Browser preparation is upstream');
     expect(markdown).not.toContain('Choose one representative chapter URL');
   });
 
@@ -57,17 +58,18 @@ describe('selector discovery task Markdown', () => {
       chapterFetch,
     });
 
-    expect(phase1).toContain('If the chapter list appears partial');
-    expect(phase1).toContain('start reading');
+    expect(phase1).toContain('Flag collapsed or incomplete catalogs');
+    expect(phase1).toContain('read/continue shortcuts');
     expect(phase1).toContain('Capability Implementation Contract');
-    expect(phase2).toContain('reusable chapter-only unit');
-    expect(phase2).toContain('not a metadata/catalog page');
-    expect(phase2).toContain('Exclude covers, logos, browser/app promotion icons');
+    expect(phase2).toContain('reusable chapter-image capability');
+    expect(phase2).toContain('representative reader URL');
+    expect(phase2).toContain('exclude covers, logos, UI, ads');
     expect(phase2).toContain('TypeScript capability drafts');
-    expect(phase2).toContain('Do not write an AdapterBase shell');
-    expect(chapterOnly).toContain('reusable image extraction unit');
-    expect(chapterOnly).toContain('Do not use broad selectors');
-    expect(chapterOnly).toContain('comic CDN/lazy-loading attributes');
+    expect(phase2).toContain('AdapterBase shell');
+    expect(chapterOnly).toContain('Chapter Image URL Extraction is required');
+    expect(chapterOnly).toContain('not broad image selectors');
+    expect(chapterOnly).toContain('lazy-load/CDN signals');
+    expect(chapterOnly).not.toContain('site-specific clicking');
   });
 
   it('extracts representative chapter URLs and strips ASCII trailing punctuation', () => {

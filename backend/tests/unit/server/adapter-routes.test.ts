@@ -17,6 +17,7 @@ import {
   registerProjectAdapters,
 } from '../../../src/adapter/runtime-state';
 import type { IStorage } from '../../../src/storage/types';
+import { BrowserRenderService } from '../../../src/browser/browser-render-service';
 
 class MemoryStorage implements IStorage {
   readonly data = new Map<string, unknown>();
@@ -155,9 +156,9 @@ describe('Adapter routes', () => {
       '<div class="reader"><img src="/images/1.jpg"><img src="/images/2.jpg"><img src="/images/3.webp"></div>'
     );
     registry.register(adapter);
-    const getBrowserConfig = jest.fn(async () => DEFAULTS.browser);
     const getNetworkConfig = jest.fn(async () => DEFAULTS.network);
-    setupAdaptersRoutes(app, registry, { getBrowserConfig, getNetworkConfig });
+    const htmlRenderer = { render: jest.fn(async () => '<html></html>'), dispose: jest.fn(async () => undefined) };
+    setupAdaptersRoutes(app, registry, { htmlRenderer, getNetworkConfig });
 
     const response = await app.inject({
       method: 'POST',
@@ -181,9 +182,116 @@ describe('Adapter routes', () => {
         deviceScaleFactor: 1,
       },
     });
-    expect(getBrowserConfig).toHaveBeenCalledTimes(1);
     expect(getNetworkConfig).toHaveBeenCalledTimes(1);
 
+    await app.close();
+  });
+
+  it('extracts chapter images through the task-bound Browser Worker session', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    registry.register(new RenderedDemoAdapter());
+    const execute = jest.fn(async (_sessionId: string, command: { type: string; url?: string }) => {
+      if (command.type === 'page.get-url') return { type: 'page.get-url' as const, url: 'about:blank' };
+      if (command.type === 'page.navigate') return { type: 'page.navigate' as const, url: command.url! };
+      if (command.type === 'page.wait-for-ready') return { type: 'page.wait-for-ready' as const, url: 'https://example.com/read/1' };
+      if (command.type === 'page.prepare-content') return { type: 'page.prepare-content' as const, url: 'https://example.com/read/1' };
+      return {
+        type: 'page.get-content' as const,
+        url: 'https://example.com/read/1',
+        html: '<div class="reader"><img src="/images/1.jpg"><img src="/images/2.jpg"></div>',
+      };
+    });
+    const withBrowserSession = jest.fn(async (
+      _request: unknown,
+      _target: unknown,
+      _initialUrl: string,
+      _renderContext: unknown,
+      action: (sessionId: string) => Promise<unknown>
+    ) => action('session-1'));
+    setupAdaptersRoutes(app, registry, {
+      browserRenderService: new BrowserRenderService({ execute }),
+      withBrowserSession: withBrowserSession as any,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/adapters/chapter-images',
+      payload: {
+        url: 'https://example.com/read/1',
+        renderContext: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.imageUrls).toEqual([
+      'https://example.com/images/1.jpg',
+      'https://example.com/images/2.jpg',
+    ]);
+    expect(withBrowserSession).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      'https://example.com/read/1',
+      { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 },
+      expect.any(Function)
+    );
+    expect(execute.mock.calls.map((call) => call[1].type)).toEqual([
+      'page.get-url',
+      'page.navigate',
+      'page.wait-for-ready',
+      'page.prepare-content',
+      'page.get-content',
+    ]);
+    await app.close();
+  });
+
+  it('reuses the verified challenge session instead of leasing a second Browser Worker session', async () => {
+    const app = fastify();
+    const registry = new AdapterRegistry();
+    registry.register(new RenderedDemoAdapter());
+    const withBrowserSession = jest.fn(async () => {
+      throw new Error('A second Browser Worker session must not be acquired.');
+    });
+    const readRemotePageSnapshot = jest.fn(async () => ({
+      job: { id: 'chal-1', status: 'ready' },
+      page: {
+        url: 'https://example.com/read/1',
+        title: 'Chapter 1',
+        html: '<div class="reader"><img src="/images/1.jpg"><img src="/images/2.jpg"></div>',
+      },
+    }));
+    setupAdaptersRoutes(app, registry, {
+      challengeDiscoveryService: {
+        get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
+        readRemotePageSnapshot,
+      } as any,
+      browserRenderService: new BrowserRenderService({
+        execute: async () => {
+          throw new Error('Unexpected BrowserRenderService call.');
+        },
+      }),
+      withBrowserSession: withBrowserSession as any,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/adapters/chapter-images',
+      payload: {
+        url: 'https://example.com/read/1',
+        challengeDiscoveryId: 'chal-1',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.imageUrls).toEqual([
+      'https://example.com/images/1.jpg',
+      'https://example.com/images/2.jpg',
+    ]);
+    expect(readRemotePageSnapshot).toHaveBeenCalledWith('chal-1', {
+      settle: true,
+      allowNavigate: false,
+    });
+    expect(withBrowserSession).not.toHaveBeenCalled();
     await app.close();
   });
 

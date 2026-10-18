@@ -24,21 +24,10 @@ export const NetworkConfigSchema = z.object({
 });
 
 export const BrowserConfigSchema = z.object({
-  mode: z.literal('remote').default('remote'),
-  maxInstances: z.number().min(1).max(10).default(DEFAULTS.browser.maxInstances),
   timeout: z.number().min(1000).default(DEFAULTS.browser.timeout),
   workerWaitTimeoutMs: z.number().min(1000).default(DEFAULTS.browser.workerWaitTimeoutMs),
-  waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).default(DEFAULTS.browser.waitUntil),
-  waitForSelector: z.string().optional(),
   postLoadDelayMs: z.number().min(0).default(DEFAULTS.browser.postLoadDelayMs),
-  challengeAutoAttempt: z.boolean().default(DEFAULTS.browser.challengeAutoAttempt),
-  challengeWaitMs: z.number().min(0).default(DEFAULTS.browser.challengeWaitMs),
-  remote: z.object({
-    connectTimeout: z.number().min(1000).default(30000),
-    exposeNetwork: z.string().optional(),
-    headers: z.record(z.string()).optional(),
-  }).strict().default(DEFAULTS.browser.remote),
-}).default(DEFAULTS.browser);
+}).strict().default(DEFAULTS.browser);
 
 export const ServerConfigSchema = z.object({
   port: z.number().min(1).max(65535).default(DEFAULTS.server.port),

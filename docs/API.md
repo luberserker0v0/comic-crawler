@@ -141,19 +141,34 @@ Specific-chapter task:
 }
 ```
 
-To run the task on a particular connected computer, select its stable Worker ID:
+To run the task in a new managed profile, omit `browserTarget` or select an
+optional managed-profile Worker:
 
 ```json
 {
   "browserTarget": {
-    "mode": "specific",
-    "workerId": "bp_server_assigned_id"
+    "mode": "managed-profile",
+    "workerId": "bw_server_assigned_id"
+  }
+}
+```
+
+An extension first registers its current tab through the SDK, then binds the
+task to that exact process-memory resource:
+
+```json
+{
+  "browserTarget": {
+    "mode": "existing-tab",
+    "workerId": "bw_server_assigned_id",
+    "resourceId": "brr_sdk_generated_id"
   }
 }
 ```
 
 Use `GET /api/browser-workers` to list the requesting user's Workers. Omit
-`browserTarget`, or use `{ "mode": "any" }`, to let the scheduler choose one.
+`browserTarget`, or use `{ "mode": "managed-profile" }`, to let the scheduler
+choose a managed-profile Worker.
 If no matching Worker is idle, the task enters `waiting_for_browser_worker`
 until a Worker becomes available or the acquisition timeout expires. Session
 IDs are internal lease data and are not accepted by task APIs.
@@ -194,7 +209,7 @@ reserved so another task cannot modify the browser during verification.
 
 The current API namespace is `/api/challenge-discovery`, but the public crawl
 flow treats these records as human verification handoff jobs. Every browser
-operation uses the configured remote Playwright WebSocket service.
+operation uses the task-bound Browser Worker command session.
 
 Read the handoff job:
 
@@ -202,15 +217,14 @@ Read the handoff job:
 GET /api/challenge-discovery/:id
 ```
 
-Open the task URL in the configured remote browser service:
+Open the task URL through the selected Browser Worker:
 
 ```http
 POST /api/challenge-discovery/:id/open-browser
 ```
 
-This creates the browser context through ComicCrawler's remote Playwright
-connection. The later inspect, selector-discovery, and verification calls reuse
-that context; they do not attach to an unrelated Playwright client session.
+This opens or reuses the Browser Client's task-bound browser session. Later
+inspect, selector-discovery, and verification calls reuse that session.
 
 After the user completes verification in that browser:
 
@@ -253,7 +267,7 @@ After human review, approve the TypeScript implementation draft:
 POST /api/selector-discovery/:id/promote
 ```
 
-Promotion first fetches the reviewed page through the active Browser Provider.
+Promotion first fetches the reviewed page through the task-bound Browser Worker.
 It runs the draft, stores `page.html` and `expected.json`, and only then enables
 the adapter. A fixture or extraction failure leaves the discovery job in
 `awaiting_review` and does not register the adapter.
@@ -271,37 +285,47 @@ GET /api/tasks/:id/preview-file?path=<relative-preview-path>
 
 ## Public support APIs
 
-### Browser Provider registration and sessions
+### Browser Client enrollment and sessions
 
-Browser-backed operations use a registered user-side Browser Provider. An
+Browser-backed operations use a registered user-side Browser Client. An
 SDK client first reads the service document:
 
 ```http
-GET /.well-known/comiccrawler-browser-provider
+GET /.well-known/comiccrawler-browser-client
 ```
 
-It contains the contract version, API security mode, `reverse-relay` transport,
-registration endpoint, control WebSocket endpoint, and relay endpoint template.
+It contains the protocol version, API security mode, enrollment endpoint, and
+the single outbound command WebSocket endpoint.
 
-Register one logical Provider instance:
+Enroll one Browser Client installation:
 
 ```http
-POST /api/browser-providers/enroll
+POST /api/browser-clients/enroll
 X-ComicCrawler-User-Id: alice
 Authorization: Bearer <user-api-token>
 Content-Type: application/json
 
 {
-  "clientInstanceId": "0ecf4a52-2003-4586-8c90-31fbc426b2a8",
-  "providerName": "Alice PC"
+  "name": "Alice PC",
+  "capabilities": {
+    "executionMode": "existing-tab",
+    "navigation": true,
+    "renderedDom": true,
+    "humanHandoff": true,
+    "responsiveViewport": true
+  }
 }
 ```
 
 The user headers are omitted in `public` mode. ComicCrawler returns the
-server-assigned `providerId`, `credentialId`, and provider credential once. The
-CLI stores state and credential in separate files, then uses the Provider
+server-assigned `clientId`, `credentialId`, and Browser Client credential once.
+The consumer stores this state through its SDK `ClientStateStore`, then uses the
 credential for outbound WebSocket connections. Neither the user machine nor
 its browser exposes an inbound port.
+
+An existing-tab consumer calls `client.registerResource()` with an opaque local
+tab handle. The SDK returns the `resourceId` used by task APIs. ComicCrawler
+never receives or persists the browser's native tab ID.
 
 List the user's Workers before creating a task:
 
@@ -310,24 +334,24 @@ GET /api/browser-workers
 ```
 
 ComicCrawler reserves one idle Worker when a task starts. It creates the
-Playwright session, renews it while the task owns the lease, and closes it when
-the task completes. One Worker executes one task at a time in this version.
+browser command session and closes it when the task completes. One Worker
+executes one task at a time in this version.
 
 Use these lifecycle endpoints to inspect Workers or manage credentials:
 
 ```http
-GET /api/browser-providers
+GET /api/browser-clients
 GET /api/browser-workers
-POST /api/browser-providers/{providerId}/credentials/rotate
+POST /api/browser-clients/{clientId}/credentials/rotate
 ```
 
-The only transport is `reverse-relay`. Protect ComicCrawler's administrative
-API, provider credential files, and browser session URLs. Use HTTPS/WSS for
-remote deployments.
+The command WebSocket carries ComicCrawler protocol messages; it does not relay
+Playwright. Protect the administrative API and Browser Client credential state.
+Use HTTPS/WSS for remote deployments.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/.well-known/comiccrawler-browser-provider` | Discover the browser-provider contract and outbound connection endpoints. |
+| `GET` | `/.well-known/comiccrawler-browser-client` | Discover the Browser Client protocol and outbound connection endpoint. |
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `POST` | `/api/adapters/chapter-images` | Resolve an adapter and return every ordered image URL extracted from one chapter. |
@@ -356,11 +380,11 @@ remote deployments.
 | `GET` | `/api/config/selector-discovery` | Read selector discovery settings without provider secrets. |
 | `PUT` | `/api/config/selector-discovery` | Save AO URL, provider document, and selected model. |
 | `POST` | `/api/config/selector-discovery/test` | Test selector discovery settings. |
-| `POST` | `/api/browser-providers/enroll` | Register a Provider instance and return its credential once. |
-| `GET` | `/api/browser-providers` | List visible registered Provider identities and online state. |
-| `GET` | `/api/browser-workers` | List stable Worker targets and their `offline`, `idle`, or `busy` state. |
-| `DELETE` | `/api/browser-providers/:providerId` | Revoke one Provider credential and close its resources. |
-| `POST` | `/api/browser-providers/:providerId/credentials/rotate` | Rotate one Provider credential and return the replacement once. |
+| `POST` | `/api/browser-clients/enroll` | Enroll a Browser Client and return its credential once. |
+| `GET` | `/api/browser-clients` | List visible registered Browser Client identities. |
+| `GET` | `/api/browser-workers` | List process-scoped Workers and their availability. |
+| `DELETE` | `/api/browser-clients/:clientId` | Revoke one Browser Client and disconnect its Workers. |
+| `POST` | `/api/browser-clients/:clientId/credentials/rotate` | Rotate one Browser Client credential and return the replacement once. |
 
 Adapter Lab function tests are diagnostic support APIs. The WebUI locks
 metadata tests to manga catalog URLs and chapter image tests to chapter URLs;

@@ -22,9 +22,9 @@ export class ConfigManager {
     const stored = await this.storage.read<GlobalConfig>(CONFIG_KEY);
     if (stored) {
       const validated = validateGlobalConfig(stored);
-      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(validated));
+      this.cache = applyMaintenanceEnvOverrides(validated);
     } else {
-      this.cache = applyMaintenanceEnvOverrides(applyBrowserEnvOverrides(this.getDefaultConfig()));
+      this.cache = applyMaintenanceEnvOverrides(this.getDefaultConfig());
       await this.save(this.cache);
     }
     return this.cache;
@@ -113,15 +113,9 @@ export class ConfigManager {
         retryDelay: DEFAULTS.network.retryDelay,
       },
       browser: {
-        mode: DEFAULTS.browser.mode,
-        maxInstances: DEFAULTS.browser.maxInstances,
         timeout: DEFAULTS.browser.timeout,
         workerWaitTimeoutMs: DEFAULTS.browser.workerWaitTimeoutMs,
-        waitUntil: DEFAULTS.browser.waitUntil,
         postLoadDelayMs: DEFAULTS.browser.postLoadDelayMs,
-        challengeAutoAttempt: DEFAULTS.browser.challengeAutoAttempt,
-        challengeWaitMs: DEFAULTS.browser.challengeWaitMs,
-        remote: DEFAULTS.browser.remote,
       },
       server: {
         port: DEFAULTS.server.port,
@@ -147,39 +141,6 @@ export class ConfigManager {
   }
 }
 
-function resolveRemoteBrowserDefaults(): GlobalConfig['browser']['remote'] {
-  const timeoutValue = Number(process.env.COMICCRAWLER_BROWSER_CONNECT_TIMEOUT);
-  return {
-    ...(process.env.COMICCRAWLER_BROWSER_CONNECT_TIMEOUT && Number.isFinite(timeoutValue) && timeoutValue >= 1000
-      ? { connectTimeout: timeoutValue }
-      : {}),
-    ...(process.env.COMICCRAWLER_BROWSER_EXPOSE_NETWORK
-      ? { exposeNetwork: process.env.COMICCRAWLER_BROWSER_EXPOSE_NETWORK }
-      : {}),
-  };
-}
-
-function applyBrowserEnvOverrides(config: GlobalConfig): GlobalConfig {
-  const remote = resolveRemoteBrowserDefaults();
-  const browserOverrides: Partial<GlobalConfig['browser']> = {};
-  if (
-    process.env.COMICCRAWLER_BROWSER_CONNECT_TIMEOUT ||
-    process.env.COMICCRAWLER_BROWSER_EXPOSE_NETWORK
-  ) {
-    browserOverrides.remote = {
-      ...(config.browser.remote ?? {}),
-      ...remote,
-    };
-  }
-
-  return {
-    ...config,
-    browser: {
-      ...config.browser,
-      ...browserOverrides,
-    },
-  };
-}
 function parseEnvBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
   const normalized = value.trim().toLowerCase();

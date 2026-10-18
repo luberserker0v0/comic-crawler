@@ -311,10 +311,9 @@ describe('CrawlerEngine progress tracking', () => {
     const engine = new CrawlerEngine({
       downloadDir: 'D:/downloads',
       browser: {
-        mode: 'remote',
-        maxInstances: 1,
         timeout: 30000,
-        waitUntil: 'domcontentloaded',
+        workerWaitTimeoutMs: 30 * 60 * 1000,
+        postLoadDelayMs: 0,
       },
     });
     const render = jest.fn(async (url: string) => `<html>rendered ${url}</html>`);

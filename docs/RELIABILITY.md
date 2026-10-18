@@ -21,8 +21,8 @@ If a crawl reaches a page that requires human verification, the task enters
 `waiting_verification`. This state is not a task failure. The scheduler slot is
 released, while the selected Browser Worker remains reserved for that handoff.
 
-The user completes verification from the task detail page in the browser opened
-by the configured remote Playwright service. After verification succeeds, `POST
+The user completes verification from the task detail page in the browser owned
+by the selected Browser Client. After verification succeeds, `POST
 /api/tasks/:id/resume` puts the task back into the queue. If the verification
 session is stale or missing, the resume API returns a conflict and tells the
 client which handoff step is still required.

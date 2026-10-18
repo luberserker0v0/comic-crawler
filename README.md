@@ -84,10 +84,10 @@ flowchart LR
   subgraph ClientSide["User side"]
     direction TB
     User["User / Web browser"]
-    Provider["Browser Provider<br/>User starts this"]
-    Browser["Crawl browser<br/>Started automatically"]
-    User -->|"start"| Provider
-    Provider -->|"manage"| Browser
+    Provider["Browser Client<br/>GUI / extension / local process"]
+    Browser["User browser / tab"]
+    User -->|"start or enable"| Provider
+    Provider -->|"command adapter"| Browser
     User -->|"human verification"| Browser
   end
 
@@ -109,23 +109,27 @@ flowchart LR
 
 | Area | What to start or operate |
 |---|---|
-| User side | Start Browser Provider. Use the WebUI. Complete verification when requested. |
+| User side | Start or enable a Browser Client. Use the WebUI. Complete verification when requested. |
 | Server side | Start ComicCrawler only when self-hosting. Cloud users use the existing server. |
 | External services | Comic sites need no setup. AO is optional and administrator-managed. |
 
-## Browser Provider
+## Browser Client
 
 ComicCrawler does not launch a browser inside the backend or Docker container.
-A user-side Browser Provider supplies short-lived Playwright sessions.
+A user-side Browser Client supplies one task-scoped browser session at a time.
 
 Setup requires three actions:
 
 1. Configure the client.
-2. Run `connect` to register and connect it.
+2. Enroll once, then connect it to the Server.
 3. Create a task and select the Worker, or choose any available Worker.
 
-See the [Browser Provider SDK guide](browser-provider-sdk/README.md) for CLI and
-embedding instructions.
+See the [Browser Client SDK guide](browser-client-sdk/README.md) for embedding
+instructions and the injected executor contract.
+
+For production environment verification, use the first-party
+[Browser Client acceptance consumer](tools/browser-client-acceptance/README.md).
+It connects the real SDK and a real headed Chrome to a deployed Server.
 
 ## GUI preview
 
@@ -165,8 +169,10 @@ Inspect and test individual adapter functions.
 
 - [User Guide](docs/USER_GUIDE.md): installation, WebUI workflows, downloads,
   and verification handoff.
-- [Browser Provider SDK](browser-provider-sdk/README.md): register, connect, and
+- [Browser Client SDK](browser-client-sdk/README.md): enroll, connect, and
   provide a user-side browser.
+- [Acceptance Consumer](tools/browser-client-acceptance/README.md): verify a
+  deployed Server with the real SDK, WebSocket, and Chrome.
 - [API Reference](docs/API.md): REST endpoints and automation flow.
 - [API Security](docs/API_SECURITY.md): authentication policy, roles,
   permissions, and credential handling.
@@ -183,7 +189,7 @@ Inspect and test individual adapter functions.
   - [Adapters and capabilities](docs/ARCHITECTURE.md#adapters-and-capabilities)
   - [Crawler rendering](docs/ARCHITECTURE.md#crawler-rendering)
   - [Responsive rendering](docs/ARCHITECTURE.md#responsive-rendering)
-  - [Browser Provider boundary](docs/ARCHITECTURE.md#browser-provider-boundary)
+  - [Browser Client boundary](docs/ARCHITECTURE.md#browser-client-boundary)
   - [Task reliability](docs/ARCHITECTURE.md#task-reliability)
   - [Human verification](docs/ARCHITECTURE.md#human-verification-handoff)
   - [AO discovery](docs/ARCHITECTURE.md#ao-adapter-discovery-and-verification-handoff)

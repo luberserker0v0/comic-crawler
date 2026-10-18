@@ -1,6 +1,6 @@
-import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Server as HttpServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { BrowserProviderRegistry } from '../browser/provider-registry';
+import type { BrowserSessionGateway } from '../browser/browser-session-gateway';
 import type { EventBus } from '../events/bus';
 import type { EventKey } from '../events/types';
 import type { ApiSecurityService } from '../security/api-security';
@@ -8,11 +8,11 @@ import type { ApiSecurityService } from '../security/api-security';
 export function setupWebSocket(
   httpServer: HttpServer,
   eventBus: EventBus,
-  browserProviderRegistry?: BrowserProviderRegistry,
+  browserSessionGateway?: BrowserSessionGateway,
   apiSecurity?: ApiSecurityService
 ): void {
   const eventServer = new WebSocketServer({ noServer: true });
-  const providerServer = new WebSocketServer({ noServer: true });
+  const browserClientServer = new WebSocketServer({ noServer: true });
   setupEventConnections(eventServer, eventBus);
 
   httpServer.on('upgrade', (request, socket, head) => {
@@ -34,9 +34,9 @@ export function setupWebSocket(
       });
       return;
     }
-    if (browserProviderRegistry && isBrowserProviderPath(url.pathname)) {
-      providerServer.handleUpgrade(request, socket, head, (webSocket) => {
-        acceptBrowserProviderSocket(browserProviderRegistry, request, url, webSocket, apiSecurity);
+    if (browserSessionGateway && url.pathname === '/api/browser-clients/connect') {
+      browserClientServer.handleUpgrade(request, socket, head, (webSocket) => {
+        browserSessionGateway.acceptConnection(webSocket);
       });
       return;
     }
@@ -89,76 +89,4 @@ function setupEventConnections(wss: WebSocketServer, eventBus: EventBus): void {
       }
     });
   }
-}
-
-function acceptBrowserProviderSocket(
-  registry: BrowserProviderRegistry,
-  request: IncomingMessage,
-  url: URL,
-  socket: WebSocket,
-  apiSecurity?: ApiSecurityService
-): void {
-  if (url.pathname === '/api/browser-providers/connect') {
-    const record = registry.authenticateCredential(bearerToken(request));
-    if (!record) return socket.close(4003, 'Browser provider credential is invalid.');
-    const principal = apiSecurity?.principalForUser(record.ownerUserId);
-    if (apiSecurity && !principal) return socket.close(4003, 'Browser provider owner is disabled or unknown.');
-    if (principal && apiSecurity && !apiSecurity.hasPermission(principal, 'browser-provider:session-own')) {
-      return socket.close(4003, 'Browser provider owner no longer has session permission.');
-    }
-    if (principal?.limits.maxOnlineProviders !== undefined
-      && registry.countOnline(record.ownerUserId) >= principal.limits.maxOnlineProviders) {
-      return socket.close(4008, 'The maximum number of online Browser Providers has been reached.');
-    }
-    registry.acceptControlConnection(record, socket);
-    return;
-  }
-  const relay = url.pathname.match(/^\/api\/browser-providers\/relay\/([^/]+)$/);
-  if (relay) {
-    const record = registry.authenticateCredential(bearerToken(request));
-    if (!record) return socket.close(4003, 'Browser provider credential is invalid.');
-    if (apiSecurity && !apiSecurity.principalForUser(record.ownerUserId)) {
-      return socket.close(4003, 'Browser provider owner is disabled or unknown.');
-    }
-    const principal = apiSecurity?.principalForUser(record.ownerUserId);
-    if (principal && apiSecurity && !apiSecurity.hasPermission(principal, 'browser-provider:session-own')) {
-      return socket.close(4003, 'Browser provider owner no longer has session permission.');
-    }
-    registry.acceptRelayConnection(record, decodeURIComponent(relay[1]!), socket);
-    return;
-  }
-  const browser = url.pathname.match(/^\/api\/browser-providers\/sessions\/([^/]+)\/connect$/);
-  if (browser) {
-    registry.acceptBrowserConnection(
-      decodeURIComponent(browser[1]!),
-      singleHeader(request.headers['x-comiccrawler-session-ticket']),
-      socket,
-      playwrightHeaders(request)
-    );
-    return;
-  }
-  socket.close(4004, 'Unknown browser provider endpoint.');
-}
-
-function bearerToken(request: IncomingMessage): string | undefined {
-  return request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-}
-
-function singleHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function playwrightHeaders(request: IncomingMessage): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const name of ['x-playwright-browser', 'x-playwright-proxy', 'user-agent']) {
-    const value = request.headers[name];
-    if (typeof value === 'string') result[name] = value;
-  }
-  return result;
-}
-
-function isBrowserProviderPath(pathname: string): boolean {
-  return pathname === '/api/browser-providers/connect'
-    || pathname.startsWith('/api/browser-providers/relay/')
-    || /^\/api\/browser-providers\/sessions\/[^/]+\/connect$/.test(pathname);
 }

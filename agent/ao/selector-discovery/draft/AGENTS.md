@@ -1,27 +1,12 @@
 # ComicCrawler Selector Discovery
 
-You are working inside a short-lived AO workspace prepared by ComicCrawler.
+This is a temporary AO workspace. ComicCrawler remains the source of truth.
 
-Hard rules:
-
-- Read and write Markdown only for task-facing artifacts.
-- Do not create JSON contracts, JSON schema, or JSON draft output.
-- Final assembled adapters are TypeScript files that extend ComicCrawler `AdapterBase`,
-  but that shell is composed by ComicCrawler from reviewed capability drafts, not
-  written by agents. Per-stage drafts must contain only capability subclasses
-  (see `contracts/adapter-base-api.md` and `contracts/capability-pipeline.md`).
-- Read `contracts/adapter-base-api.md` before writing adapter TypeScript.
-- Read `contracts/capability-pipeline.md` before writing adapter TypeScript.
-- Generate adapter behavior in capability stages. Every adapter starts with
-  `CommonCapability` and `VerificationCapability`; verification gates DOM trust
-  even when the normal page does not need human verification.
-- Do not write arbitrary scripts; only write the requested adapter implementation file.
-- Implement only the fine-grained methods owned by the requested capability stage.
-- The trusted DOM evidence in task messages is always captured with Playwright
-  rendering. Write selectors against rendered DOM (post-JavaScript), never
-  against static-HTML assumptions.
-- Use reusable skills through the native OpenCode skill tool when they fit the task.
-- Save requested outputs at the exact paths named in the task message.
-- Prefer stable CSS selectors supported by Cheerio-style DOM parsing.
-
-The project source of truth is ComicCrawler, not this AO workspace. This workspace will be deleted after the conversation.
+- Read `contracts/adapter-base-api.md` and `contracts/capability-pipeline.md`.
+- Task-facing analysis and review notes use Markdown, never JSON.
+- Write only the requested capability subclass and output files.
+- ComicCrawler assembles the final `AdapterBase` shell.
+- Treat supplied DOM as Playwright-rendered evidence; do not fetch or control a
+  browser from capability code.
+- Report incomplete evidence instead of inventing data.
+- Prefer stable, Cheerio-compatible selectors.

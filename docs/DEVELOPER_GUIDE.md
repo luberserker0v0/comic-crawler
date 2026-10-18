@@ -5,7 +5,7 @@
 - Node.js 20.19 or newer.
 - npm 9 or newer.
 - Git.
-- Chromium for local Browser Provider work.
+- A consumer-provided browser runtime for Browser Client integration work.
 
 ## 2. Local setup
 
@@ -69,7 +69,7 @@ npm run dev
 ```text
 agent/                  AO bundles and evaluation cases
 backend/                API, crawler, tasks, adapters
-browser-provider-sdk/   user-side browser client and SDK
+browser-client-sdk/     runtime-neutral Browser Client SDK
 docs/                   project documentation
 frontend/               React and Vite WebUI
 scripts/                development and verification scripts
@@ -109,8 +109,6 @@ Environment variables override persisted deployment settings.
 | Runtime data | `COMICCRAWLER_DATA_PATH` | development: `./data` |
 | Agent workspaces | `AGENT_WORKSPACE_PATH` | `<data-path>/agent-workspaces` |
 | AO bundle | `AO_BUNDLE_PATH` | `agent/ao/selector-discovery` |
-| Browser timeout | `COMICCRAWLER_BROWSER_CONNECT_TIMEOUT` | `30000` |
-| Browser network exposure | `COMICCRAWLER_BROWSER_EXPOSE_NETWORK` | unset |
 | API security mode | `COMICCRAWLER_API_SECURITY_MODE` | `public` |
 | API security secret | `COMICCRAWLER_API_SECURITY_SECRET_PATH` | unset |
 | Static frontend | `STATIC_DIR` | unset |
@@ -140,24 +138,25 @@ Runtime areas include:
 - `agent-workspaces/`
 - `logs/`
 
-## 6. Browser Provider development
+## 6. Browser Client development
 
 Build the SDK:
 
 ```bash
-npm run build:browser-provider-sdk
+npm run build:browser-client-sdk
 ```
 
 The client performs these actions:
 
 1. Reads the discovery document.
-2. Opens an outbound control connection.
-3. Starts a temporary browser profile.
-4. Relays Playwright traffic.
+2. Enrolls once and persists the issued credential.
+3. Opens one outbound command WebSocket.
+4. Executes semantic page commands through the injected executor.
 
 ComicCrawler never launches Chromium in the backend process.
 
-See [Browser Provider SDK](../browser-provider-sdk/README.md) for full CLI usage.
+See [Browser Client SDK](../browser-client-sdk/README.md) for the executor and
+state-store contracts.
 
 ## 7. Verification gates
 
@@ -169,7 +168,34 @@ Use this gate for launcher or port changes:
 npm run test:dev
 ```
 
-### 7.2 Daily gate
+### 7.2 Test layers
+
+Run one test layer from the repository root:
+
+```bash
+npm run test:unit
+npm run test:integration
+npm run test:e2e
+```
+
+Run every automated test layer:
+
+```bash
+npm run test:all
+```
+
+Use a focused workspace command when needed:
+
+```bash
+npm run test:unit:backend
+npm run test:unit:frontend
+npm run test:unit:browser-client-sdk
+npm run test:integration:backend
+npm run test:integration:frontend
+npm run test:e2e:chromium
+```
+
+### 7.3 Daily gate
 
 Use this gate for normal code changes:
 
@@ -185,7 +211,7 @@ It performs these checks:
 4. Runs core backend tests.
 5. Runs the REST-only flow.
 
-### 7.3 Full local gate
+### 7.4 Full local gate
 
 Use this gate for browser and WebUI flows:
 
@@ -196,17 +222,16 @@ npm run verify:local
 It performs these checks:
 
 1. Runs `verify:quick`.
-2. Starts Playwright Service.
-3. Starts the E2E Browser Provider.
-4. Runs the Playwright suite.
+2. Starts the E2E Browser Client fixture.
+3. Runs the Playwright suite.
 
-### 7.4 Focused gates
+### 7.5 Focused gates
 
 ```bash
 npm run test:api
 npm run -w backend test:coverage -- --runInBand
 npm run -w frontend test:coverage -- --runInBand
-npm run -w browser-provider-sdk test:coverage
+npm run -w browser-client-sdk test:coverage
 ```
 
 See the [test strategy](development/TDD.md) for test layers and merge gates.

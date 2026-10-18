@@ -8,7 +8,7 @@ import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import type { SelectorDiscoveryService } from '../../selector-discovery';
 import type { ChallengeDiscoveryService } from '../../challenge';
-import type { BrowserLeaseCoordinator } from '../../browser/lease-coordinator';
+import type { BrowserWorkerLeaseCoordinator } from '../../browser/browser-worker-lease-coordinator';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
 import { adapterSupports, isMissingChallengeJobError, recreateChallengeJobForTask } from './tasks-challenge';
@@ -31,7 +31,7 @@ export function setupTasksRoutes(
   challengeDiscoveryService?: ChallengeDiscoveryService,
   options?: {
     downloadDir?: string | (() => string | Promise<string>);
-    browserLeaseCoordinator?: BrowserLeaseCoordinator;
+    browserLeaseCoordinator?: BrowserWorkerLeaseCoordinator;
     apiSecurity?: ApiSecurityService;
   }
 ): void {
@@ -169,7 +169,7 @@ export function setupTasksRoutes(
       chapters?: string[];
       chapterUrls?: string[];
       priority?: number;
-      browserTarget?: { mode?: string; workerId?: string };
+      browserTarget?: { mode?: string; workerId?: string; resourceId?: string };
     };
     const mode = body.mode ?? 'all';
     const principal = options?.apiSecurity
@@ -467,11 +467,15 @@ export function setupTasksRoutes(
   });
 }
 
-function parseBrowserTarget(value: { mode?: string; workerId?: string } | undefined) {
-  if (value === undefined || value.mode === 'any') return { mode: 'any' as const };
+function parseBrowserTarget(value: { mode?: string; workerId?: string; resourceId?: string } | undefined) {
+  if (value === undefined) return { mode: 'managed-profile' as const };
   const workerId = value.workerId?.trim();
-  if (value.mode !== 'specific' || !workerId) {
-    return new Error('browserTarget must be { mode: "any" } or { mode: "specific", workerId: "..." }.');
+  if (value.mode === 'managed-profile') {
+    return workerId ? { mode: 'managed-profile' as const, workerId } : { mode: 'managed-profile' as const };
   }
-  return { mode: 'specific' as const, workerId };
+  const resourceId = value.resourceId?.trim();
+  if (value.mode !== 'existing-tab' || !workerId || !resourceId) {
+    return new Error('browserTarget must select managed-profile or provide an existing-tab workerId and resourceId.');
+  }
+  return { mode: 'existing-tab' as const, workerId, resourceId };
 }

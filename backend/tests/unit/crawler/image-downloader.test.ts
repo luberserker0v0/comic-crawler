@@ -89,9 +89,9 @@ describe('ImageDownloader', () => {
     expect(result.size).toBe(Buffer.byteLength('partial-remaining'));
   });
 
-  it('uses the verified chapter page URL as Referer for protected image CDNs', async () => {
+  it('uses the image origin as the default Referer', async () => {
     const requestSpy = jest.fn(async (options: { headers: Record<string, string> }) => {
-      expect(options.headers.Referer).toBe('https://m.happymh.com/mangaread/demo/1');
+      expect(options.headers.Referer).toBe('https://ruicdn.happymh.com');
 
       return {
         statusCode: 200,
@@ -103,13 +103,7 @@ describe('ImageDownloader', () => {
 
     await downloader.download(
       { url: 'https://ruicdn.happymh.com/hash/page.jpg?q=99', index: 1 },
-      {
-        outputDir: TEST_ROOT,
-        verifiedBrowser: {
-          context: {} as any,
-          pageUrl: 'https://m.happymh.com/mangaread/demo/1',
-        },
-      }
+      { outputDir: TEST_ROOT }
     );
 
     expect(requestSpy).toHaveBeenCalled();

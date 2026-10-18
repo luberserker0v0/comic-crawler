@@ -1,9 +1,7 @@
 import * as cheerio from 'cheerio';
-import { DEFAULTS } from '@comiccrawler/shared';
 import type {
   AdapterDomSource,
   AdapterFunctionTestResponse,
-  BrowserConfig,
   DomReadinessReport,
   DomReadinessTarget,
   EffectiveRenderContext,
@@ -12,7 +10,7 @@ import type {
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import { looksLikeAntiBotChallenge } from '../../crawler/anti-bot';
-import { PlaywrightHtmlRenderer } from '../../crawler/html-renderer';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import type { ChallengeDiscoveryJob } from '../../challenge/discovery-types';
 import type {
@@ -25,12 +23,12 @@ import type {
 const PLAYWRIGHT_ADAPTER_FUNCTION_TIMEOUT_MS = 15 * 60 * 1000;
 const adapterFunctionLocks = new WeakMap<object, Promise<void>>();
 
-interface AdapterFunctionTestOptions {
-  browser?: BrowserConfig;
+export interface AdapterFunctionTestOptions {
   challengeDiscoveryId?: string;
   challengeDiscoveryService?: ChallengeDiscoveryService;
   network?: NetworkConfig;
   renderContext?: EffectiveRenderContext;
+  htmlRenderer?: HtmlRenderer;
 }
 
 class TimingCollector {
@@ -70,12 +68,7 @@ async function runAdapterFunctionTest(
   const crawlerMode = defaultCrawlerModeForAdapter(adapter);
   const target = readinessTargetForFunction(functionId);
   const domSource = domSourceForCrawlerMode(crawlerMode);
-  const renderer = new PlaywrightHtmlRenderer({
-    ...(options.browser ?? DEFAULTS.browser),
-    mode: 'remote',
-    challengeAutoAttempt: false,
-    challengeWaitMs: 0,
-  }, options.network, undefined, options.renderContext);
+  const renderer = options.htmlRenderer ?? missingBrowserWorkerRenderer();
   const adapterRenderer = {
     render: async (renderUrl: string): Promise<string> => {
       const html = await renderer.render(renderUrl);
@@ -237,6 +230,15 @@ async function runAdapterFunctionTest(
     }
     await renderer.dispose().catch(() => undefined);
   }
+}
+
+function missingBrowserWorkerRenderer(): HtmlRenderer {
+  return {
+    render: async () => {
+      throw new Error('Browser Worker renderer is required for Playwright adapter functions.');
+    },
+    dispose: async () => undefined,
+  };
 }
 
 async function runWithAdapterFunctionLock<T>(adapter: object, action: () => Promise<T>): Promise<T> {

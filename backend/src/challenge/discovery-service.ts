@@ -1,16 +1,13 @@
-import type { Browser, BrowserContext } from 'playwright';
+import * as cheerio from 'cheerio';
 import type { BrowserConfig, BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
 import { fetchSafeHtml, normalizeAndValidateUrl } from '../selector-discovery/safe-fetch';
 import { looksLikeAccessBlocked, looksLikeAntiBotChallenge } from '../crawler/anti-bot';
-import { BrowserChallengeHandler } from './browser-challenge-handler';
 import { getGlobalChallengeStrategyRegistry } from './registry';
-import { getGlobalVerifiedBrowserSessionRegistry, type VerifiedBrowserSession } from './verified-browser-sessions';
 import { loadChallengeStrategyFromSource } from './strategy-loader';
 import { validateChallengeStrategySource } from './strategy-validator';
 import type { ChallengeDiscoveryJob } from './discovery-types';
-import { findPageHtmlInContexts } from './remote-handoff';
-import { connectRemoteBrowser, requireRemoteBrowserEndpoint } from '../browser/remote-browser-provider';
+import type { BrowserRenderService } from '../browser/browser-render-service';
 
 const JOB_PREFIX = 'challenge-discovery-job-';
 const INDEX_KEY = 'challenge-discovery-index';
@@ -20,7 +17,8 @@ export interface ChallengeDiscoveryServiceOptions {
   workspaceRoot?: string;
   getBrowserConfig?: (browserSessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
-  acquireBrowserSession?: (input: { jobId: string; ownerUserId: string; browserTarget?: BrowserTarget }) => Promise<{ sessionId: string; release(): Promise<void> }>;
+  acquireBrowserSession?: (input: { jobId: string; ownerUserId: string; url: string; browserTarget?: BrowserTarget }) => Promise<{ sessionId: string; release(): Promise<void> }>;
+  browserRenderService?: BrowserRenderService;
 }
 
 interface TransferredBrowserLease {
@@ -38,12 +36,6 @@ type ChallengeDiscoveryInput = {
 
 export class ChallengeDiscoveryService {
   private readonly ownedBrowserLeases = new Map<string, { release(): Promise<void> }>();
-  private readonly browserContexts = new Map<string, {
-    browser: Browser;
-    context: BrowserContext;
-    wsEndpoint: string;
-  }>();
-
   constructor(
     private readonly storage: IStorage,
     private readonly options: ChallengeDiscoveryServiceOptions = {}
@@ -59,7 +51,7 @@ export class ChallengeDiscoveryService {
   async createDeferred(input: ChallengeDiscoveryInput): Promise<ChallengeDiscoveryJob> {
     const job = await this.createQueuedJob(input);
     void this.run(job.id).then(async (result) => {
-      if (result.status === 'failed' || (result.status === 'ready' && !input.browserLease)) {
+      if (result.status === 'failed') {
         await this.releaseBrowserLease(job.id);
       }
     }).catch(async (error) => {
@@ -161,36 +153,10 @@ export class ChallengeDiscoveryService {
   }
 
   async openBrowser(id: string): Promise<ChallengeDiscoveryJob> {
-    const job = await this.getRequiredJob(id);
-    getGlobalVerifiedBrowserSessionRegistry().deleteBySourceJobId(job.id);
-    const existing = this.browserContexts.get(job.id);
-    if (existing) {
-      await existing.context.close().catch(() => undefined);
-      await existing.browser.close().catch(() => undefined);
-      this.browserContexts.delete(job.id);
-    }
-    const browserConfig = await this.getBrowserConfig(job.browserSessionId);
-    const network = await this.getNetworkConfig();
-    const wsEndpoint = requireRemoteBrowserEndpoint({
-      wsEndpoint: browserConfig.remote?.wsEndpoint,
-    });
-    const browser = await connectRemoteBrowser({
-      wsEndpoint,
-      timeout: browserConfig.remote?.connectTimeout ?? browserConfig.timeout,
-      exposeNetwork: browserConfig.remote?.exposeNetwork,
-      headers: browserConfig.remote?.headers,
-    });
-    const context = await browser.newContext({
-      userAgent: network?.userAgent,
-      proxy: network?.proxy ? { server: network.proxy } : undefined,
-      viewport: { width: 1920, height: 1080 },
-    });
-    const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(job.normalizedUrl, {
-      waitUntil: browserConfig.waitUntil ?? 'domcontentloaded',
-      timeout: browserConfig.timeout ?? 30000,
-    }).catch(() => undefined);
-    this.browserContexts.set(job.id, { browser, context, wsEndpoint });
+    const job = await this.ensureBrowserSession(await this.getRequiredJob(id));
+    const renderService = this.requireBrowserRenderService();
+    const sessionId = requireSessionId(job);
+    await renderService.focus(sessionId);
     await this.updateJob(job.id, {
       status: 'browser_open',
       error: undefined,
@@ -208,17 +174,23 @@ export class ChallengeDiscoveryService {
     page: { url: string; title: string; html: string };
   }> {
     const job = await this.getRequiredJob(id);
-    const activeSession = this.browserContexts.get(id);
-    if (!activeSession) {
-      throw new Error('The remote browser context is no longer active. Open the browser from this handoff first.');
+    const sessionId = requireSessionId(job);
+    const renderService = this.requireBrowserRenderService();
+    let page = await renderService.snapshot(sessionId);
+    if (options.allowNavigate && !samePage(page.url, job.normalizedUrl)) {
+      await renderService.navigate(sessionId, job.normalizedUrl);
+      page = await renderService.snapshot(sessionId);
     }
-    const page = await findPageHtmlInContexts([activeSession.context], {
-      targetUrl: job.normalizedUrl,
-      settle: options.settle,
-      allowNavigate: options.allowNavigate,
-    });
+    if (options.settle) {
+      const browser = await this.getBrowserConfig(sessionId);
+      page = await renderService.render(sessionId, page.url, {
+        timeoutMs: browser.timeout,
+        postLoadDelayMs: browser.postLoadDelayMs,
+      });
+    }
+    const title = cheerio.load(page.html)('title').first().text().trim();
     if (looksLikeAccessBlocked(page.html)) {
-      const message = `Attached browser page is blocked: ${page.title || page.url}`;
+      const message = `Attached browser page is blocked: ${title || page.url}`;
       await this.updateJob(id, {
         status: 'access_blocked',
         error: message,
@@ -226,7 +198,7 @@ export class ChallengeDiscoveryService {
       throw new Error(message);
     }
     if (looksLikeAntiBotChallenge(page.html)) {
-      const message = `Attached browser page still shows a challenge: ${page.title || page.url}`;
+      const message = `Attached browser page still shows a challenge: ${title || page.url}`;
       await this.updateJob(id, {
         status: 'challenge_required',
         error: message,
@@ -241,76 +213,35 @@ export class ChallengeDiscoveryService {
 ## Status
 
 - Status: ready
-- Source: remote Playwright browser session
+- Source: Browser Worker session
 - Page URL: ${page.url}
-- Page Title: ${page.title}
+- Page Title: ${title}
 `,
     });
-    return { job: await this.getRequiredJob(id), page };
+    return { job: await this.getRequiredJob(id), page: { ...page, title } };
   }
 
   async completeHumanVerification(id: string, _options: { settle?: boolean; allowNavigate?: boolean } = {}): Promise<ChallengeDiscoveryJob> {
     const job = await this.getRequiredJob(id);
-    const remoteSession = this.browserContexts.get(id);
-    if (remoteSession) {
-      const page = remoteSession.context.pages()[0];
-      if (page) {
-        const html = await page.content().catch(() => '');
-        if (looksLikeAccessBlocked(html)) {
-          await this.updateJob(id, {
-            status: 'access_blocked',
-            error: 'Human verification reached an explicit access blocked page for this browser/session.',
-          });
-          return this.getRequiredJob(id);
-        }
-        if (looksLikeAntiBotChallenge(html)) {
-          await this.updateJob(id, {
-            status: 'challenge_required',
-            error: 'Human verification is not complete yet. The headed browser is still showing a challenge page.',
-          });
-          return this.getRequiredJob(id);
-        }
-
-        const ready = await new BrowserChallengeHandler()
-          .ensureReady(page, job.normalizedUrl, { challengeAutoAttempt: false })
-          .catch((error) => {
-            if (isAccessBlockedError(error)) return 'access_blocked' as const;
-            if (isAntiBotChallengeError(error)) return null;
-            throw error;
-          });
-        if (ready === 'access_blocked') {
-          await this.updateJob(id, {
-            status: 'access_blocked',
-            error: 'Human verification reached an explicit access blocked page for this browser/session.',
-          });
-          return this.getRequiredJob(id);
-        }
-        if (!ready) {
-          await this.updateJob(id, {
-            status: 'challenge_required',
-            error: 'Human verification did not reach a parser-ready page yet.',
-          });
-          return this.getRequiredJob(id);
-        }
-      }
-      await this.registerVerifiedSession({
-        hostname: job.hostname,
-        wsEndpoint: remoteSession.wsEndpoint,
-        context: remoteSession.context,
-        sourceJobId: job.id,
-        verifiedAt: new Date().toISOString(),
-      });
+    const page = await this.requireBrowserRenderService().snapshot(requireSessionId(job));
+    if (looksLikeAccessBlocked(page.html)) {
       await this.updateJob(id, {
-        status: 'ready',
-        error: undefined,
-        diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n- Remote browser verification session is available for this hostname.\n',
+        status: 'access_blocked',
+        error: 'Human verification reached an explicit access blocked page for this browser/session.',
       });
       return this.getRequiredJob(id);
     }
-
+    if (looksLikeAntiBotChallenge(page.html)) {
+      await this.updateJob(id, {
+        status: 'challenge_required',
+        error: 'Human verification is not complete yet. The browser still shows a challenge page.',
+      });
+      return this.getRequiredJob(id);
+    }
     await this.updateJob(id, {
-      status: 'challenge_required',
-      error: 'The remote browser context is no longer active. Reopen the verification browser from this handoff.',
+      status: 'ready',
+      error: undefined,
+      diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n- Browser Worker session passed human verification.\n',
     });
     return this.getRequiredJob(id);
   }
@@ -325,13 +256,6 @@ export class ChallengeDiscoveryService {
     const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
     await this.storage.write(INDEX_KEY, ids.filter((entry) => entry !== id));
     await this.storage.delete(`${JOB_PREFIX}${id}`);
-    const remoteSession = this.browserContexts.get(id);
-    if (remoteSession) {
-      await remoteSession.context.close().catch(() => undefined);
-      await remoteSession.browser.close().catch(() => undefined);
-      this.browserContexts.delete(id);
-    }
-    getGlobalVerifiedBrowserSessionRegistry().deleteBySourceJobId(id);
     await this.releaseBrowserLease(id);
     return true;
   }
@@ -392,23 +316,24 @@ export class ChallengeDiscoveryService {
 
   private async renderReady(url: string, browserPatch: Partial<BrowserConfig> = {}, browserSessionId?: string): Promise<void> {
     const [browser, network] = await Promise.all([this.getBrowserConfig(browserSessionId), this.getNetworkConfig()]);
-    await fetchSafeHtml(url, { browser: { ...browser, ...browserPatch }, network });
-  }
-
-  private async registerVerifiedSession(session: VerifiedBrowserSession): Promise<void> {
-    getGlobalVerifiedBrowserSessionRegistry().register(session);
+    await fetchSafeHtml(url, {
+      browser: { ...browser, ...browserPatch },
+      network,
+      renderFirst: true,
+      ...(browserSessionId && this.options.browserRenderService
+        ? { renderPage: (renderUrl: string, input: { timeoutMs: number }) =>
+            this.options.browserRenderService!.render(browserSessionId, renderUrl, input) }
+        : {}),
+    });
   }
 
   private async getBrowserConfig(browserSessionId?: string): Promise<BrowserConfig> {
     return this.options.getBrowserConfig
       ? await this.options.getBrowserConfig(browserSessionId)
       : {
-          mode: 'remote',
-          maxInstances: 1,
           timeout: 30000,
-          waitUntil: 'domcontentloaded',
-          challengeAutoAttempt: true,
-          challengeWaitMs: 15000,
+          workerWaitTimeoutMs: 30 * 60 * 1000,
+          postLoadDelayMs: 0,
         };
   }
 
@@ -417,6 +342,7 @@ export class ChallengeDiscoveryService {
     const lease = await this.options.acquireBrowserSession({
       jobId: job.id,
       ownerUserId: job.ownerUserId ?? 'public',
+      url: job.normalizedUrl,
       browserTarget: job.browserTarget,
     });
     this.ownedBrowserLeases.set(job.id, lease);
@@ -426,6 +352,13 @@ export class ChallengeDiscoveryService {
 
   private async getNetworkConfig(): Promise<NetworkConfig | undefined> {
     return this.options.getNetworkConfig ? await this.options.getNetworkConfig() : undefined;
+  }
+
+  private requireBrowserRenderService(): BrowserRenderService {
+    if (!this.options.browserRenderService) {
+      throw new Error('Browser Worker render service is not configured.');
+    }
+    return this.options.browserRenderService;
   }
 
   private async getRequiredJob(id: string): Promise<ChallengeDiscoveryJob> {
@@ -460,6 +393,22 @@ function isAntiBotChallengeError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error);
   return /anti-bot|challenge|cloudflare|access_blocked|sorry, you have been blocked|unable to access/i.test(message);
+}
+
+function requireSessionId(job: ChallengeDiscoveryJob): string {
+  if (!job.browserSessionId) throw new Error('Browser Worker session is not available for this handoff.');
+  return job.browserSessionId;
+}
+
+function samePage(left: string, right: string): boolean {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    return leftUrl.hostname === rightUrl.hostname
+      && leftUrl.pathname.replace(/\/+$/, '') === rightUrl.pathname.replace(/\/+$/, '');
+  } catch {
+    return false;
+  }
 }
 
 function isAccessBlockedError(error: unknown): boolean {

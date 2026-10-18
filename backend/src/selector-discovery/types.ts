@@ -59,7 +59,7 @@ export interface SelectorDiscoveryJob {
   functionRevisionTasks?: SelectorDiscoveryFunctionRevisionTask[];
   implementationValidation?: AdapterImplementationValidation;
   ownerUserId?: string;
-  browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string };
+  browserTarget?: { mode: 'managed-profile'; workerId?: string } | { mode: 'existing-tab'; workerId: string; resourceId: string };
   browserSessionId?: string;
 }
 
@@ -113,6 +113,6 @@ export interface DiscoveryInput {
     pageType?: 'chapter';
   };
   ownerUserId?: string;
-  browserTarget?: { mode: 'any' } | { mode: 'specific'; workerId: string };
+  browserTarget?: { mode: 'managed-profile'; workerId?: string } | { mode: 'existing-tab'; workerId: string; resourceId: string };
   browserSessionId?: string;
 }

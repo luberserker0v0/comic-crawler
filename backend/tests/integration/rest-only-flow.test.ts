@@ -12,6 +12,7 @@ import { AdapterBase } from '../../src/adapter/base';
 import { createEmptyCheckpoint } from '../../src/task/checkpoint';
 import { ComicError, ErrorType } from '../../src/error/types';
 import type { ComicMetadata } from '../../../shared/types';
+import { BrowserRenderService } from '../../src/browser/browser-render-service';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'rest-only-flow');
 
@@ -135,12 +136,27 @@ describe('Integration: REST-only crawl flow', () => {
       concurrency: 1,
       eventBus,
       browser: {
-        mode: 'remote',
-        maxInstances: 1,
         timeout: 1000,
-        waitUntil: 'domcontentloaded',
+        workerWaitTimeoutMs: 1000,
+        postLoadDelayMs: 0,
       },
     });
+
+    const browserRenderService = new BrowserRenderService({
+      execute: async (_sessionId: string, command: { type: string; url?: string }) => {
+        if (command.type === 'page.navigate') return { type: 'page.navigate', url: command.url };
+        if (command.type === 'page.wait-for-ready') return { type: 'page.wait-for-ready', url: chapterUrlForCommand(command) };
+        if (command.type === 'page.prepare-content') return { type: 'page.prepare-content', url: chapterUrlForCommand(command) };
+        if (command.type === 'page.get-content') return { type: 'page.get-content', url: 'https://rest-only.example/', html: '<html></html>' };
+        if (command.type === 'page.get-url') return { type: 'page.get-url', url: 'https://rest-only.example/' };
+        return { type: 'page.focus' };
+      },
+    } as any);
+    const browserLeaseCoordinator = {
+      acquire: async () => ({ sessionId: 'test-session', release: async () => undefined }),
+      validateTarget: () => undefined,
+      dispose: async () => undefined,
+    } as any;
 
     server = new ComicCrawlerServer({
       port: 0,
@@ -150,6 +166,8 @@ describe('Integration: REST-only crawl flow', () => {
       adapterRegistry,
       crawlerEngine,
       eventBus,
+      browserRenderService,
+      browserLeaseCoordinator,
       selectorDiscoveryService: {
         create: async (input: any) => ({
           id: 'disc-rest-only',
@@ -336,6 +354,12 @@ describe('Integration: REST-only crawl flow', () => {
     });
   });
 });
+
+function chapterUrlForCommand(command: unknown): string {
+  return typeof command === 'object' && command && 'url' in command
+    ? String((command as { url?: string }).url ?? 'https://rest-only.example/')
+    : 'https://rest-only.example/';
+}
 
 async function waitForTaskStatus(taskManager: TaskManager, taskId: string, status: string): Promise<void> {
   const deadline = Date.now() + 2000;

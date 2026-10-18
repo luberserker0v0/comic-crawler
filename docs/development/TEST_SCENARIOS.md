@@ -92,6 +92,41 @@
 
 預期：兩個 request 回傳各自版面與圖片順序。
 
+### ADP-06 拒絕不完整 reader DOM
+
+1. 準備多頁 reader DOM。
+2. 讓部分頁面缺少圖片 URL。
+3. 執行 readiness 檢查。
+4. 執行 chapter image extraction。
+
+預期：系統拒絕不完整結果。
+
+### ADP-07 隔離 draft runtime
+
+1. 建立 adapter draft。
+2. 執行 draft function test。
+3. 讀取正式 adapter registry。
+
+預期：draft 可執行但不會註冊為正式 adapter。
+
+### COMIX-01 擷取 Comix fixture
+
+1. 載入 Comix chapter fixture。
+2. 執行 chapter image extraction。
+3. 比對頁碼與 URL 順序。
+
+預期：回傳全部圖片 URL。
+
+### COMIX-02 驗證真實 Comix chapter
+
+1. 連接 acceptance Consumer。
+2. 建立 Comix chapter request。
+3. 等待 challenge 通過。
+4. 使用相同 challenge ID 重試。
+5. 比對 reader page 與 URL 數量。
+
+預期：同一 session 回傳完整有序 URL。
+
 ## 4. Adapter discovery
 
 ### DISC-01 缺少 AO 設定
@@ -153,6 +188,15 @@
 
 預期：adapter 可被 URL resolver 選中。
 
+### DISC-08 執行 AO implementation draft
+
+1. 準備完成的 discovery job。
+2. 讀取 implementation draft。
+3. 執行 draft function test。
+4. 檢查正式 adapter registry。
+
+預期：draft 可測試但不會提前發布。
+
 ### CRAWL-01 使用新 adapter
 
 1. 發布 generated adapter。
@@ -178,36 +222,35 @@
 
 預期：工作從 checkpoint 完成。
 
-## 5. Browser Provider
+## 5. Browser Client
 
-### BP-01 註冊 Provider
+### BC-01 註冊 Client
 
-1. 讀取 Provider discovery。
+1. 讀取 Client discovery。
 2. 使用 user credential 註冊。
-3. 保存 state file。
-4. 保存 credential file。
+3. 保存 Client state。
 
-預期：Server 建立 Provider identity。
+預期：Server 建立 Client identity。
 
-### BP-02 連接 Worker
+### BC-02 連接 Worker
 
-1. 讀取 Provider state。
-2. 讀取 Provider credential。
-3. 建立 control WebSocket。
-4. 宣告 Worker capabilities。
+1. 讀取 Client state。
+2. 建立 command WebSocket。
+3. 傳送 credential。
+4. 宣告 capabilities。
 
 預期：Worker 顯示 online 與 idle。
 
-### BP-03 建立遠端 session
+### BC-03 建立 command session
 
 1. 選擇 idle Worker。
 2. 取得 task lease。
 3. 等待 session ready。
-4. 連接 reverse relay。
+4. 執行 DOM command。
 
-預期：Server 可以連接 Playwright。
+預期：Server 收到 rendered DOM。
 
-### BP-04 建立未知站點 handoff
+### BC-04 建立未知站點 handoff
 
 1. 開啟 challenge fixture。
 2. 建立未知站點工作。
@@ -215,7 +258,7 @@
 
 預期：job 要求人工驗證。
 
-### BP-05 建立 adapter handoff
+### BC-05 建立 adapter handoff
 
 1. 註冊 matched adapter。
 2. 建立 challenge 工作。
@@ -223,6 +266,101 @@
 4. 檢查 Worker lease。
 
 預期：工作保留原 Worker。
+
+### BC-06 註冊既有 tab
+
+1. 連接 existing-tab Worker。
+2. 註冊目前 tab。
+3. 讀取 resource ID。
+
+預期：Server 保存 opaque resource。
+
+### BC-07 拒絕錯誤 tab URL
+
+1. 註冊目前 tab。
+2. 改變 tab URL。
+3. 建立原 URL session。
+
+預期：Session 拒絕採用該 tab。
+
+### BC-08 拒絕撤銷使用中的 tab
+
+1. 建立 existing-tab session。
+2. 撤銷相同 resource。
+3. 檢查 Worker 連線。
+
+預期：Request 被拒絕且 Worker 保持 online。
+
+### BC-09 重新註冊 tab resource
+
+1. 註冊 tab resource。
+2. 中斷 command WebSocket。
+3. 重新連接 Client。
+4. 讀取 Server resource。
+
+預期：相同 resource ID 再次可用。
+
+### BC-10 清理 managed Profile
+
+1. 建立 temporary Profile。
+2. 開啟 managed session。
+3. 關閉 session。
+
+預期：Browser context 與 Profile 均被清除。
+
+### BC-11 處理 Profile 複製失敗
+
+1. 建立 copy provisioner。
+2. 模擬 Profile lock。
+3. 檢查 temporary directory。
+
+預期：複製失敗且暫存目錄被清除。
+
+### BC-12 驗證 Consumer Executor
+
+1. 建立 Consumer Executor。
+2. 準備 contract case。
+3. 執行共用 harness。
+4. 檢查完成項目。
+
+預期：Executor 通過共用操作契約。
+
+### BC-13 連接正式環境
+
+1. 準備 acceptance config。
+2. 向正式 Server enroll。
+3. 啟動 acceptance Consumer。
+4. 檢查 Worker 狀態。
+5. 建立 managed-profile 工作。
+6. 等待真實 Chrome 開啟。
+
+預期：正式 Server 可透過 SDK 操作 Chrome。
+
+### BC-14 重用已驗證 session
+
+1. 建立 adapter handoff。
+2. 等待 challenge ready。
+3. 使用 challenge ID 重試。
+4. 檢查 Worker lease。
+
+預期：重試沿用原 session，不租用第二個 session。
+
+### BC-15 準備虛擬化 reader
+
+1. 開啟虛擬化 reader。
+2. 執行 `page.prepare-content`。
+3. 讀取 prepared DOM。
+4. 檢查每個 reader page。
+
+預期：每頁保留 `data-comiccrawler-*` 圖片 URL。
+
+### BC-16 中止 WebExtension command
+
+1. 建立已中止的 command signal。
+2. 呼叫 WebExtension driver。
+3. 檢查 tab API 呼叫。
+
+預期：Driver 回報取消且不操作 tab。
 
 ## 6. WebUI
 
@@ -243,18 +381,18 @@
 
 預期：頁面顯示人工驗證動作。
 
-### WEB-03 顯示 remote handoff
+### WEB-03 顯示 Browser Client handoff
 
 1. 建立 matched adapter handoff。
 2. 開啟工作詳情。
 3. 點擊 open browser。
 
-預期：頁面顯示 remote browser 狀態。
+預期：頁面顯示 Browser Worker 狀態。
 
 ### WEB-04 顯示遺失的 handoff
 
 1. 建立 handoff。
-2. 刪除 handoff resource。
+2. 刪除 challenge job。
 3. 開啟工作詳情。
 
 預期：頁面顯示重建動作。
@@ -297,12 +435,12 @@
 
 預期：新值已持久化。
 
-### CFG-03 拒絕手動 WS endpoint
+### CFG-03 拒絕未知 browser 設定
 
-1. 送出手動 Playwright endpoint。
+1. 送出未定義的 transport 設定。
 2. 檢查 API response。
 
-預期：Server 拒絕繞過 Provider registry。
+預期：Server 回傳 400。
 
 ## 9. 安全
 
@@ -315,17 +453,17 @@
 
 預期：只有被授權 request 通過。
 
-### SEC-02 隔離 Provider credential
+### SEC-02 隔離 Browser Client credential
 
-1. 註冊兩個 Provider。
+1. 註冊兩個 Browser Client。
 2. 使用第一個 credential 連線。
-3. 嘗試操作第二個 Provider。
+3. 嘗試操作第二個 Client。
 
-預期：Server 拒絕跨 owner／Provider 操作。
+預期：Server 拒絕跨 owner／Client 操作。
 
-### SEC-03 撤銷 Provider
+### SEC-03 撤銷 Browser Client
 
-1. 連接 Provider。
+1. 連接 Browser Client。
 2. 撤銷其 credential。
 3. 嘗試重新連線。
 

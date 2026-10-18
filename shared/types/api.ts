@@ -324,8 +324,8 @@ export interface BrowserWorkerListResponse {
 }
 
 export type BrowserTarget =
-  | { mode: 'any' }
-  | { mode: 'specific'; workerId: string };
+  | { mode: 'managed-profile'; workerId?: string }
+  | { mode: 'existing-tab'; workerId: string; resourceId: string };
 
 export type CreateTaskResponse =
   | {

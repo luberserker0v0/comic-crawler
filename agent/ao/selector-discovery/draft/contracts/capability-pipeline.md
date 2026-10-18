@@ -1,75 +1,32 @@
-# Adapter Capability Pipeline
+# Capability Pipeline
 
-Use this contract whenever ComicCrawler asks you to produce adapter TypeScript.
-
-Do not write a whole adapter as one unstructured block. Produce and reason
-about adapter behavior in capability stages. ComicCrawler may ask for one stage
-at a time. ComicCrawler, not the agent, assembles the final AdapterBase shell
-from reviewed capability classes.
-
-## Stage Order
+ComicCrawler requests one stage at a time, validates it, then assembles the
+reviewed classes into the final AdapterBase shell.
 
 1. `common-verification`
-   - Implement only one `CommonCapability` subclass and one
-     `VerificationCapability` subclass.
-   - Follow `contracts/common-verification-template.ts`. Copy its structure and
-     replace URL matching and verification keywords.
-   - Do not declare or redefine `AdapterBase`, `CommonCapability`, or
-     `VerificationCapability`.
-   - Do not export or implement an `AdapterBase` shell in this stage.
-   - Do not declare identity fields, capability flags, constructors, or handler
-     wiring in this stage.
-   - Do not add metadata or chapter image methods in this stage.
-   - Implement `CommonCapability.matchUrl`.
-   - Implement `VerificationCapability.detectVerificationRequired`.
-   - Implement `VerificationCapability.describeVerificationHandoff`.
-   - This stage is required for every adapter, even when no verification is
-     observed. In that case detection returns `false` for normal pages and true
-     for generic blocked/challenge signals.
-2. `metadata`
-   - Required for full adapters.
-   - Implement only `MetadataCapability`.
-   - Follow `contracts/metadata-template.ts`. Copy its structure and replace
-     selectors, cleanup logic, URL filters, and status keywords with
-     site-specific behavior.
-   - The selectors in `metadata-template.ts` are placeholders. Do not keep them
-     unless task evidence explicitly shows the same selectors on the target
-     site.
-   - Extract title, author, description, cover URL, tags, status, and the full
-     chapter list from trusted metadata DOM.
-   - Do not export an adapter shell in this stage.
-   - Do not implement chapter image extraction in this stage.
+   - Implement one `CommonCapability` and one `VerificationCapability` subclass.
+   - Use `contracts/common-verification-template.ts`.
+2. `metadata` — full adapters only
+   - Implement one `MetadataCapability` subclass.
+   - Extract metadata and the complete chapter catalog in the supplied DOM.
+   - Use `contracts/metadata-template.ts`; replace all placeholder selectors.
 3. `chapter-images`
-   - Required for every chapter-capable adapter.
-   - Implement only `ChapterImagesCapability`.
-   - Extract all comic page image URLs from trusted reader DOM.
+   - Implement one `ChapterImagesCapability` subclass.
+   - Extract every comic page URL in the supplied reader DOM.
 4. System compose
-   - ComicCrawler assembles reviewed capability handlers into one `AdapterBase`
-     site adapter. Agents do not write this shell.
+   - ComicCrawler creates the AdapterBase shell. AO never writes it.
 
-## Boundaries
+## Boundary
 
-- `VerificationCapability` is the DOM trust gate. Later stages must assume the
-  supplied DOM has already passed verification/readiness checks.
-- Capability handlers are mutually scoped. Metadata code must not implement
-  image extraction. Chapter image code must not implement metadata extraction.
-- Do not combine capability handlers. For example, do not write
-  `class SiteCommonVerificationCapability extends CommonCapability implements
-  VerificationCapability`. Instead, write one site-specific subclass per
-  capability base class:
-  - `class SiteCommonCapability extends CommonCapability`
-  - `class SiteVerificationCapability extends VerificationCapability`
-  - `class SiteMetadataCapability extends MetadataCapability`
-  - `class SiteChapterImagesCapability extends ChapterImagesCapability`
-- If a site needs special expansion, filtering, or cleanup, put that logic in
-  the relevant capability source so humans can review it.
-- Do not add hidden generic browser actions outside the adapter source.
-- Implement only the fine-grained methods owned by the requested capability.
+- Verification/readiness and Browser Client content preparation happen before
+  extraction.
+- Stage code is pure DOM extraction; it does not click, scroll, or navigate.
+- Do not mix methods owned by different capabilities.
+- If the supplied DOM is incomplete, describe the evidence and risk. Do not
+  guess missing chapters or image URLs.
 - Do not output JSON.
 
-## Stage Output Files
-
-When asked for staged output, use these paths:
+## Stage files
 
 - `outputs/common-verification.ts`
 - `outputs/common-verification-review.md`
@@ -79,17 +36,5 @@ When asked for staged output, use these paths:
 - `outputs/chapter-images-review.md`
 - `outputs/review-notes.md`
 
-If the task message names a narrower set of output files, write only those files.
-
-## File Write Protocol
-
-When ComicCrawler asks you to write a source file and a review file:
-
-- Write the TypeScript source only to the named `.ts` output file.
-- Write Markdown review notes only to the named `.md` output file.
-- Do not put the full TypeScript source inside review notes.
-- Do not put the full TypeScript source in the chat response.
-- The chat response should be short, for example:
-  `Wrote outputs/common-verification.ts and outputs/common-verification-review.md.`
-- If you cannot write a file, say which file failed and why. Do not substitute by
-  embedding the source in another file.
+Write source and review notes only to the paths requested by the task. Keep the
+chat response to a short confirmation.

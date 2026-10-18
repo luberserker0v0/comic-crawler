@@ -54,17 +54,9 @@ export const DEFAULTS = {
     retryDelay: 1000,
   },
   browser: {
-    mode: 'remote' as const,
-    maxInstances: 2,
     timeout: 30000,
     workerWaitTimeoutMs: 30 * 60 * 1000,
-    waitUntil: 'domcontentloaded' as const,
     postLoadDelayMs: 0,
-    challengeAutoAttempt: true,
-    challengeWaitMs: 15000,
-    remote: {
-      connectTimeout: 30000,
-    },
   },
   server: {
     port: 4100,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { validateGlobalConfig } from '../../../src/config/schema';
+import { BrowserConfigSchema, validateGlobalConfig } from '../../../src/config/schema';
 
 describe('global config schema', () => {
   it('requires a secret path when API security uses token mode', () => {
@@ -14,7 +14,7 @@ describe('global config schema', () => {
     })).toThrow(/secretPath/);
   });
 
-  it('applies the remote browser defaults when browser config is omitted', () => {
+  it('applies Browser Worker timing defaults when browser config is omitted', () => {
     const config = validateGlobalConfig({
       download: {
         directory: './downloads',
@@ -46,21 +46,13 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toEqual({
-      mode: 'remote',
-      maxInstances: 2,
       timeout: 30000,
       workerWaitTimeoutMs: 1800000,
-      waitUntil: 'domcontentloaded',
       postLoadDelayMs: 0,
-      challengeAutoAttempt: true,
-      challengeWaitMs: 15000,
-      remote: {
-        connectTimeout: 30000,
-      },
     });
   });
 
-  it('accepts Cloudflare challenge browser session settings', () => {
+  it('accepts Browser Worker command timing settings', () => {
     const config = validateGlobalConfig({
       download: {
         directory: './downloads',
@@ -79,17 +71,9 @@ describe('global config schema', () => {
         retryDelay: 1000,
       },
       browser: {
-        mode: 'remote',
-        maxInstances: 1,
         timeout: 45000,
-        waitUntil: 'domcontentloaded',
+        workerWaitTimeoutMs: 60000,
         postLoadDelayMs: 1000,
-        challengeAutoAttempt: true,
-        challengeWaitMs: 60000,
-        remote: {
-          connectTimeout: 45000,
-          exposeNetwork: '<loopback>',
-        },
       },
       server: {
         port: 4100,
@@ -105,12 +89,18 @@ describe('global config schema', () => {
     });
 
     expect(config.browser).toMatchObject({
-      remote: {
-        connectTimeout: 45000,
-        exposeNetwork: '<loopback>',
-      },
-      challengeAutoAttempt: true,
-      challengeWaitMs: 60000,
+      timeout: 45000,
+      workerWaitTimeoutMs: 60000,
+      postLoadDelayMs: 1000,
     });
+  });
+
+  it('rejects unknown Browser Worker transport settings', () => {
+    expect(() => BrowserConfigSchema.parse({
+      timeout: 30000,
+      workerWaitTimeoutMs: 60000,
+      postLoadDelayMs: 0,
+      transport: { protocol: 'custom' },
+    })).toThrow(/Unrecognized key/);
   });
 });

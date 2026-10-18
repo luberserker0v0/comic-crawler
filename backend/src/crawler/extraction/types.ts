@@ -1,11 +1,9 @@
 import type * as cheerio from 'cheerio';
-import type { Page } from 'playwright';
 import type { ComicMetadata, ImageInfo, SearchResult, SearchOptions, ComicUpdate } from '@comiccrawler/shared';
 import type { SiteSelectors } from '@comiccrawler/shared';
 
 export interface ExtractionContext {
   $?: cheerio.CheerioAPI;
-  page?: Page;
   baseUrl: string;
   selectors: SiteSelectors;
   pageType?: 'metadata' | 'chapters' | 'images';

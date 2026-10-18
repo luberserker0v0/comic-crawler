@@ -11,9 +11,13 @@ const { SelectorDiscoveryService, SelectorDiscoverySettingsStore } = require('..
 const { ChallengeDiscoveryService } = require('../dist/challenge');
 const { DynamicSiteAdapter } = require('../dist/adapter/dynamic-site-adapter');
 const { ComicError, ErrorType, errorToLogObject } = require('../dist/error/types');
-const { BrowserProviderRegistry } = require('../dist/browser/provider-registry');
-const { BrowserLeaseCoordinator } = require('../dist/browser/lease-coordinator');
-const { ReverseRelayBrowserProviderClient } = require('../../browser-provider-sdk/dist/src');
+const { BrowserClientRegistry } = require('../dist/browser/browser-client-registry');
+const { BrowserSessionGateway } = require('../dist/browser/browser-session-gateway');
+const { BrowserWorkerLeaseCoordinator } = require('../dist/browser/browser-worker-lease-coordinator');
+const { BrowserRenderService } = require('../dist/browser/browser-render-service');
+const { BrowserClient } = require('../../browser-client-sdk/dist/src');
+const { chromium } = require('playwright');
+const WebSocket = require('ws');
 const { ApiSecurityService } = require('../dist/security/api-security');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
@@ -35,17 +39,16 @@ async function start() {
     browser: {
       ...loadedConfig.browser,
       timeout: 10000,
-      challengeWaitMs: 1000,
+      workerWaitTimeoutMs: 10_000,
     },
   });
-  const browserProviderRegistry = new BrowserProviderRegistry(storage);
-  await browserProviderRegistry.initialize();
-  const browserLeaseCoordinator = new BrowserLeaseCoordinator(browserProviderRegistry, 10_000);
   const apiSecurity = ApiSecurityService.fromSecretDocument({ mode: 'public', defaultEffect: 'deny', rules: [] });
-  const getBrowserConfig = async (sessionId) => browserProviderRegistry.resolveBrowserConfig(
-    (await configManager.get()).browser,
-    sessionId
-  );
+  const browserClientRegistry = new BrowserClientRegistry(storage);
+  await browserClientRegistry.initialize();
+  const browserSessionGateway = new BrowserSessionGateway(browserClientRegistry, apiSecurity);
+  const browserLeaseCoordinator = new BrowserWorkerLeaseCoordinator(browserSessionGateway, 10_000);
+  const browserRenderService = new BrowserRenderService(browserSessionGateway);
+  const getBrowserConfig = async () => (await configManager.get()).browser;
 
   const adapterRegistry = new AdapterRegistry(eventBus);
   adapterRegistry.register({
@@ -115,17 +118,11 @@ async function start() {
     concurrency: 1,
     eventBus,
     browser: {
-      mode: 'remote',
-      maxInstances: 1,
       timeout: 30000,
-      waitUntil: 'domcontentloaded',
-      waitForSelector: '#reader img',
+      workerWaitTimeoutMs: 10_000,
       postLoadDelayMs: 0,
-      remote: {
-        connectTimeout: 30000,
-      },
     },
-    resolveRemoteBrowser: async (sessionId) => (await getBrowserConfig(sessionId)).remote,
+    browserRenderService,
   });
 
   const taskManager = new TaskManager(async (task) => {
@@ -137,7 +134,7 @@ async function start() {
       taskId: task.id,
       ownerUserId: task.data.ownerUserId || 'public',
       target: task.data.browserTarget,
-      baseBrowserConfig: (await configManager.get()).browser,
+      initialUrl: task.data.url,
       timeoutMs: 10_000,
       onWaiting: (message) => taskManager.markWaitingForBrowserWorker(task.id, message),
     });
@@ -183,12 +180,13 @@ async function start() {
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
     getBrowserConfig,
+    renderBrowserPage: (sessionId, url, options) => browserRenderService.render(sessionId, url, options),
     acquireBrowserSession: async ({ job, browserTarget }) => {
       const lease = await browserLeaseCoordinator.acquire({
         taskId: `selector:${job.id}`,
         ownerUserId: job.ownerUserId || 'public',
         target: browserTarget,
-        baseBrowserConfig: (await configManager.get()).browser,
+        initialUrl: job.normalizedUrl,
         timeoutMs: 10_000,
       });
       return { sessionId: lease.sessionId, release: () => lease.release() };
@@ -198,13 +196,14 @@ async function start() {
   const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
     workspaceRoot: path.resolve(__dirname, '../../test-results/e2e-agent-workspaces'),
     getBrowserConfig,
+    browserRenderService,
     getNetworkConfig: async () => (await configManager.get()).network,
-    acquireBrowserSession: async ({ jobId, ownerUserId, browserTarget }) => {
+    acquireBrowserSession: async ({ jobId, ownerUserId, url, browserTarget }) => {
       const lease = await browserLeaseCoordinator.acquire({
         taskId: `challenge:${jobId}`,
         ownerUserId,
         target: browserTarget,
-        baseBrowserConfig: (await configManager.get()).browser,
+        initialUrl: url,
         timeoutMs: 10_000,
       });
       return { sessionId: lease.sessionId, release: () => lease.release() };
@@ -222,8 +221,10 @@ async function start() {
     selectorDiscoveryService,
     selectorDiscoverySettingsStore,
     challengeDiscoveryService,
-    browserProviderRegistry,
+    browserClientRegistry,
+    browserSessionGateway,
     browserLeaseCoordinator,
+    browserRenderService,
     staticDir: path.resolve(__dirname, '../../frontend/dist'),
     apiSecurity,
   });
@@ -390,30 +391,23 @@ async function start() {
 
   await server.start();
 
-  const providerClients = [];
-  const providerConnections = [];
+  const browserClients = [];
   for (let index = 1; index <= 3; index += 1) {
-    const enrollment = await browserProviderRegistry.register(apiSecurity.publicPrincipal(), {
-      clientInstanceId: `e2e-provider-${index}`,
-    });
-    const provider = createE2eBrowserProvider(
-      enrollment.providerId,
-      process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT,
-      `e2e-process-${index}`
-    );
-    const providerClient = new ReverseRelayBrowserProviderClient({
+    const stateStore = createMemoryStateStore();
+    const browserClient = new BrowserClient({
       serverUrl: `http://${process.env.COMICCRAWLER_E2E_HOST || '127.0.0.1'}:${process.env.COMICCRAWLER_E2E_PORT || '4173'}`,
-      credential: enrollment.credential,
-      provider,
+      executor: createE2eBrowserExecutor(process.env.COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT),
+      stateStore,
+      webSocketFactory: { create: (url) => new WebSocket(url) },
     });
-    providerClients.push(providerClient);
-    providerConnections.push(providerClient.connectOnce());
+    await browserClient.enroll({ name: `E2E Browser Client ${index}` });
+    await browserClient.connect();
+    browserClients.push(browserClient);
   }
-  await waitFor(() => browserProviderRegistry.list().filter((entry) => entry.descriptor).length === 3);
+  await waitFor(() => browserSessionGateway.listWorkers().filter((worker) => worker.online).length === 3);
 
   const shutdown = async () => {
-    await Promise.all(providerClients.map((client) => client.close()));
-    await Promise.all(providerConnections);
+    await Promise.all(browserClients.map((client) => client.close()));
     await server.stop();
     await storage.dispose();
     process.exit(0);
@@ -423,41 +417,89 @@ async function start() {
   process.once('SIGTERM', () => void shutdown());
 }
 
-function createE2eBrowserProvider(providerId, localWsEndpoint, processInstanceId) {
+function createE2eBrowserExecutor(localWsEndpoint) {
   if (!localWsEndpoint) throw new Error('COMICCRAWLER_E2E_BROWSER_WS_ENDPOINT is required.');
   const capabilities = {
-    browser: 'chromium', headed: false, interactive: true, persistentContext: false,
-    screenshots: true, downloads: true, tracing: true,
+    executionMode: 'managed-profile',
+    navigation: true,
+    renderedDom: true,
+    humanHandoff: true,
+    responsiveViewport: true,
   };
-  const runtimeVersion = require('playwright/package.json').version;
-  const sessions = new Map();
-  let sequence = 0;
   return {
-    describe: async () => ({
-      contractVersion: '2', providerId, processInstanceId, providerType: 'playwright',
-      runtimeVersion, capabilities, transports: ['reverse-relay'],
-    }),
-    createSession: async () => {
-      const now = Date.now();
-      const session = {
-        sessionId: `e2e-browser-session-${++sequence}`, providerId, protocol: 'playwright', transport: 'reverse-relay',
-        localWsEndpoint, runtimeVersion, capabilities, createdAt: new Date(now).toISOString(),
-        expiresAt: new Date(now + 3_600_000).toISOString(),
+    describe: async () => capabilities,
+    openSession: async (request) => {
+      const browser = await chromium.connect(localWsEndpoint);
+      const context = await browser.newContext({
+        viewport: request.renderContext?.viewport,
+        deviceScaleFactor: request.renderContext?.deviceScaleFactor,
+        isMobile: request.renderContext?.isMobile,
+        hasTouch: request.renderContext?.hasTouch,
+        userAgent: request.renderContext?.userAgent,
+      });
+      const page = await context.newPage();
+      return {
+        execute: async (command) => {
+          if (command.type === 'page.navigate') {
+            await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            return { type: command.type, url: page.url() };
+          }
+          if (command.type === 'page.get-url') return { type: command.type, url: page.url() };
+          if (command.type === 'page.get-content') return { type: command.type, url: page.url(), html: await page.content() };
+          if (command.type === 'page.wait-for-ready') {
+            await page.waitForLoadState('domcontentloaded', { timeout: command.timeoutMs || 30_000 }).catch(() => undefined);
+            await page.waitForTimeout(750);
+            return { type: command.type, url: page.url() };
+          }
+          if (command.type === 'page.prepare-content') {
+            await page.evaluate(async (timeoutMs) => {
+              const startY = window.scrollY;
+              const deadline = Date.now() + timeoutMs;
+              let previousHeight = 0;
+              let stableBottomChecks = 0;
+              try {
+                while (Date.now() < deadline) {
+                  const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
+                  const bottom = Math.max(0, height - window.innerHeight);
+                  window.scrollTo(0, Math.min(bottom, window.scrollY + Math.max(600, Math.floor(window.innerHeight * 0.8))));
+                  await new Promise((resolve) => setTimeout(resolve, 120));
+                  const atBottom = window.scrollY >= bottom;
+                  stableBottomChecks = atBottom && height === previousHeight ? stableBottomChecks + 1 : 0;
+                  previousHeight = height;
+                  if (stableBottomChecks >= 3) break;
+                }
+              } finally {
+                window.scrollTo(0, startY);
+              }
+            }, command.timeoutMs || 30_000);
+            return { type: command.type, url: page.url() };
+          }
+          await page.bringToFront();
+          return { type: 'page.focus' };
+        },
+        close: async () => {
+          await context.close().catch(() => undefined);
+          await browser.close().catch(() => undefined);
+        },
       };
-      sessions.set(session.sessionId, session);
-      return session;
     },
-    getSession: async (sessionId) => sessions.get(sessionId),
-    heartbeat: async (sessionId) => sessions.get(sessionId),
-    closeSession: async (sessionId) => { sessions.delete(sessionId); },
-    close: async () => { sessions.clear(); },
+    close: async () => undefined,
+  };
+}
+
+function createMemoryStateStore() {
+  let state;
+  return {
+    get: async () => state,
+    set: async (value) => { state = value; },
+    clear: async () => { state = undefined; },
   };
 }
 
 async function waitFor(predicate) {
   const deadline = Date.now() + 5000;
   while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for E2E browser provider connection.');
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for E2E Browser Client connection.');
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -538,12 +580,13 @@ function installFakeAo(app) {
     const conversation = getConversation(conversations, request.params.id);
     const text = request.body?.text || '';
     if (text.includes('# Capability Stage Task')) {
-      const stage = /Produce only the ([a-z-]+) capability draft\./.exec(text)?.[1] || 'chapter-images';
-      const sourcePath = /Write TypeScript capability source to ([^\s]+)\./.exec(text)?.[1];
-      const reviewPath = /Write human review notes for this capability to ([^\s]+)\./.exec(text)?.[1];
-      const source = fakeCapabilitySource(stage, `${conversation.files.get('task.md') || ''}\n${text}`);
+      const stage = /(?:Produce only the ([a-z-]+) capability draft\.|Produce only stage `([a-z-]+)`)/.exec(text);
+      const stageName = stage?.[1] || stage?.[2] || 'chapter-images';
+      const sourcePath = /(?:Write TypeScript capability source to|- TypeScript:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
+      const reviewPath = /(?:Write human review notes for this capability to|- Markdown review:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
+      const source = fakeCapabilitySource(stageName, `${conversation.files.get('task.md') || ''}\n${text}`);
       if (sourcePath) conversation.files.set(sourcePath, source);
-      if (reviewPath) conversation.files.set(reviewPath, `# ${stage} review\n\nE2E fixture capability generated for review.`);
+      if (reviewPath) conversation.files.set(reviewPath, `# ${stageName} review\n\nE2E fixture capability generated for review.`);
       conversation.messages.push({ text, model: request.body?.model, agent: request.body?.agent });
       reply.send({ messageId: `msg-${conversation.messages.length}`, text: `Wrote ${sourcePath} and ${reviewPath}.` });
       return;

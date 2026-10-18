@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { BrowserConfig, BrowserTarget } from '@comiccrawler/shared';
+import type { BrowserTarget, EffectiveRenderContext } from '@comiccrawler/shared';
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
@@ -15,8 +15,10 @@ import type { AdapterDraftService } from '../adapter-drafts/service';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
 import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
-import type { BrowserProviderRegistry } from '../browser/provider-registry';
-import type { BrowserLeaseCoordinator } from '../browser/lease-coordinator';
+import type { BrowserClientRegistry } from '../browser/browser-client-registry';
+import type { BrowserSessionGateway } from '../browser/browser-session-gateway';
+import type { BrowserWorkerLeaseCoordinator } from '../browser/browser-worker-lease-coordinator';
+import type { BrowserRenderService } from '../browser/browser-render-service';
 import { ApiSecurityService } from '../security/api-security';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
@@ -28,7 +30,7 @@ import { setupChallengeDiscoveryRoutes } from './routes/challenge-discovery';
 import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupMaintenanceRoutes } from './routes/maintenance';
-import { setupBrowserProviderRoutes } from './routes/browser-providers';
+import { setupBrowserClientRoutes } from './routes/browser-clients';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { setupApiSecurity } from './middleware/api-security';
@@ -50,8 +52,10 @@ export interface ServerOptions {
   adapterDraftService?: AdapterDraftService;
   fixtureCaptureService?: FixtureCaptureService;
   maintenanceService?: MaintenanceService;
-  browserProviderRegistry?: BrowserProviderRegistry;
-  browserLeaseCoordinator?: BrowserLeaseCoordinator;
+  browserClientRegistry?: BrowserClientRegistry;
+  browserSessionGateway?: BrowserSessionGateway;
+  browserLeaseCoordinator?: BrowserWorkerLeaseCoordinator;
+  browserRenderService?: BrowserRenderService;
   storage?: IStorage;
   staticDir?: string;
   cors?: { origin: string[] };
@@ -99,10 +103,7 @@ export class ComicCrawlerServer {
     await this.app.listen({ port: this.options.port, host: this.options.host });
     this.httpServer = this.app.server;
 
-    const address = this.httpServer.address();
-    const port = typeof address === 'object' && address ? address.port : this.options.port;
-    this.options.browserProviderRegistry?.setRelayBaseUrl(`http://127.0.0.1:${port}`);
-    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserProviderRegistry, this.apiSecurity);
+    setupWebSocket(this.httpServer, this.options.eventBus, this.options.browserSessionGateway, this.apiSecurity);
 
     logger.info({ host: this.options.host, port: this.options.port }, 'Server started');
   }
@@ -113,7 +114,8 @@ export class ComicCrawlerServer {
     await this.options.crawlerEngine.dispose();
     await this.options.challengeDiscoveryService?.dispose();
     await this.options.browserLeaseCoordinator?.dispose();
-    this.options.browserProviderRegistry?.dispose();
+    this.options.browserSessionGateway?.dispose();
+    this.options.browserClientRegistry?.dispose();
     this.options.selectorDiscoveryService?.dispose();
 
     await Promise.all(
@@ -143,13 +145,14 @@ export class ComicCrawlerServer {
       }
     );
     setupConfigRoutes(this.app, this.options.configManager);
-    if (this.options.browserProviderRegistry) {
-      setupBrowserProviderRoutes(this.app, this.options.browserProviderRegistry, this.apiSecurity, this.options.browserLeaseCoordinator);
+    if (this.options.browserClientRegistry && this.options.browserSessionGateway) {
+      setupBrowserClientRoutes(this.app, this.options.browserClientRegistry, this.options.browserSessionGateway, this.apiSecurity);
     }
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
-      getBrowserConfig: async () => this.resolveBrowserConfig(),
-      withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
+      withBrowserSession: (request, target, initialUrl, renderContext, action) =>
+        this.withBrowserSession(request, target, initialUrl, renderContext, action),
+      browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
     });
@@ -158,8 +161,9 @@ export class ComicCrawlerServer {
     if (this.options.adapterDraftService) {
       setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
         challengeDiscoveryService: this.options.challengeDiscoveryService,
-        getBrowserConfig: async () => this.resolveBrowserConfig(),
-        withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
+        withBrowserSession: (request, target, initialUrl, action) =>
+          this.withBrowserSession(request, target, initialUrl, undefined, action),
+        browserRenderService: this.options.browserRenderService,
         getNetworkConfig: async () => (await this.options.configManager.get()).network,
       });
     }
@@ -172,8 +176,9 @@ export class ComicCrawlerServer {
         {
           challengeDiscoveryService: this.options.challengeDiscoveryService,
           adapterDraftService: this.options.adapterDraftService,
-          getBrowserConfig: async () => this.resolveBrowserConfig(),
-          withBrowserConfig: (request, target, action) => this.withBrowserConfig(request, target, action),
+          withBrowserSession: (request, target, initialUrl, action) =>
+            this.withBrowserSession(request, target, initialUrl, undefined, action),
+          browserRenderService: this.options.browserRenderService,
           getNetworkConfig: async () => (await this.options.configManager.get()).network,
           browserLeaseCoordinator: this.options.browserLeaseCoordinator,
           apiSecurity: this.apiSecurity,
@@ -196,28 +201,28 @@ export class ComicCrawlerServer {
     }
   }
 
-  private async resolveBrowserConfig() {
-    const browser = (await this.options.configManager.get()).browser;
-    return this.options.browserProviderRegistry?.resolveBrowserConfig(browser) ?? browser;
-  }
-
-  private async withBrowserConfig<T>(
+  private async withBrowserSession<T>(
     request: FastifyRequest,
     target: BrowserTarget | undefined,
-    action: (browser: BrowserConfig) => Promise<T>
+    initialUrl: string,
+    renderContext: EffectiveRenderContext | undefined,
+    action: (sessionId: string) => Promise<T>
   ): Promise<T> {
     const browser = (await this.options.configManager.get()).browser;
-    if (!this.options.browserLeaseCoordinator) return action(browser);
+    if (!this.options.browserLeaseCoordinator) {
+      throw new Error('Browser Worker service is not configured.');
+    }
     const principal = requestPrincipal(request, this.apiSecurity);
     const lease = await this.options.browserLeaseCoordinator.acquire({
       taskId: `operation:${randomUUID()}`,
       ownerUserId: principal.userId,
       target,
-      baseBrowserConfig: browser,
+      initialUrl,
+      renderContext,
       timeoutMs: browser.workerWaitTimeoutMs,
     });
     try {
-      return await action(lease.browserConfig);
+      return await action(lease.sessionId);
     } finally {
       await lease.release();
     }

@@ -16,11 +16,11 @@ to one permission.
 The secret document contains:
 
 - Roles and their permissions.
-- Optional Provider and session limits.
+- Optional Browser Client and session limits.
 - User IDs.
 - User API tokens.
 
-Provider credentials are issued by the Server. They are not stored in the
+Browser Client credentials are issued by the Server. They are not stored in the
 secret document.
 
 ## Token mode setup
@@ -36,34 +36,34 @@ Send the complete `apiSecurity` object to `PUT /api/config`:
     "secretPath": "/run/secrets/comiccrawler-api-security.json",
     "rules": [
       {
-        "id": "provider-register",
+        "id": "browser-client-register",
         "methods": ["POST"],
-        "path": "/api/browser-providers/enroll",
-        "permission": "browser-provider:register"
+        "path": "/api/browser-clients/enroll",
+        "permission": "browser-client:register"
       },
       {
-        "id": "provider-read",
+        "id": "browser-client-read",
         "methods": ["GET"],
-        "path": "/api/browser-providers",
-        "permission": "browser-provider:read-own"
+        "path": "/api/browser-clients",
+        "permission": "browser-client:read-own"
       },
       {
         "id": "browser-worker-list",
         "methods": ["GET"],
         "path": "/api/browser-workers",
-        "permission": "browser-provider:read-own"
+        "permission": "browser-client:read-own"
       },
       {
-        "id": "provider-credential-rotate",
+        "id": "browser-client-credential-rotate",
         "methods": ["POST"],
-        "path": "/api/browser-providers/:providerId/credentials/rotate",
-        "permission": "browser-provider:manage-own"
+        "path": "/api/browser-clients/:clientId/credentials/rotate",
+        "permission": "browser-client:manage-own"
       },
       {
-        "id": "provider-revoke",
+        "id": "browser-client-revoke",
         "methods": ["DELETE"],
-        "path": "/api/browser-providers/:providerId",
-        "permission": "browser-provider:manage-own"
+        "path": "/api/browser-clients/:clientId",
+        "permission": "browser-client:manage-own"
       }
     ]
   }
@@ -82,14 +82,14 @@ Create the secret file outside the ComicCrawler data directory:
     {
       "id": "browser-user",
       "permissions": [
-        "browser-provider:register",
-        "browser-provider:read-own",
-        "browser-provider:manage-own",
-        "browser-provider:session-own"
+        "browser-client:register",
+        "browser-client:read-own",
+        "browser-client:manage-own",
+        "browser-client:session-own"
       ],
       "limits": {
-        "maxRegisteredProviders": 10,
-        "maxOnlineProviders": 5,
+        "maxRegisteredBrowserClients": 10,
+        "maxOnlineBrowserWorkers": 5,
         "maxConcurrentSessions": 3
       }
     }
@@ -139,23 +139,23 @@ Authorization: Bearer <user-api-token>
 The Server resolves roles and permissions. Client-supplied role or permission
 values are ignored.
 
-## Browser Provider credentials
+## Browser Client credentials
 
-First registration uses the user API token. The Server then returns a Provider
+First enrollment uses the user API token. The Server then returns a Browser Client
 credential once.
 
-The Browser Provider uses that credential for control and relay WebSockets. It
+The Browser Client uses that credential for its outbound command WebSocket. It
 does not retain the user API token for reconnects.
 
-Each Provider instance has its own credential. Revoking or rotating one
-credential does not invalidate the user's other Provider instances.
+Each Browser Client installation has its own credential. Revoking or rotating
+one credential does not invalidate the user's other Browser Clients.
 
-See the [Browser Provider SDK guide](../browser-provider-sdk/README.md) for the
-client configuration and command.
+See the [Browser Client SDK guide](../browser-client-sdk/README.md) for the
+consumer integration contract.
 
 ## Ownership scope
 
-Provider ownership checks are implemented for listing, session control,
+Browser Client ownership checks are implemented for listing, session control,
 credential rotation, and revocation. Browser-backed operations accept a stable
 `browserTarget`; the Server verifies visibility, reserves the Worker, and keeps
 the resulting lease bound to the operation.
@@ -166,7 +166,7 @@ access is acceptable.
 
 ## WebUI authentication boundary
 
-Token mode is available to REST clients and the Browser Provider SDK. The WebUI
+Token mode is available to REST clients and the Browser Client SDK. The WebUI
 does not provide sign-in or attach user authentication headers. Use public mode
 for direct WebUI access, or place an authenticated client/proxy in front of it.
 
@@ -175,6 +175,6 @@ for direct WebUI access, or place an authenticated client/proxy in front of it.
 - Use HTTPS and WSS outside a trusted local network.
 - Do not place tokens in URLs.
 - Keep the secret document outside the normal data directory.
-- Keep Provider state and credential files separate.
+- Protect persisted Browser Client credential state.
 - Do not log `Authorization`, token, or credential values.
-- Rotate a Provider credential if its credential file is copied or exposed.
+- Rotate a Browser Client credential if its state is copied or exposed.

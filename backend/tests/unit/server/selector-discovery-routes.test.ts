@@ -45,7 +45,9 @@ describe('Selector discovery routes', () => {
           };
         },
       }),
-      createSettingsStore()
+      createSettingsStore(),
+      undefined,
+      { htmlRenderer: { render: async () => '<html></html>', dispose: async () => undefined } }
     );
 
     const response = await app.inject({
@@ -115,7 +117,9 @@ export class GeneratedDemoAdapter extends AdapterBase {
             }
           : null,
       }),
-      createSettingsStore()
+      createSettingsStore(),
+      undefined,
+      { htmlRenderer: { render: async () => '<html></html>', dispose: async () => undefined } }
     );
 
     const implementation = await app.inject({

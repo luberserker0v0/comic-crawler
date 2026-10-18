@@ -3,7 +3,6 @@ import type {
   AdapterFunctionRevisionRequest,
   AdapterFunctionTestRequest,
   AdapterImplementationResponse,
-  BrowserConfig,
   BrowserTarget,
   NetworkConfig,
 } from '@comiccrawler/shared';
@@ -13,6 +12,8 @@ import type { AdapterDraftService } from '../../adapter-drafts/service';
 import { instantiateAdapterImplementationDraft } from '../../selector-discovery/adapter-draft-runtime';
 import { describeAdapterFunctions, isKnownAdapterFunction, testAdapterFunction, type AdapterFunctionId } from './adapters';
 import { createImplementationOutline, instantiateDiscoveryDraftAdapter } from './selector-discovery-helpers';
+import type { BrowserRenderService } from '../../browser/browser-render-service';
+import type { HtmlRenderer } from '../../crawler/html-renderer';
 
 export function setupDiscoveryDraftFunctionRoutes(
   app: FastifyInstance,
@@ -21,8 +22,9 @@ export function setupDiscoveryDraftFunctionRoutes(
   options: {
     challengeDiscoveryService?: ChallengeDiscoveryService;
     adapterDraftService?: AdapterDraftService;
-    getBrowserConfig?: () => BrowserConfig | Promise<BrowserConfig>;
-    withBrowserConfig?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, action: (browser: BrowserConfig) => Promise<T>) => Promise<T>;
+    withBrowserSession?: <T>(request: FastifyRequest, target: BrowserTarget | undefined, initialUrl: string, action: (sessionId: string) => Promise<T>) => Promise<T>;
+    browserRenderService?: BrowserRenderService;
+    htmlRenderer?: HtmlRenderer;
     getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   } = {}
 ): void {
@@ -84,26 +86,36 @@ export function setupDiscoveryDraftFunctionRoutes(
       }
       const adapter = await instantiateDiscoveryDraftAdapter(discoveryService, id);
       const network = await options.getNetworkConfig?.();
-      const runTest = (browser: BrowserConfig | undefined) => testAdapterFunction(adapter as any, functionId, body.url, {
-          browser,
+      if (options.htmlRenderer) {
+        const result = await testAdapterFunction(adapter as any, functionId, body.url, {
+          challengeDiscoveryId: body.challengeDiscoveryId,
+          challengeDiscoveryService: options.challengeDiscoveryService,
+          network,
+          htmlRenderer: options.htmlRenderer,
+        });
+        reply.send({ data: withDiscoverySummary(result, id, adapter.id) });
+        return;
+      }
+      if (body.challengeDiscoveryId) {
+        const result = await testAdapterFunction(adapter as any, functionId, body.url, {
           challengeDiscoveryId: body.challengeDiscoveryId,
           challengeDiscoveryService: options.challengeDiscoveryService,
           network,
         });
-      const result = options.withBrowserConfig
-        ? await options.withBrowserConfig(request, body.browserTarget, runTest)
-        : await runTest(await options.getBrowserConfig?.());
-      reply.send({
-        data: {
-          ...result,
-          adapterId: `selector-discovery:${id}`,
-          resultSummary: {
-            ...(result.resultSummary ?? {}),
-            discoveryJobId: id,
-            draftAdapterId: adapter.id,
-          },
-        },
-      });
+        reply.send({ data: withDiscoverySummary(result, id, adapter.id) });
+        return;
+      }
+      if (!options.withBrowserSession || !options.browserRenderService) {
+        throw new Error('Browser Worker service is not configured.');
+      }
+      const result = await options.withBrowserSession(request, body.browserTarget, body.url, (sessionId) =>
+        testAdapterFunction(adapter as any, functionId, body.url, {
+          challengeDiscoveryId: body.challengeDiscoveryId,
+          challengeDiscoveryService: options.challengeDiscoveryService,
+          network,
+          htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+        }));
+      reply.send({ data: withDiscoverySummary(result, id, adapter.id) });
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -175,4 +187,23 @@ export function setupDiscoveryDraftFunctionRoutes(
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+}
+
+function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
+  return {
+    render: async (url) => (await renderService.render(sessionId, url)).html,
+    dispose: async () => undefined,
+  };
+}
+
+function withDiscoverySummary<T extends { resultSummary?: Record<string, unknown> }>(
+  result: T,
+  discoveryJobId: string,
+  draftAdapterId: string
+) {
+  return {
+    ...result,
+    adapterId: `selector-discovery:${discoveryJobId}`,
+    resultSummary: { ...(result.resultSummary ?? {}), discoveryJobId, draftAdapterId },
+  };
 }

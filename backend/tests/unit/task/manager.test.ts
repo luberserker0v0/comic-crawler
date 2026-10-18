@@ -113,14 +113,14 @@ describe('TaskManager persistence', () => {
       url: 'https://example.com/comic/affinity',
       adapterId: 'kuronavi',
       ownerUserId: 'alice',
-      browserTarget: { mode: 'specific', workerId: 'worker-a' },
+      browserTarget: { mode: 'managed-profile', workerId: 'worker-a' },
     });
 
-    expect(manager.getTask('task-affinity')?.data.browserTarget).toEqual({ mode: 'specific', workerId: 'worker-a' });
+    expect(manager.getTask('task-affinity')?.data.browserTarget).toEqual({ mode: 'managed-profile', workerId: 'worker-a' });
     const persisted = await storage.read<any>('tasks/task-affinity');
     expect(persisted.task.data).toMatchObject({
       ownerUserId: 'alice',
-      browserTarget: { mode: 'specific', workerId: 'worker-a' },
+      browserTarget: { mode: 'managed-profile', workerId: 'worker-a' },
     });
     releaseExecutor();
   });

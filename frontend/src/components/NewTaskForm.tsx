@@ -22,7 +22,7 @@ export const NewTaskForm: React.FC = () => {
   const [priority, setPriority] = useLocalStorage('task-form:priority', 0);
   const [showAdvanced, setShowAdvanced] = useLocalStorage('task-form:advanced', false);
   const [browserWorkerId, setBrowserWorkerId] = useLocalStorage('task-form:browser-worker', 'any');
-  const [browserWorkers, setBrowserWorkers] = React.useState<Array<{ workerId: string; name: string; status: string }>>([]);
+  const [browserWorkers, setBrowserWorkers] = React.useState<Array<{ workerId: string; name: string; status: string; capabilities?: { executionMode?: string } }>>([]);
   const [createdTaskId, setCreatedTaskId] = React.useState<string | null>(null);
   const [adapterBuildTask, setAdapterBuildTask] = React.useState<AdapterBuildTaskResult | null>(null);
   const [challengeBuildTask, setChallengeBuildTask] = React.useState<ChallengeBuildTaskResult | null>(null);
@@ -32,7 +32,7 @@ export const NewTaskForm: React.FC = () => {
 
   React.useEffect(() => {
     void api.getBrowserWorkers()
-      .then((response) => setBrowserWorkers(response.data.workers))
+      .then((response) => setBrowserWorkers(response.data.workers.filter((worker) => worker.capabilities?.executionMode === 'managed-profile')))
       .catch(() => setBrowserWorkers([]));
   }, []);
 
@@ -95,8 +95,8 @@ export const NewTaskForm: React.FC = () => {
         chapterUrls: mode === 'chapters' ? normalizedChapterUrls : undefined,
         priority,
         browserTarget: browserWorkerId === 'any'
-          ? { mode: 'any' }
-          : { mode: 'specific', workerId: browserWorkerId },
+          ? { mode: 'managed-profile' }
+          : { mode: 'managed-profile', workerId: browserWorkerId },
       });
 
       if (result.kind === 'discoveryQueued') {

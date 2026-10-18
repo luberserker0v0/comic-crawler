@@ -433,7 +433,7 @@ paths:
   /api/selector-discovery/{id}/promote:
     post:
       summary: Capture a golden fixture and promote a reviewed TypeScript adapter draft
-      description: Fetches the reviewed rendered page through the active Browser Provider, stores page.html and expected.json, and registers the adapter only after fixture capture succeeds.
+      description: Fetches the reviewed rendered page through the task-bound Browser Worker, stores page.html and expected.json, and registers the adapter only after fixture capture succeeds.
       parameters:
         - $ref: "#/components/parameters/DiscoveryId"
       responses:
@@ -525,7 +525,7 @@ paths:
           $ref: "#/components/responses/Error"
     delete:
       summary: Delete a human verification handoff job
-      description: Closes its remote browser context and releases the reserved Browser Worker.
+      description: Closes its task-bound browser session and releases the reserved Browser Worker.
       parameters:
         - $ref: "#/components/parameters/HandoffId"
       responses:
@@ -539,7 +539,7 @@ paths:
           $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}/open-browser:
     post:
-      summary: Open the task URL in the configured remote Playwright browser
+      summary: Open the task URL through the selected Browser Worker
       parameters:
         - $ref: "#/components/parameters/HandoffId"
       responses:
@@ -559,6 +559,7 @@ paths:
   /api/challenge-discovery/{id}/complete-human-verification:
     post:
       summary: Check whether human verification is complete
+      description: Marks a verified handoff ready while retaining its Browser Worker session for the retry. Delete the handoff job when it is no longer needed.
       parameters:
         - $ref: "#/components/parameters/HandoffId"
       responses:
@@ -577,7 +578,7 @@ paths:
           $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}/inspect-remote-page:
     post:
-      summary: Inspect the matching page in the remote Playwright browser
+      summary: Inspect the matching page in the task-bound browser session
       parameters:
         - $ref: "#/components/parameters/HandoffId"
       responses:
@@ -591,25 +592,25 @@ paths:
           $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}/create-selector-discovery-from-remote:
     post:
-      summary: Create selector discovery from the matching remote browser page
+      summary: Create selector discovery from the task-bound browser page
       parameters:
         - $ref: "#/components/parameters/HandoffId"
       responses:
         "202":
-          description: Selector discovery queued from remote browser HTML
+          description: Selector discovery queued from Browser Worker HTML
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
         "400":
           $ref: "#/components/responses/Error"
-  /.well-known/comiccrawler-browser-provider:
+  /.well-known/comiccrawler-browser-client:
     get:
-      summary: Discover the outbound Browser Provider service contract
+      summary: Discover the outbound Browser Client command protocol
       security: []
       responses:
         "200":
-          description: Browser Provider service endpoints
+          description: Browser Client protocol and endpoints
           content:
             application/json:
               schema:
@@ -618,10 +619,10 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderServiceDiscovery"
-  /api/browser-providers/enroll:
+                        $ref: "#/components/schemas/BrowserClientDiscovery"
+  /api/browser-clients/enroll:
     post:
-      summary: Register one Browser Provider instance
+      summary: Register one Browser Client installation
       security:
         - {}
         - userBearerAuth: []
@@ -631,10 +632,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BrowserProviderRegistrationRequest"
+              $ref: "#/components/schemas/BrowserClientEnrollmentRequest"
       responses:
         "201":
-          description: Provider identity and credential created
+          description: Browser Client identity and one-time credential created
           content:
             application/json:
               schema:
@@ -643,15 +644,15 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderRegistration"
+                        $ref: "#/components/schemas/BrowserClientEnrollment"
         "401":
           $ref: "#/components/responses/Error"
-  /api/browser-providers:
+  /api/browser-clients:
     get:
-      summary: List visible registered Browser Providers
+      summary: List visible registered Browser Clients
       responses:
         "200":
-          description: Provider records and online state
+          description: Browser Client records
           content:
             application/json:
               schema:
@@ -660,7 +661,13 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderRegistryState"
+                        type: object
+                        required: [clients]
+                        properties:
+                          clients:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/BrowserClientRecord"
   /api/browser-workers:
     get:
       summary: List stable Browser Worker targets visible to the current user
@@ -682,21 +689,21 @@ paths:
                             type: array
                             items:
                               $ref: "#/components/schemas/BrowserWorker"
-  /api/browser-providers/{providerId}:
+  /api/browser-clients/{clientId}:
     delete:
-      summary: Revoke one Browser Provider credential and close its resources
+      summary: Revoke one Browser Client credential and disconnect its Workers
       parameters:
-        - $ref: "#/components/parameters/BrowserProviderId"
+        - $ref: "#/components/parameters/BrowserClientId"
       responses:
         "204":
-          description: Browser provider revoked
+          description: Browser Client revoked
         "400":
           $ref: "#/components/responses/Error"
-  /api/browser-providers/{providerId}/credentials/rotate:
+  /api/browser-clients/{clientId}/credentials/rotate:
     post:
-      summary: Rotate one Browser Provider credential
+      summary: Rotate one Browser Client credential
       parameters:
-        - $ref: "#/components/parameters/BrowserProviderId"
+        - $ref: "#/components/parameters/BrowserClientId"
       responses:
         "200":
           description: Replacement credential issued once
@@ -708,7 +715,7 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/BrowserProviderRegistration"
+                        $ref: "#/components/schemas/BrowserClientEnrollment"
         "400":
           $ref: "#/components/responses/Error"
 components:
@@ -752,8 +759,8 @@ components:
       required: true
       schema:
         type: string
-    BrowserProviderId:
-      name: providerId
+    BrowserClientId:
+      name: clientId
       in: path
       required: true
       schema:
@@ -809,92 +816,54 @@ components:
           type: boolean
         chapterImages:
           type: boolean
-    BrowserProviderCapabilities:
+    BrowserCapabilities:
       type: object
-      required: [browser, headed, interactive, persistentContext, screenshots, downloads, tracing]
+      required: [executionMode, navigation, renderedDom, humanHandoff, responsiveViewport]
       properties:
-        browser:
+        executionMode:
           type: string
-          enum: [chromium, firefox, webkit]
-        headed:
+          enum: [existing-tab, managed-profile]
+        navigation:
           type: boolean
-        interactive:
+        renderedDom:
           type: boolean
-        persistentContext:
+        humanHandoff:
           type: boolean
-        screenshots:
+        responsiveViewport:
           type: boolean
-        downloads:
-          type: boolean
-        tracing:
-          type: boolean
-    BrowserProviderDescriptor:
+    BrowserClientDiscovery:
       type: object
-      required: [contractVersion, providerId, processInstanceId, providerType, runtimeVersion, capabilities, transports]
+      required: [protocolVersion, apiSecurityMode, endpoints]
       properties:
-        contractVersion:
-          type: string
-          const: "2"
-        providerId:
-          type: string
-        processInstanceId:
-          type: string
-          description: Changes on every Browser Worker process start and protects reconnect resumption.
-        providerType:
-          type: string
-          enum: [playwright, cdp]
-        runtimeVersion:
-          type: string
-        capabilities:
-          $ref: "#/components/schemas/BrowserProviderCapabilities"
-        transports:
-          type: array
-          items:
-            type: string
-            enum: [reverse-relay]
-    BrowserProviderServiceDiscovery:
-      type: object
-      required: [contractVersion, transport, apiSecurityMode, endpoints]
-      properties:
-        contractVersion:
-          type: string
-          const: "2"
-        transport:
-          type: string
-          const: reverse-relay
+        protocolVersion:
+          type: integer
+          const: 2
         apiSecurityMode:
           type: string
           enum: [public, token]
         endpoints:
           type: object
-          required: [enroll, controlWebSocket, relayWebSocketTemplate]
+          required: [enroll, controlWebSocket]
           properties:
             enroll:
               type: string
-              example: /api/browser-providers/enroll
+              example: /api/browser-clients/enroll
             controlWebSocket:
               type: string
-              example: /api/browser-providers/connect
-            relayWebSocketTemplate:
-              type: string
-              example: /api/browser-providers/relay/{tunnelId}
-    BrowserProviderRegistrationRequest:
+              example: /api/browser-clients/connect
+    BrowserClientEnrollmentRequest:
       type: object
-      required: [clientInstanceId]
+      required: [capabilities]
       properties:
-        clientInstanceId:
+        name:
           type: string
-          description: Stable UUID or equivalent logical installation identifier. It is not a hardware fingerprint.
-        providerName:
-          type: string
-          description: Optional user-facing display name.
-    BrowserProviderRegistration:
+        capabilities:
+          $ref: "#/components/schemas/BrowserCapabilities"
+    BrowserClientEnrollment:
       type: object
-      required: [providerId, clientInstanceId, credentialId, credential, registeredAt]
+      required: [clientId, credentialId, credential, registeredAt]
       properties:
-        providerId:
-          type: string
-        clientInstanceId:
+        clientId:
           type: string
         credentialId:
           type: string
@@ -904,17 +873,15 @@ components:
         registeredAt:
           type: string
           format: date-time
-    BrowserProviderRecord:
+    BrowserClientRecord:
       type: object
-      required: [providerId, ownerUserId, clientInstanceId, providerName, credentialId, registeredAt, online]
+      required: [clientId, ownerUserId, name, credentialId, registeredCapabilities, registeredAt]
       properties:
-        providerId:
+        clientId:
           type: string
         ownerUserId:
           type: string
-        clientInstanceId:
-          type: string
-        providerName:
+        name:
           type: string
         credentialId:
           type: string
@@ -927,41 +894,39 @@ components:
         revokedAt:
           type: string
           format: date-time
-        connectionId:
-          type: string
-        online:
-          type: boolean
-        descriptor:
-          $ref: "#/components/schemas/BrowserProviderDescriptor"
-    BrowserProviderRegistryState:
-      type: object
-      required: [providers]
-      properties:
-        providers:
-          type: array
-          items:
-            $ref: "#/components/schemas/BrowserProviderRecord"
+        registeredCapabilities:
+          $ref: "#/components/schemas/BrowserCapabilities"
     BrowserTarget:
       oneOf:
         - type: object
           required: [mode]
           properties:
             mode:
-              const: any
+              const: managed-profile
+            workerId:
+              type: string
         - type: object
-          required: [mode, workerId]
+          required: [mode, workerId, resourceId]
           properties:
             mode:
-              const: specific
+              const: existing-tab
             workerId:
+              type: string
+            resourceId:
               type: string
     BrowserWorker:
       type: object
-      required: [workerId, name, status, online]
+      required: [workerId, clientId, name, ownerUserId, processInstanceId, status, online, capabilities, connectedAt, lastHeartbeatAt]
       properties:
         workerId:
           type: string
+        clientId:
+          type: string
         name:
+          type: string
+        ownerUserId:
+          type: string
+        processInstanceId:
           type: string
         status:
           type: string
@@ -969,10 +934,13 @@ components:
         online:
           type: boolean
         capabilities:
-          $ref: "#/components/schemas/BrowserProviderCapabilities"
-        activeTaskId:
+          $ref: "#/components/schemas/BrowserCapabilities"
+        activeSessionId:
           type: string
-        lastConnectedAt:
+        connectedAt:
+          type: string
+          format: date-time
+        lastHeartbeatAt:
           type: string
           format: date-time
     Adapter:
