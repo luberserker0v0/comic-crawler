@@ -55,7 +55,7 @@ Docker keeps runtime data and downloads in named volumes.
 
 Requirements:
 
-- Node.js 20.19 or newer.
+- Node.js 22.12 or newer.
 - npm 9 or newer.
 
 Install and start:

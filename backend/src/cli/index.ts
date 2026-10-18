@@ -8,6 +8,7 @@ import { setupConfigCommand, setupDownloadCommand, setupSearchCommand, setupStat
 import { setupDiscoverCommand } from './discovery-command';
 import { setupMaintenanceCommand } from './maintenance-command';
 import { setupFixtureCommand } from './fixture-command';
+import { COMICCRAWLER_VERSION } from '../version';
 
 export { TerminalUI } from './ui';
 export type { CliOptions } from './command-context';
@@ -27,7 +28,7 @@ export class ComicCrawlerCli {
     this.program
       .name('comiccrawler')
       .description(cliMessages.appDescription)
-      .version('0.1.0');
+      .version(COMICCRAWLER_VERSION);
 
     setupDownloadCommand(this.ctx);
     setupConfigCommand(this.ctx);

@@ -10,7 +10,7 @@ startup behavior, troubleshooting, and detailed verification commands.
 
 Requirements:
 
-- Node.js 20.19 or newer
+- Node.js 22.12 or newer
 - npm 9 or newer
 - Git
 

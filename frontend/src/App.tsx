@@ -11,7 +11,7 @@ const App: React.FC = () => {
   const { locale, setLocale, text } = useI18n();
 
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter>
       <div className="min-h-screen bg-gray-100">
         <nav className="bg-white shadow-sm">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">

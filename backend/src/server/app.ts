@@ -20,6 +20,7 @@ import type { BrowserSessionGateway } from '../browser/browser-session-gateway';
 import type { BrowserWorkerLeaseCoordinator } from '../browser/browser-worker-lease-coordinator';
 import type { BrowserRenderService } from '../browser/browser-render-service';
 import { ApiSecurityService } from '../security/api-security';
+import { COMICCRAWLER_VERSION } from '../version';
 import { setupTasksRoutes } from './routes/tasks';
 import { setupConfigRoutes } from './routes/config';
 import { setupAdaptersRoutes } from './routes/adapters';
@@ -290,7 +291,7 @@ export class ComicCrawlerServer {
 
       reply.send({
         data: {
-          version: '0.1.0',
+          version: COMICCRAWLER_VERSION,
           uptime: process.uptime(),
           activeTasks: stats.running,
           queuedTasks: stats.pending,

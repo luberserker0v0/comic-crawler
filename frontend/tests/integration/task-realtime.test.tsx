@@ -75,7 +75,7 @@ describe('Task realtime updates', () => {
     } as any);
 
     render(
-      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <MemoryRouter>
         <DashboardPage />
       </MemoryRouter>
     );
@@ -155,10 +155,7 @@ describe('Task realtime updates', () => {
     } as any);
 
     render(
-      <MemoryRouter
-        initialEntries={['/tasks/task-1']}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
+      <MemoryRouter initialEntries={['/tasks/task-1']}>
         <Routes>
           <Route path="/tasks/:taskId" element={<TaskManagerPage />} />
         </Routes>

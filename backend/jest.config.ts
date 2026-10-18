@@ -10,13 +10,18 @@ const config: Config = {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
   transformIgnorePatterns: [
-    'node_modules/(?!(msw|rettime|strict-event-emitter|headers-polyfill|@open-draft)/)',
+    'node_modules/(?!(msw|rettime|strict-event-emitter|headers-polyfill|@open-draft|content-disposition)/)',
+    '[\\\\/]shared[\\\\/]dist[\\\\/]',
+    '[\\\\/]browser-client-sdk[\\\\/]dist[\\\\/]',
   ],
   transform: {
-    '^.+\\.tsx?$': [
+    '^.+\\.[tj]sx?$': [
       'ts-jest',
       {
         useESM: false,
+        tsconfig: {
+          allowJs: true,
+        },
       },
     ],
   },

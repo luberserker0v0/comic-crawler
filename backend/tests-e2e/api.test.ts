@@ -14,7 +14,7 @@ test.describe('ComicCrawler E2E', () => {
 
     const body = await response.json();
     expect(body.data).toBeDefined();
-    expect(body.data.version).toBe('0.1.0');
+    expect(body.data.version).toBe('0.2.0');
     expect(body.data.adapters).toBeDefined();
     expect(body.data.adapters.loaded).toBeGreaterThanOrEqual(0);
   });
