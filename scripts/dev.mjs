@@ -33,8 +33,10 @@ async function main() {
   console.log(`[dev] Frontend URL:    ${frontendUrl}`);
 
   await runOnce('shared:build', ['run', 'build:shared']);
+  await runOnce('browser-client-sdk:build', ['run', 'build:browser-client-sdk']);
 
   const shared = spawnLabeled('shared', ['run', 'dev:shared']);
+  const browserClientSdk = spawnLabeled('browser-client-sdk', ['run', 'dev:browser-client-sdk']);
   const backend = spawnLabeled('backend', ['run', 'dev:backend']);
 
   await waitForServiceOrExit('backend', backend, backendStatusUrl, readyTimeoutMs);
@@ -50,6 +52,7 @@ async function main() {
 
   const exitResult = await Promise.race([
     childExit(shared),
+    childExit(browserClientSdk),
     childExit(backend),
     childExit(frontend),
   ]);

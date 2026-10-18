@@ -8,12 +8,16 @@ if (command !== 'run') {
   process.exit(2);
 }
 
-if (target === 'build:shared') {
+if (target === 'build:shared' || target === 'build:browser-client-sdk') {
   process.exit(0);
 }
 
 if (target === 'dev:shared') {
   await runServer(Number.parseInt(requiredEnv('FAKE_DEV_SHARED_PORT'), 10), () => 'shared ok');
+}
+
+if (target === 'dev:browser-client-sdk') {
+  await waitForShutdown();
 }
 
 if (target === 'dev:backend') {
@@ -62,6 +66,13 @@ async function runServer(port, responseForUrl) {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1000).unref();
   };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  await new Promise(() => undefined);
+}
+
+async function waitForShutdown() {
+  const shutdown = () => process.exit(0);
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   await new Promise(() => undefined);

@@ -67,6 +67,8 @@ test('real npm run dev reaches ready and releases ports on test shutdown', async
 
   const exit = await waitForExit(child);
   assert.equal(exit.code, 0, exit.output);
+  assert.match(exit.output, /Running browser-client-sdk:build:/);
+  assert.match(exit.output, /Starting browser-client-sdk:/);
   assert.match(exit.output, /backend ready:/);
   assert.match(exit.output, /frontend ready:/);
   assert.match(exit.output, /Exit-after-ready requested/);

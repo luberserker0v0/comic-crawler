@@ -13,9 +13,10 @@
   ],
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
-    "dev:raw": "npm run build:shared && concurrently \"npm run dev:shared\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:raw": "npm run build:shared && npm run build:browser-client-sdk && concurrently \"npm run dev:shared\" \"npm run dev:browser-client-sdk\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:utf8": "powershell -ExecutionPolicy Bypass -File ./scripts/start-with-utf8.ps1 npm run dev",
     "dev:shared": "npm run -w shared build -- --watch --preserveWatchOutput",
+    "dev:browser-client-sdk": "npm run -w browser-client-sdk build -- --watch --preserveWatchOutput",
     "dev:backend": "npm run -w backend dev",
     "dev:frontend": "npm run -w frontend dev",
     "build": "npm run build:shared && npm run build:browser-client-sdk && npm run build:backend && npm run build:frontend",
