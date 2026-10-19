@@ -40,6 +40,8 @@ import type { AdapterFunctionId } from './adapter-function-types';
 import type { BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 import type { BrowserRenderService } from '../../browser/browser-render-service';
 import type { HtmlRenderer } from '../../crawler/html-renderer';
+import type { ApiSecurityService } from '../../security/api-security';
+import { requestPrincipal } from '../middleware/api-security';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
@@ -57,6 +59,7 @@ interface AdapterRouteOptions {
   htmlRenderer?: HtmlRenderer;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
+  apiSecurity?: ApiSecurityService;
 }
 
 export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegistry, options: AdapterRouteOptions = {}): void {
@@ -300,6 +303,9 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
       });
       return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
     }
+    const ownerUserId = options.apiSecurity
+      ? requestPrincipal(request, options.apiSecurity).userId
+      : 'public';
     const extraction = await options.withBrowserSession(request, body.browserTarget, chapterUrl, renderContext, (sessionId) =>
       testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
         challengeDiscoveryId: body.challengeDiscoveryId,
@@ -307,6 +313,10 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
         network,
         renderContext,
         htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
+        verificationHandoff: {
+          ownerUserId,
+          browserTarget: body.browserTarget,
+        },
       }));
     return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
   });
@@ -417,8 +427,10 @@ function sendChapterImagesResponse(
   renderContext: EffectiveRenderContext
 ): void {
   if (!extraction.ok) {
-    reply.code(extraction.status === 'verification_required' ? 409 : 422).send({
+    const verificationRequired = extraction.status === 'verification_required';
+    reply.code(verificationRequired ? 409 : 422).send({
       error: extraction.error ?? 'Chapter image extraction failed.',
+      ...(verificationRequired && extraction.errorCode ? { code: extraction.errorCode } : {}),
       data: extraction,
     });
     return;

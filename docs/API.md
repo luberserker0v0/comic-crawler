@@ -137,6 +137,39 @@ two URLs and reports a count of `2`:
 }
 ```
 
+When verification is required, the endpoint returns `409`. The response has the
+stable code `CHAPTER_IMAGES_VERIFICATION_REQUIRED`. Its `data.challenge` object
+contains the handoff ID, current status, retry flag, and retained browser target:
+
+```json
+{
+  "error": "Human verification is required.",
+  "code": "CHAPTER_IMAGES_VERIFICATION_REQUIRED",
+  "data": {
+    "status": "verification_required",
+    "challengeDiscoveryId": "challenge-discovery-01",
+    "challengeStatus": "queued",
+    "challenge": {
+      "id": "challenge-discovery-01",
+      "status": "queued",
+      "normalizedUrl": "https://comic.example/manga/example/chapter-10",
+      "retryableAfterVerification": true,
+      "ownerUserId": "user-01",
+      "browserTarget": {
+        "mode": "existing-tab",
+        "workerId": "worker-01",
+        "resourceId": "tab-01"
+      }
+    }
+  }
+}
+```
+
+The handoff keeps the authenticated owner, normalized URL, and exact
+`browserTarget`. Poll its ID until it reaches `challenge_required`, complete
+verification, then submit the chapter-images request again with the same
+`challengeDiscoveryId`. Do not create a second handoff for the retry.
+
 Identity guarantees:
 
 1. `chapter.id` is scoped to `adapterId`.
@@ -363,6 +396,16 @@ Delete or abandon a handoff and release its Browser Worker:
 ```http
 DELETE /api/challenge-discovery/:id
 ```
+
+Cancel an in-progress handoff without deleting its record:
+
+```http
+POST /api/challenge-discovery/:id/cancel
+```
+
+Cancellation is terminal. A pending Worker acquisition is released if it
+finishes after cancellation. Acquisition timeout and other runtime errors move
+the handoff to `failed`; they do not leave it queued indefinitely.
 
 ### 6. AO adapter discovery and review
 

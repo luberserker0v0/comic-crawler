@@ -31,6 +31,15 @@ describe('ComixAdapter', () => {
     expect(adapter.detectVerificationRequired('<main class="rpage-main"></main>')).toBe(false);
   });
 
+  it('prefers a usable reader DOM over passive Cloudflare script references', () => {
+    const readerWithPassiveScript = FIXTURE.replace(
+      '</body>',
+      '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>'
+    );
+
+    expect(adapter.detectVerificationRequired(readerWithPassiveScript)).toBe(false);
+  });
+
   it('extracts the complete ordered reader image list without requiring file extensions', async () => {
     adapter.setHtmlRenderer({
       render: async () => FIXTURE,

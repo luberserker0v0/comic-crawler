@@ -67,6 +67,15 @@ export function setupChallengeDiscoveryRoutes(
     }
   });
 
+  app.post('/api/challenge-discovery/:id/cancel', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { id } = request.params as { id: string };
+      reply.send({ data: await challengeDiscoveryService.cancel(id) });
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.post('/api/challenge-discovery/:id/promote', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const { id } = request.params as { id: string };

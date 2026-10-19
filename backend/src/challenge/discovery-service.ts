@@ -55,6 +55,8 @@ export class ChallengeDiscoveryService {
         await this.releaseBrowserLease(job.id);
       }
     }).catch(async (error) => {
+      const current = await this.get(job.id).catch(() => null);
+      if (current?.status === 'cancelled') return;
       await this.updateJob(job.id, {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
@@ -136,7 +138,22 @@ export class ChallengeDiscoveryService {
   }
 
   async retry(id: string): Promise<ChallengeDiscoveryJob> {
+    const existing = await this.getRequiredJob(id);
+    if (existing.status === 'cancelled') {
+      throw new Error(`Challenge discovery job "${id}" is cancelled.`);
+    }
     return this.run(id);
+  }
+
+  async cancel(id: string): Promise<ChallengeDiscoveryJob> {
+    const existing = await this.getRequiredJob(id);
+    if (existing.status === 'cancelled') return existing;
+    await this.updateJob(id, {
+      status: 'cancelled',
+      error: undefined,
+    });
+    await this.releaseBrowserLease(id);
+    return this.getRequiredJob(id);
   }
 
   async promote(id: string): Promise<{ strategyId: string; domains: string[] }> {
@@ -175,6 +192,7 @@ export class ChallengeDiscoveryService {
   }
 
   async openBrowser(id: string): Promise<ChallengeDiscoveryJob> {
+    await this.requireActiveJob(id);
     const job = await this.ensureBrowserSession(await this.getRequiredJob(id));
     const renderService = this.requireBrowserRenderService();
     const sessionId = requireSessionId(job);
@@ -195,7 +213,7 @@ export class ChallengeDiscoveryService {
     job: ChallengeDiscoveryJob;
     page: { url: string; title: string; html: string };
   }> {
-    const job = await this.getRequiredJob(id);
+    const job = await this.requireActiveJob(id);
     const sessionId = requireSessionId(job);
     const renderService = this.requireBrowserRenderService();
     let page = await renderService.snapshot(sessionId);
@@ -244,7 +262,7 @@ export class ChallengeDiscoveryService {
   }
 
   async completeHumanVerification(id: string, _options: { settle?: boolean; allowNavigate?: boolean } = {}): Promise<ChallengeDiscoveryJob> {
-    const job = await this.getRequiredJob(id);
+    const job = await this.requireActiveJob(id);
     const page = await this.requireBrowserRenderService().snapshot(requireSessionId(job));
     if (looksLikeAccessBlocked(page.html)) {
       await this.updateJob(id, {
@@ -290,15 +308,20 @@ export class ChallengeDiscoveryService {
 
   private async run(id: string): Promise<ChallengeDiscoveryJob> {
     const job = await this.ensureBrowserSession(await this.getRequiredJob(id));
+    if (job.status === 'cancelled') return job;
     try {
       await this.updateJob(id, { status: 'challenge_detected', error: undefined });
       await this.renderReady(job.normalizedUrl, {}, job.browserSessionId);
+      const afterRender = await this.getRequiredJob(id);
+      if (afterRender.status === 'cancelled') return afterRender;
       await this.updateJob(id, {
         status: 'ready',
         diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n',
       });
       return this.getRequiredJob(id);
     } catch (error) {
+      const current = await this.getRequiredJob(id);
+      if (current.status === 'cancelled') return current;
       if (!isAntiBotChallengeError(error)) {
         await this.updateJob(id, { status: 'failed', error: error instanceof Error ? error.message : String(error) });
         return this.getRequiredJob(id);
@@ -360,6 +383,7 @@ export class ChallengeDiscoveryService {
   }
 
   private async ensureBrowserSession(job: ChallengeDiscoveryJob): Promise<ChallengeDiscoveryJob> {
+    if (job.status === 'cancelled') return job;
     if (job.browserSessionId || !this.options.acquireBrowserSession) return job;
     const lease = await this.options.acquireBrowserSession({
       jobId: job.id,
@@ -367,6 +391,11 @@ export class ChallengeDiscoveryService {
       url: job.normalizedUrl,
       browserTarget: job.browserTarget,
     });
+    const current = await this.getRequiredJob(job.id);
+    if (current.status === 'cancelled') {
+      await lease.release();
+      return current;
+    }
     this.ownedBrowserLeases.set(job.id, lease);
     await this.updateJob(job.id, { browserSessionId: lease.sessionId });
     return this.getRequiredJob(job.id);
@@ -389,8 +418,17 @@ export class ChallengeDiscoveryService {
     return job;
   }
 
+  private async requireActiveJob(id: string): Promise<ChallengeDiscoveryJob> {
+    const job = await this.getRequiredJob(id);
+    if (job.status === 'cancelled') {
+      throw new Error(`Challenge discovery job "${id}" is cancelled.`);
+    }
+    return job;
+  }
+
   private async updateJob(id: string, patch: Partial<ChallengeDiscoveryJob>): Promise<void> {
     const job = await this.getRequiredJob(id);
+    if (job.status === 'cancelled' && patch.status !== 'cancelled') return;
     await this.saveJob({ ...job, ...patch, updatedAt: new Date().toISOString() });
   }
 

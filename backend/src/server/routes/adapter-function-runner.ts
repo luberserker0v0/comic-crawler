@@ -6,6 +6,7 @@ import type {
   DomReadinessTarget,
   EffectiveRenderContext,
   NetworkConfig,
+  BrowserTarget,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
@@ -30,6 +31,10 @@ export interface AdapterFunctionTestOptions {
   network?: NetworkConfig;
   renderContext?: EffectiveRenderContext;
   htmlRenderer?: HtmlRenderer;
+  verificationHandoff?: {
+    ownerUserId: string;
+    browserTarget?: BrowserTarget;
+  };
 }
 
 class TimingCollector {
@@ -165,6 +170,7 @@ async function runAdapterFunctionTest(
         error: typeof resultSummary.error === 'string' ? resultSummary.error : 'The page requires human verification.',
         challengeDiscoveryService: options.challengeDiscoveryService,
         existingChallengeDiscoveryId: options.challengeDiscoveryId,
+        verificationHandoff: options.verificationHandoff,
       });
     }
 
@@ -218,6 +224,7 @@ async function runAdapterFunctionTest(
         error: message,
         challengeDiscoveryService: options.challengeDiscoveryService,
         existingChallengeDiscoveryId: options.challengeDiscoveryId,
+        verificationHandoff: options.verificationHandoff,
       });
     }
     return {
@@ -274,10 +281,22 @@ export async function createVerificationRequiredResponse(input: {
   error: string;
   challengeDiscoveryService?: ChallengeDiscoveryService;
   existingChallengeDiscoveryId?: string;
+  verificationHandoff?: {
+    ownerUserId: string;
+    browserTarget?: BrowserTarget;
+  };
 }): Promise<AdapterFunctionTestResponse> {
   const job = input.existingChallengeDiscoveryId
     ? await input.challengeDiscoveryService?.get(input.existingChallengeDiscoveryId)
-    : await input.challengeDiscoveryService?.createDeferred({ url: input.url });
+    : await input.challengeDiscoveryService?.createDeferred({
+        url: input.url,
+        ownerUserId: input.verificationHandoff?.ownerUserId,
+        browserTarget: input.verificationHandoff?.browserTarget,
+      });
+  const errorCode = input.functionId === 'extractChapterImageUrls'
+    ? 'CHAPTER_IMAGES_VERIFICATION_REQUIRED' as const
+    : 'ADAPTER_FUNCTION_VERIFICATION_REQUIRED' as const;
+  const retryableAfterVerification = Boolean(job && job.status !== 'failed' && job.status !== 'cancelled');
 
   return {
     ok: false,
@@ -296,9 +315,19 @@ export async function createVerificationRequiredResponse(input: {
     },
     recommendedAction: 'human_verification_handoff',
     error: input.error,
+    errorCode,
     requiresVerification: true,
-    challengeDiscoveryId: job?.id ?? input.existingChallengeDiscoveryId,
-    retryableAfterVerification: Boolean(job?.id ?? input.existingChallengeDiscoveryId),
+    challengeDiscoveryId: job?.id,
+    challengeStatus: job?.status,
+    challenge: job ? {
+      id: job.id,
+      status: job.status,
+      normalizedUrl: job.normalizedUrl,
+      retryableAfterVerification,
+      ownerUserId: job.ownerUserId,
+      browserTarget: job.browserTarget,
+    } : undefined,
+    retryableAfterVerification,
     verificationMessage: job
       ? 'Human verification is required. Open the verification browser, complete the check, then continue this adapter function test.'
       : 'Human verification is required, but the handoff service is not available in this backend instance.',

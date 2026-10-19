@@ -115,7 +115,11 @@ paths:
         "404":
           $ref: "#/components/responses/Error"
         "409":
-          $ref: "#/components/responses/Error"
+          description: Human verification is required before chapter images can be extracted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterImagesVerificationRequiredError"
         "422":
           $ref: "#/components/responses/Error"
   /api/adapters/deleted:
@@ -618,6 +622,45 @@ paths:
                         $ref: "#/components/schemas/HandoffJob"
         "400":
           $ref: "#/components/responses/Error"
+  /api/challenge-discovery/{id}/retry:
+    post:
+      summary: Retry a failed human verification handoff job
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "202":
+          description: Handoff retry accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HandoffJob"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/challenge-discovery/{id}/cancel:
+    post:
+      summary: Cancel a human verification handoff job
+      description: Moves the job to cancelled and releases its Browser Worker lease. A late lease acquisition is released without reopening the job.
+      parameters:
+        - $ref: "#/components/parameters/HandoffId"
+      responses:
+        "200":
+          description: Handoff cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HandoffJob"
+        "400":
+          $ref: "#/components/responses/Error"
   /api/challenge-discovery/{id}/complete-human-verification:
     post:
       summary: Check whether human verification is complete
@@ -858,6 +901,8 @@ components:
       required: [error]
       properties:
         error:
+          type: string
+        code:
           type: string
         data: {}
     Message:
@@ -1328,14 +1373,62 @@ components:
           description: For extractChapterImageUrls, includes imageUrlCount and the full imageUrls array.
         error:
           type: string
+        errorCode:
+          type: string
+          enum: [CHAPTER_IMAGES_VERIFICATION_REQUIRED, ADAPTER_FUNCTION_VERIFICATION_REQUIRED]
         requiresVerification:
           type: boolean
         challengeDiscoveryId:
           type: string
+        challengeStatus:
+          $ref: "#/components/schemas/ChallengeDiscoveryStatus"
+        challenge:
+          $ref: "#/components/schemas/VerificationChallengeSummary"
         retryableAfterVerification:
           type: boolean
         verificationMessage:
           type: string
+    ChallengeDiscoveryStatus:
+      type: string
+      enum:
+        - queued
+        - ready
+        - challenge_detected
+        - challenge_required
+        - challenge_auto_attempt_failed
+        - browser_open
+        - access_blocked
+        - strategy_awaiting_review
+        - strategy_promoted
+        - failed
+        - cancelled
+    VerificationChallengeSummary:
+      type: object
+      required: [id, status, normalizedUrl, retryableAfterVerification]
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/ChallengeDiscoveryStatus"
+        normalizedUrl:
+          type: string
+          format: uri
+        retryableAfterVerification:
+          type: boolean
+        ownerUserId:
+          type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
+    ChapterImagesVerificationRequiredError:
+      type: object
+      required: [error, code, data]
+      properties:
+        error:
+          type: string
+        code:
+          const: CHAPTER_IMAGES_VERIFICATION_REQUIRED
+        data:
+          $ref: "#/components/schemas/AdapterFunctionTestResponse"
     CreateTaskRequest:
       type: object
       required: [url]
@@ -1557,7 +1650,7 @@ components:
           $ref: "#/components/schemas/FixtureSummary"
     HandoffJob:
       type: object
-      required: [id, normalizedUrl, status]
+      required: [id, url, normalizedUrl, hostname, status, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -1568,6 +1661,18 @@ components:
         hostname:
           type: string
         status:
+          $ref: "#/components/schemas/ChallengeDiscoveryStatus"
+        ownerUserId:
           type: string
+        browserTarget:
+          $ref: "#/components/schemas/BrowserTarget"
+        browserSessionId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
         error:
           type: string

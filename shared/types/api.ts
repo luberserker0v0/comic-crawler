@@ -9,6 +9,7 @@ export interface ApiResponse<T> {
 
 export interface ApiErrorResponse {
   error: string;
+  code?: string;
   data?: unknown;
 }
 
@@ -274,10 +275,39 @@ export interface AdapterFunctionTestResponse {
   fixturePath?: string;
   resultSummary?: Record<string, unknown>;
   error?: string;
+  errorCode?: AdapterFunctionErrorCode;
   requiresVerification: boolean;
   challengeDiscoveryId?: string;
+  challengeStatus?: ChallengeDiscoveryStatus;
+  challenge?: VerificationChallengeSummary;
   retryableAfterVerification?: boolean;
   verificationMessage?: string;
+}
+
+export type AdapterFunctionErrorCode =
+  | 'CHAPTER_IMAGES_VERIFICATION_REQUIRED'
+  | 'ADAPTER_FUNCTION_VERIFICATION_REQUIRED';
+
+export type ChallengeDiscoveryStatus =
+  | 'queued'
+  | 'ready'
+  | 'challenge_detected'
+  | 'challenge_required'
+  | 'challenge_auto_attempt_failed'
+  | 'browser_open'
+  | 'access_blocked'
+  | 'strategy_awaiting_review'
+  | 'strategy_promoted'
+  | 'failed'
+  | 'cancelled';
+
+export interface VerificationChallengeSummary {
+  id: string;
+  status: ChallengeDiscoveryStatus;
+  normalizedUrl: string;
+  retryableAfterVerification: boolean;
+  ownerUserId?: string;
+  browserTarget?: BrowserTarget;
 }
 
 export interface DomReadinessCheckRequest {
