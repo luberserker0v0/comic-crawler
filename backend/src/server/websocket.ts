@@ -71,6 +71,7 @@ function setupEventConnections(wss: WebSocketServer, eventBus: EventBus): void {
   const events: EventKey[] = [
     'task:created', 'task:started', 'task:progress', 'task:metadata_extracted', 'task:waiting_for_browser_worker',
     'task:chapter_list_extracted', 'task:paused', 'task:resumed', 'task:waiting_verification',
+    'task:browser_target_rebound',
     'task:completed', 'task:failed', 'task:cancelled', 'image:downloaded', 'image:failed',
     'chapter:completed', 'adapter:registered', 'config:changed', 'scheduler:triggered',
     'adapter:repair:triggered', 'adapter:repair:started', 'adapter:repair:attempted',

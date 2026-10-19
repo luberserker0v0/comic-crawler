@@ -64,6 +64,12 @@ Send the complete `apiSecurity` object to `PUT /api/config`:
         "methods": ["DELETE"],
         "path": "/api/browser-clients/:clientId",
         "permission": "browser-client:manage-own"
+      },
+      {
+        "id": "task-browser-target-recovery",
+        "methods": ["POST"],
+        "path": "/api/tasks/:id/rebind-browser-target",
+        "permission": "task:control-own"
       }
     ]
   }
@@ -85,7 +91,8 @@ Create the secret file outside the ComicCrawler data directory:
         "browser-client:register",
         "browser-client:read-own",
         "browser-client:manage-own",
-        "browser-client:session-own"
+        "browser-client:session-own",
+        "task:control-own"
       ],
       "limits": {
         "maxRegisteredBrowserClients": 10,
@@ -156,9 +163,11 @@ consumer integration contract.
 ## Ownership scope
 
 Browser Client ownership checks are implemented for listing, session control,
-credential rotation, and revocation. Browser-backed operations accept a stable
-`browserTarget`; the Server verifies visibility, reserves the Worker, and keeps
-the resulting lease bound to the operation.
+credential rotation, and revocation. Existing-tab task recovery implements
+`task:control-own` and checks the task, Worker, and resource owner before
+changing the target. Browser-backed operations accept a stable `browserTarget`;
+the Server verifies visibility, reserves the Worker, and keeps the resulting
+lease bound to the operation.
 
 Other resource-specific `*-own` permissions remain denied until their resource
 models store an owner. Use their non-`own` permission only when cross-user

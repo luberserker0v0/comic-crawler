@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { JsonFileStore } from '../../../src/storage/json-store';
@@ -84,5 +84,37 @@ describe('JsonFileStore', () => {
     // Read directly from file to verify flush
     const content = await fs.readFile(join(TEST_DIR, 'comic1.json'), 'utf-8');
     expect(JSON.parse(content)).toEqual({ title: 'Test' });
+  });
+
+  it('should wait for an in-flight flush before disposal completes', async () => {
+    const originalAtomicWrite = (store as any).atomicWriteFile.bind(store);
+    let notifyWriteStarted!: () => void;
+    let releaseWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      notifyWriteStarted = resolve;
+    });
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    jest.spyOn(store as any, 'atomicWriteFile').mockImplementation(async (...args: unknown[]) => {
+      notifyWriteStarted();
+      await writeReleased;
+      return originalAtomicWrite(...args);
+    });
+    (store as any).maxBufferSize = 1;
+
+    const writePromise = store.write('in-flight', { title: 'Test' });
+    await writeStarted;
+
+    let disposalCompleted = false;
+    const disposalPromise = store.dispose().then(() => {
+      disposalCompleted = true;
+    });
+    await Promise.resolve();
+    expect(disposalCompleted).toBe(false);
+
+    releaseWrite();
+    await Promise.all([writePromise, disposalPromise]);
+    expect(await store.read('in-flight')).toEqual({ title: 'Test' });
   });
 });

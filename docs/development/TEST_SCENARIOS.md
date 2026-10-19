@@ -362,6 +362,37 @@
 
 預期：Driver 回報取消且不操作 tab。
 
+### BC-17 重啟後重新綁定 approved tab
+
+1. 使用 existing-tab 建立工作。
+2. 讓工作等待原 Worker。
+3. 重啟 Browser Client process。
+4. 再次批准同一分頁。
+5. 註冊新 resource。
+6. 呼叫 recovery API。
+
+預期：原 task 使用新 target 繼續。
+
+### BC-18 拒絕不安全的 target recovery
+
+1. 建立可恢復工作。
+2. 送出錯誤 owner。
+3. 送出錯誤 URL。
+4. 送出過期 target。
+5. 送出無效狀態。
+
+預期：Server 拒絕每個 replacement。
+
+### BC-19 恢復人工驗證 handoff
+
+1. 讓工作等待人工驗證。
+2. 中斷原 Browser Client。
+3. 重新批准同一分頁。
+4. 呼叫 recovery API。
+5. 讀取 handoff。
+
+預期：handoff history 保留並綁定新 target。
+
 ## 6. WebUI
 
 ### WEB-01 顯示 discovery 設定錯誤

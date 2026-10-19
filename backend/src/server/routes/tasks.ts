@@ -11,6 +11,11 @@ import type { ChallengeDiscoveryService } from '../../challenge';
 import type { BrowserWorkerLeaseCoordinator } from '../../browser/browser-worker-lease-coordinator';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
+import type { ExistingTabBrowserTarget } from '@comiccrawler/shared';
+import {
+  BrowserTargetRebindError,
+} from '../../task/manager';
+import { BrowserTargetRecoveryService } from '../../task/browser-target-recovery-service';
 import { adapterSupports, isMissingChallengeJobError, recreateChallengeJobForTask } from './tasks-challenge';
 import { buildTaskDownloadPreview, contentTypeForImage, isPreviewImage, resolvePreviewRoot } from './tasks-preview';
 
@@ -35,6 +40,9 @@ export function setupTasksRoutes(
     apiSecurity?: ApiSecurityService;
   }
 ): void {
+  const browserTargetRecovery = options?.browserLeaseCoordinator
+    ? new BrowserTargetRecoveryService(taskManager, options.browserLeaseCoordinator, challengeDiscoveryService)
+    : undefined;
   app.get('/api/tasks', async (_request: FastifyRequest, reply: FastifyReply) => {
     const tasks = taskManager.getAllTasks();
     const stats = taskManager.getStats();
@@ -110,8 +118,70 @@ export function setupTasksRoutes(
         result,
         checkpoint,
         preview,
+        events: taskManager.getEvents(id),
       },
     });
+  });
+
+  app.post('/api/tasks/:id/rebind-browser-target', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!browserTargetRecovery) {
+      reply.code(503).send({ error: 'Browser Target recovery is not configured.' });
+      return;
+    }
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const unknownField = Object.keys(body).find((field) =>
+      field !== 'expectedBrowserTarget' && field !== 'browserTarget');
+    if (unknownField) {
+      reply.code(400).send({ error: `Unknown recovery field "${unknownField}".` });
+      return;
+    }
+    const expectedBrowserTarget = parseExistingTabBrowserTarget(body.expectedBrowserTarget);
+    const browserTarget = parseExistingTabBrowserTarget(body.browserTarget);
+    if (expectedBrowserTarget instanceof Error || browserTarget instanceof Error) {
+      reply.code(400).send({
+        error: expectedBrowserTarget instanceof Error
+          ? `expectedBrowserTarget: ${expectedBrowserTarget.message}`
+          : `browserTarget: ${(browserTarget as Error).message}`,
+      });
+      return;
+    }
+    const principal = options?.apiSecurity
+      ? requestPrincipal(request, options.apiSecurity)
+      : { userId: 'public' };
+    try {
+      const outcome = await browserTargetRecovery.recover({
+        taskId: id,
+        ownerUserId: principal.userId,
+        expectedBrowserTarget,
+        browserTarget,
+      });
+      reply.send({
+        data: {
+          task: {
+            id: outcome.task.id,
+            status: outcome.task.status,
+            browserTarget: outcome.task.data.browserTarget,
+          },
+          previousBrowserTarget: outcome.event.previousBrowserTarget,
+          recovery: {
+            ...outcome.event.recovery,
+            idempotent: outcome.idempotent,
+          },
+          ...(outcome.challenge ? { challenge: outcome.challenge } : {}),
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof BrowserTargetRebindError)) throw error;
+      const statusCode = error.code === 'NOT_FOUND'
+        ? 404
+        : error.code === 'FORBIDDEN'
+          ? 403
+          : error.code === 'STALE_TARGET' || error.code === 'INVALID_STATE'
+            ? 409
+            : 400;
+      reply.code(statusCode).send({ error: error.message, code: error.code });
+    }
   });
 
   app.get('/api/tasks/:id/preview-file', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -478,4 +548,20 @@ function parseBrowserTarget(value: { mode?: string; workerId?: string; resourceI
     return new Error('browserTarget must select managed-profile or provide an existing-tab workerId and resourceId.');
   }
   return { mode: 'existing-tab' as const, workerId, resourceId };
+}
+
+function parseExistingTabBrowserTarget(value: unknown): ExistingTabBrowserTarget | Error {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return new Error('an existing-tab Browser Target is required.');
+  }
+  const target = value as Record<string, unknown>;
+  const unknownField = Object.keys(target).find((field) =>
+    field !== 'mode' && field !== 'workerId' && field !== 'resourceId');
+  if (unknownField) return new Error(`unknown field "${unknownField}".`);
+  const workerId = typeof target.workerId === 'string' ? target.workerId.trim() : '';
+  const resourceId = typeof target.resourceId === 'string' ? target.resourceId.trim() : '';
+  if (target.mode !== 'existing-tab' || !workerId || !resourceId) {
+    return new Error('mode must be "existing-tab" and workerId/resourceId are required.');
+  }
+  return { mode: 'existing-tab', workerId, resourceId };
 }

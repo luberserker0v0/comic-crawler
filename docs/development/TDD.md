@@ -80,6 +80,10 @@
 20. Run the exported Executor contract harness in any test runner.
 21. Preserve loaded URLs from virtualized reader pages.
 22. Reject an aborted command before browser access.
+23. Rebind a task only to an explicitly supplied resource.
+24. Reject stale, cross-owner, mismatched URL, and invalid-state recovery.
+25. Preserve recovery events and handoff history.
+26. Treat an identical recovery request as idempotent.
 
 ## 3. Traceability
 
@@ -89,7 +93,11 @@
 | Test file | Primary scenario IDs |
 |---|---|
 | `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15 |
+| `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18 |
 | `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14 |
+| `backend/tests/unit/server/task-routes.test.ts` | TASK-01～03, BC-17～19 |
+| `backend/tests/integration/browser-target-recovery.test.ts` | BC-17, BC-18 |
+| `backend/tests-e2e/api.test.ts` | BC-04, BC-05, BC-17, REL-01, REL-02 |
 | `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14 |
 | `backend/tests/unit/server/adapter-draft-routes.test.ts` | ADP-03, ADP-04, ADP-07 |
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |

@@ -200,12 +200,74 @@ Important task statuses:
 - `cancelled`
 - `interrupted`
 
-`GET /api/tasks/:id` returns the task, progress, result, checkpoint summary, and
-preview metadata. `waiting_verification` is resumable and is not a failed state.
+`GET /api/tasks/:id` returns the task, progress, result, checkpoint summary,
+preview metadata, and persisted recovery events. `waiting_verification` is
+resumable and is not a failed state.
 It does not occupy a scheduler execution slot, but it keeps its Browser Worker
 reserved so another task cannot modify the browser during verification.
 
-### 4. Human verification handoff
+### 4. Recover an existing-tab task after Client restart
+
+1. Reconnect the Browser Client.
+2. Ask the user to approve the tab again.
+3. Register the tab as a new resource.
+4. Read the task's current `browserTarget`.
+5. Submit the explicit replacement.
+
+```http
+POST /api/tasks/:id/rebind-browser-target
+```
+
+```json
+{
+  "expectedBrowserTarget": {
+    "mode": "existing-tab",
+    "workerId": "bw_old",
+    "resourceId": "brr_old"
+  },
+  "browserTarget": {
+    "mode": "existing-tab",
+    "workerId": "bw_new",
+    "resourceId": "brr_new"
+  }
+}
+```
+
+The Server verifies:
+
+1. The caller owns the task.
+2. The caller owns the new Worker and resource.
+3. The Worker is online and idle.
+4. The resource URL matches the task or handoff URL.
+5. The Worker supports rendered DOM and navigation.
+6. A handoff Worker also supports human handoff.
+7. The stored target still equals `expectedBrowserTarget`.
+8. The task is in a recoverable state.
+
+Recoverable states are:
+
+- `waiting_for_browser_worker`
+- `interrupted`
+- `waiting_verification`
+- `failed` only for a classified browser-target loss
+
+`running`, `pending`, `paused`, `completed`, and `cancelled` reject recovery.
+URL comparison uses standard URL parsing, normalizes default ports and trailing
+root slashes, and ignores the fragment. Query parameters remain significant.
+
+The operation preserves checkpoint, progress, diagnostics, and task identity.
+It records `task:browser_target_rebound` in the task detail `events` array.
+Repeating the same request returns `200` with `recovery.idempotent: true`.
+
+For `waiting_verification`, the Server closes the old handoff session, retains
+the handoff job ID when it still exists, binds it to the new target, and returns
+the current `challenge` state. The task remains `waiting_verification` until the
+handoff is ready and the caller resumes it.
+
+The endpoint never accepts a Chrome `tabId`. It never selects a Worker for the
+caller.
+
+### 5. Human verification handoff
 
 The current API namespace is `/api/challenge-discovery`, but the public crawl
 flow treats these records as human verification handoff jobs. Every browser
@@ -248,7 +310,7 @@ Delete or abandon a handoff and release its Browser Worker:
 DELETE /api/challenge-discovery/:id
 ```
 
-### 5. AO adapter discovery and review
+### 6. AO adapter discovery and review
 
 When task creation returns `kind: "discoveryQueued"`, poll the discovery job:
 
@@ -274,7 +336,7 @@ the adapter. A fixture or extraction failure leaves the discovery job in
 
 Then create the crawl task again.
 
-### 6. Result and previews
+### 7. Result and previews
 
 ```http
 GET /api/tasks/:id
