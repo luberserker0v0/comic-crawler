@@ -167,9 +167,15 @@ describe('Adapter routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data).toMatchObject({
+    const data = response.json().data;
+    expect(data).toMatchObject({
       adapterId: 'rendered-demo',
       chapterUrl: 'https://example.com/read/1',
+      chapter: {
+        canonicalUrl: 'https://example.com/read/1',
+        stability: 'deterministic',
+        identitySource: 'normalized-url',
+      },
       imageUrlCount: 3,
       imageUrls: [
         'https://example.com/images/1.jpg',
@@ -182,6 +188,11 @@ describe('Adapter routes', () => {
         deviceScaleFactor: 1,
       },
     });
+    expect(data.chapter.id).toMatch(/^chapter_/);
+    expect(data.images).toHaveLength(3);
+    expect(data.images.map((image: { url: string }) => image.url)).toEqual(data.imageUrls);
+    expect(data.images.map((image: { orderIndex: number }) => image.orderIndex)).toEqual([0, 1, 2]);
+    expect(data.images.every((image: { id: string }) => image.id.startsWith('page_'))).toBe(true);
     expect(getNetworkConfig).toHaveBeenCalledTimes(1);
 
     await app.close();

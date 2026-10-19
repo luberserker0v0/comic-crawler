@@ -19,6 +19,7 @@ const coreBackendTests = [
   'tests/unit/adapter/sites/happymh/adapter.test.ts',
   'tests/unit/selector-discovery/task-markdown.test.ts',
   'tests/unit/server/adapter-routes.test.ts',
+  'tests/unit/adapter/chapter-image-identity.test.ts',
   'tests/unit/server/adapter-draft-routes.test.ts',
   'tests/unit/fixtures/fixture-capture-service.test.ts',
   'tests/unit/scheduler/task-scheduler.test.ts',

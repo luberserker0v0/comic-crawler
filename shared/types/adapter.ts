@@ -30,6 +30,36 @@ export interface ChapterImagesCapabilityContract {
   extractChapterImageUrls(document: unknown, sourceUrl: string): Promise<string[]> | string[];
 }
 
+export interface ChapterIdentityInput {
+  chapterUrl: string;
+  document: unknown;
+}
+
+export interface ChapterSourceIdentity {
+  canonicalUrl: string;
+  sourceKey: string;
+}
+
+export interface ChapterImageIdentityInput {
+  chapterUrl: string;
+  imageUrl: string;
+  document: unknown;
+}
+
+export interface ChapterImageSourceIdentity {
+  /** Adapter-owned stable key. It is hashed and never returned by the API. */
+  sourceKey: string;
+  /** Optional revision token prefixed by sha256:, etag:, or opaque:. */
+  sourceFingerprint?: string;
+}
+
+export interface ChapterImageIdentityStrategyContract {
+  /** Return the canonical URL and adapter-owned source key for this chapter. */
+  identifyChapter(input: ChapterIdentityInput): ChapterSourceIdentity;
+  /** Return source identity without relying on current array position. */
+  identifyPage(input: ChapterImageIdentityInput): ChapterImageSourceIdentity;
+}
+
 export interface IComicAdapter {
   readonly id: string;
   readonly name: string;
@@ -40,6 +70,7 @@ export interface IComicAdapter {
   readonly verification?: VerificationCapabilityContract;
   readonly metadata?: MetadataCapabilityContract;
   readonly chapterImages?: ChapterImagesCapabilityContract;
+  readonly chapterImageIdentity?: ChapterImageIdentityStrategyContract;
 
   matchUrl(url: string): boolean;
   extractTitle?(document: unknown, sourceUrl: string): Promise<string> | string;

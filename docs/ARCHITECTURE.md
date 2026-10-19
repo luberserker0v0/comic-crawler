@@ -178,8 +178,9 @@ fallback are not part of the command protocol.
 
 ### Responsive rendering
 
-The public chapter-images API may create its isolated Playwright Browser
-Context with a caller-supplied viewport and device scale factor. Viewport
+The public chapter-images API adds deterministic opaque chapter/page identities.
+It may create an isolated Playwright Browser Context with a caller-supplied
+viewport and device scale factor. Viewport
 dimensions use CSS pixels. If the request omits them, the effective context is
 `1920 × 1080` at scale `1`.
 

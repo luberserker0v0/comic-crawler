@@ -57,11 +57,27 @@ export interface EffectiveRenderContext {
 export interface ChapterImagesResponse {
   adapterId: string;
   chapterUrl: string;
+  chapter: ChapterIdentityDescriptor;
   imageUrlCount: number;
   imageUrls: string[];
+  images: ChapterImageDescriptor[];
   domSource: AdapterDomSource;
   durationMs: number;
   renderContext: EffectiveRenderContext;
+}
+
+export interface ChapterIdentityDescriptor {
+  id: string;
+  canonicalUrl: string;
+  stability: 'deterministic';
+  identitySource: 'adapter' | 'normalized-url';
+}
+
+export interface ChapterImageDescriptor {
+  id: string;
+  orderIndex: number;
+  url: string;
+  sourceFingerprint?: string;
 }
 
 export interface AdapterListItem {

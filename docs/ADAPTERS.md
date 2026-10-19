@@ -25,6 +25,15 @@ detection, not a parse mode.
 ComicCrawler composes metadata and image results internally from these
 fine-grained functions.
 
+The public chapter-images API applies a `ChapterImageIdentityStrategyContract`
+after URL extraction. The built-in normalized URL strategy is deterministic and
+ignores CDN origins and volatile signature parameters. A site adapter may expose
+`chapterImageIdentity` when the site has stronger native chapter/page keys or an
+optional source revision fingerprint. The Strategy receives the rendered DOM,
+chapter URL, and current image URL, so native DOM attributes can participate
+without changing the URL extraction contract. Strategy output is hashed before
+it is returned; source keys are never part of the public API.
+
 ## Capabilities
 
 - `metadata` means the adapter can extract manga catalog data and the chapter

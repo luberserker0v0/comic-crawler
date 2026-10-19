@@ -11,6 +11,9 @@ import type {
   DeletedAdapterListResponse,
   DeleteAdapterResponse,
   RestoreAdapterResponse,
+  IComicAdapter,
+  ChapterIdentityDescriptor,
+  ChapterImageDescriptor,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
@@ -277,7 +280,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
         renderContext,
         htmlRenderer: options.htmlRenderer,
       });
-      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
     }
     if (body.challengeDiscoveryId) {
       const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
@@ -286,7 +289,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
         network,
         renderContext,
       });
-      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
     }
     if (!options.withBrowserSession || !options.browserRenderService) {
       const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
@@ -295,7 +298,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
         network,
         renderContext,
       });
-      return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
     }
     const extraction = await options.withBrowserSession(request, body.browserTarget, chapterUrl, renderContext, (sessionId) =>
       testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
@@ -305,7 +308,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
         renderContext,
         htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
       }));
-    return sendChapterImagesResponse(reply, adapter.id, chapterUrl, extraction, renderContext);
+    return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
   });
 
   app.get('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -408,7 +411,7 @@ export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegis
 
 function sendChapterImagesResponse(
   reply: FastifyReply,
-  adapterId: string,
+  adapter: IComicAdapter,
   chapterUrl: string,
   extraction: Awaited<ReturnType<typeof testAdapterFunction>>,
   renderContext: EffectiveRenderContext
@@ -423,16 +426,45 @@ function sendChapterImagesResponse(
   const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
     ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
     : [];
+  const chapter = extraction.resultSummary?.chapter;
+  const images = extraction.resultSummary?.images;
+  if (!isChapterIdentityDescriptor(chapter) || !isChapterImageDescriptors(images, imageUrls)) {
+    reply.code(500).send({ error: 'Chapter image extraction returned invalid identity descriptors.' });
+    return;
+  }
   const data: ChapterImagesResponse = {
-    adapterId,
+    adapterId: adapter.id,
     chapterUrl,
+    chapter,
     imageUrlCount: imageUrls.length,
     imageUrls,
+    images,
     domSource: extraction.domSource,
     durationMs: extraction.durationMs,
     renderContext,
   };
   reply.send({ data });
+}
+
+function isChapterIdentityDescriptor(value: unknown): value is ChapterIdentityDescriptor {
+  if (!value || typeof value !== 'object') return false;
+  const chapter = value as Partial<ChapterIdentityDescriptor>;
+  return typeof chapter.id === 'string'
+    && typeof chapter.canonicalUrl === 'string'
+    && chapter.stability === 'deterministic'
+    && (chapter.identitySource === 'adapter' || chapter.identitySource === 'normalized-url');
+}
+
+function isChapterImageDescriptors(value: unknown, imageUrls: string[]): value is ChapterImageDescriptor[] {
+  return Array.isArray(value)
+    && value.length === imageUrls.length
+    && value.every((image, index) => Boolean(image)
+      && typeof image === 'object'
+      && typeof (image as ChapterImageDescriptor).id === 'string'
+      && (image as ChapterImageDescriptor).orderIndex === index
+      && (image as ChapterImageDescriptor).url === imageUrls[index]
+      && ((image as ChapterImageDescriptor).sourceFingerprint === undefined
+        || typeof (image as ChapterImageDescriptor).sourceFingerprint === 'string'));
 }
 
 function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
