@@ -1,5 +1,6 @@
 import { AdapterBase, ChapterImagesCapability, CommonCapability, VerificationCapability } from '../../base';
 import { ComicError, ErrorType } from '../../../error/types';
+import { looksLikeAntiBotChallenge } from '../../../crawler/anti-bot';
 
 export class ComixAdapter extends AdapterBase {
   readonly id = 'comix';
@@ -30,7 +31,21 @@ class ComixCommonCapability extends CommonCapability {
 
 class ComixVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
-    return /(?:cf-chl-|cdn-cgi\/challenge-platform|正在執行安全驗證|performing security verification|just a moment|verify you are human|驗證並確認您不是機器人)/i.test(input);
+    const $ = this.adapter.parseHtml(input);
+    const loadedReaderPages = $('.rpage-main .rpage-page[data-page]').filter((_, element) => {
+      const page = $(element);
+      const image = page.find('img.rpage-page__img').first();
+      return Boolean(
+        page.attr('data-comiccrawler-image-url')
+        || image.attr('data-comiccrawler-src')
+        || image.attr('src')
+        || image.attr('data-src')
+        || image.attr('data-lazy-src')
+        || image.attr('srcset')
+      );
+    });
+    if ($('.rpage-main').length > 0 && loadedReaderPages.length > 0) return false;
+    return looksLikeAntiBotChallenge(input);
   }
 
   describeVerificationHandoff(): Record<string, unknown> {

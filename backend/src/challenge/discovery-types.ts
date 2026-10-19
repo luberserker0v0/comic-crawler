@@ -1,17 +1,7 @@
 import type { ChallengeDecision, ChallengeStrategyValidation } from './types';
-import type { BrowserTarget } from '@comiccrawler/shared';
+import type { BrowserTarget, ChallengeDiscoveryStatus } from '@comiccrawler/shared';
 
-export type ChallengeDiscoveryStatus =
-  | 'queued'
-  | 'ready'
-  | 'challenge_detected'
-  | 'challenge_required'
-  | 'challenge_auto_attempt_failed'
-  | 'browser_open'
-  | 'access_blocked'
-  | 'strategy_awaiting_review'
-  | 'strategy_promoted'
-  | 'failed';
+export type { ChallengeDiscoveryStatus } from '@comiccrawler/shared';
 
 export interface ChallengeDiscoveryJob {
   id: string;

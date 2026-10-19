@@ -57,8 +57,10 @@ adapter selects reader page elements, preserves their `data-page` order, and
 rejects a partially loaded page list instead of returning truncated results.
 
 Comix human verification must be completed through the task-bound Browser
-Worker handoff. The adapter detects Comix/Cloudflare verification DOM; it does not
-bypass the verification step.
+Worker handoff. The adapter detects actionable Comix/Cloudflare verification
+DOM; it does not bypass the verification step. A passive
+`cdn-cgi/challenge-platform` script is not sufficient evidence when the reader
+DOM already exposes usable page data.
 
 ## Adapter Lab
 

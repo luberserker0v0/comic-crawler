@@ -19,18 +19,77 @@ describe('Browser Worker verification handoff', () => {
         return { type: command.type, url: 'https://example.com/chapter' };
       },
     });
+    const acquireBrowserSession = jest.fn(async () => ({ sessionId: 'session-ready', release }));
     const service = new ChallengeDiscoveryService(storage, {
       browserRenderService: renderService,
-      acquireBrowserSession: async () => ({ sessionId: 'session-ready', release }),
+      acquireBrowserSession,
     });
 
-    const queued = await service.createDeferred({ url: 'https://example.com/chapter' });
+    const browserTarget = { mode: 'existing-tab' as const, workerId: 'worker-1', resourceId: 'resource-1' };
+    const queued = await service.createDeferred({
+      url: 'https://example.com/chapter',
+      ownerUserId: 'alice',
+      browserTarget,
+    });
     const ready = await waitForJob(service, queued.id, 'ready');
 
     expect(ready.browserSessionId).toBe('session-ready');
+    expect(ready.ownerUserId).toBe('alice');
+    expect(ready.browserTarget).toEqual(browserTarget);
+    expect(acquireBrowserSession).toHaveBeenCalledWith({
+      jobId: queued.id,
+      ownerUserId: 'alice',
+      url: 'https://example.com/chapter',
+      browserTarget,
+    });
     expect(release).not.toHaveBeenCalled();
     await service.deleteJob(queued.id);
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves a deferred handoff to failed when Browser Worker acquisition times out', async () => {
+    const storage = new MemoryStorage();
+    const service = new ChallengeDiscoveryService(storage, {
+      acquireBrowserSession: async () => {
+        throw new Error('Browser Worker acquisition timed out.');
+      },
+    });
+
+    const queued = await service.createDeferred({
+      url: 'https://example.com/chapter',
+      ownerUserId: 'alice',
+      browserTarget: { mode: 'existing-tab', workerId: 'worker-1', resourceId: 'resource-1' },
+    });
+
+    await expect(waitForJob(service, queued.id, 'failed')).resolves.toMatchObject({
+      error: 'Browser Worker acquisition timed out.',
+    });
+  });
+
+  it('keeps cancellation terminal while a deferred Browser Worker lease is pending', async () => {
+    const storage = new MemoryStorage();
+    const release = jest.fn(async () => undefined);
+    let resolveAcquire!: (lease: { sessionId: string; release(): Promise<void> }) => void;
+    let notifyAcquireStarted!: () => void;
+    const started = new Promise<void>((resolve) => { notifyAcquireStarted = resolve; });
+    const service = new ChallengeDiscoveryService(storage, {
+      acquireBrowserSession: async () => {
+        notifyAcquireStarted();
+        return new Promise((resolveLease) => { resolveAcquire = resolveLease; });
+      },
+    });
+
+    const queued = await service.createDeferred({ url: 'https://example.com/chapter' });
+    await started;
+    await expect(service.cancel(queued.id)).resolves.toMatchObject({ status: 'cancelled' });
+    resolveAcquire({ sessionId: 'late-session', release });
+    await waitForCondition(() => release.mock.calls.length === 1);
+
+    await expect(service.get(queued.id)).resolves.toMatchObject({
+      status: 'cancelled',
+      browserSessionId: undefined,
+    });
+    await expect(service.retry(queued.id)).rejects.toThrow('is cancelled');
   });
 
   it('focuses and inspects the task-bound session without a Playwright BrowserContext', async () => {
@@ -108,6 +167,14 @@ async function waitForJob(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Challenge job ${id} did not reach ${status}.`);
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Condition was not satisfied.');
 }
 
 class MemoryStorage implements IStorage {

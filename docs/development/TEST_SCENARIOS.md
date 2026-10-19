@@ -128,6 +128,38 @@
 
 預期：page ID 不變，fingerprint 更新。
 
+### ADP-10 保留 verification target
+
+1. 使用 existing tab 擷取 chapter。
+2. 回傳 challenge 頁面。
+3. 讀取 handoff job。
+
+預期：job 保留 owner、URL 與 target。
+
+### ADP-11 重試 verified chapter
+
+1. 完成既有 handoff 驗證。
+2. 使用相同 challenge ID 重試。
+3. 檢查 handoff 數量。
+
+預期：回傳圖片且不建立重複 handoff。
+
+### ADP-12 結束無法取得 target 的 handoff
+
+1. 建立 deferred handoff。
+2. 讓 target acquire 逾時。
+3. 讀取 handoff 狀態。
+
+預期：handoff 進入 failed。
+
+### ADP-13 取消等待中的 handoff
+
+1. 建立 deferred handoff。
+2. 在 target acquire 前取消。
+3. 完成延遲 acquire。
+
+預期：handoff 保持 cancelled 並釋放 lease。
+
 ### COMIX-01 擷取 Comix fixture
 
 1. 載入 Comix chapter fixture。
@@ -145,6 +177,14 @@
 5. 比對 reader page 與 URL 數量。
 
 預期：同一 session 回傳完整有序 URL。
+
+### COMIX-03 忽略被動 Cloudflare script
+
+1. 準備完整 reader DOM。
+2. 加入 challenge-platform script。
+3. 執行 verification detection。
+
+預期：頁面不需要 handoff。
 
 ## 4. Adapter discovery
 

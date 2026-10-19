@@ -156,6 +156,7 @@ export class ComicCrawlerServer {
       browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
+      apiSecurity: this.apiSecurity,
     });
     setupSearchRoutes(this.app, this.options.crawlerEngine);
     setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);

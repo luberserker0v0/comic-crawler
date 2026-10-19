@@ -25,6 +25,9 @@
 16. Validate stable chapter and page identities.
 17. Validate reorder, insertion, removal, and URL renewal.
 18. Validate source replacement fingerprint behavior.
+19. Preserve handoff owner, URL, and exact browser target.
+20. Finish deferred handoffs as failed or cancelled.
+21. Prefer usable reader DOM over passive challenge scripts.
 
 ### Integration tests
 
@@ -40,6 +43,7 @@
 10. Verify Worker availability.
 11. Repeat Dynamic/Playwright chapter extraction.
 12. Preserve IDs across renewed and reordered URLs.
+13. Reuse one verified handoff for chapter-images retry.
 
 ### Functional tests
 
@@ -99,7 +103,7 @@
 |---|---|
 | `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15 |
 | `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18 |
-| `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14 |
+| `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14, ADP-10, ADP-12, ADP-13 |
 | `backend/tests/unit/server/task-routes.test.ts` | TASK-01～03, BC-17～19 |
 | `backend/tests/integration/browser-target-recovery.test.ts` | BC-17, BC-18 |
 | `backend/tests-e2e/api.test.ts` | BC-04, BC-05, BC-17, REL-01, REL-02 |
@@ -108,7 +112,8 @@
 | `backend/tests/unit/adapter/chapter-image-identity.test.ts` | ADP-08, ADP-09 |
 | `backend/tests/integration/chapter-image-identities.test.ts` | ADP-08 |
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |
-| `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01 |
+| `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |
+| `backend/tests/integration/chapter-images-handoff.test.ts` | ADP-10, ADP-11 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
 | `browser-client-sdk/tests/webextension-driver.test.ts` | BC-06, BC-15, BC-16 |
 
