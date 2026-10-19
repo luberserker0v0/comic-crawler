@@ -109,6 +109,25 @@
 
 預期：draft 可執行但不會註冊為正式 adapter。
 
+### ADP-08 保持 chapter page identity
+
+1. 擷取同一個 chapter。
+2. 更新 CDN host 與簽章。
+3. 重排並插入 page。
+4. 再次擷取 chapter。
+5. 比對 chapter 與 page ID。
+
+預期：既有 ID 不變，只有 `orderIndex` 與 URL 更新。
+
+### ADP-09 偵測 source replacement
+
+1. 擷取具有 fingerprint 的 page。
+2. 保持相同 source key。
+3. 更新 source fingerprint。
+4. 再次建立 descriptor。
+
+預期：page ID 不變，fingerprint 更新。
+
 ### COMIX-01 擷取 Comix fixture
 
 1. 載入 Comix chapter fixture。

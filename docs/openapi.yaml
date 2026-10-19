@@ -63,8 +63,8 @@ paths:
           $ref: "#/components/responses/Error"
   /api/adapters/chapter-images:
     post:
-      summary: Extract every image URL from one chapter
-      description: Resolves a compatible adapter unless adapterId is supplied, then returns the complete ordered image URL list without creating a download task. imageUrlCount always equals imageUrls.length; imageUrls is never truncated to a preview subset.
+      summary: Extract stable chapter page descriptors
+      description: Resolves a compatible adapter unless adapterId is supplied, then returns an opaque deterministic chapter ID and the complete ordered page descriptors without creating a download task. imageUrlCount always equals imageUrls.length and images.length; images.map(image => image.url) exactly equals imageUrls.
       requestBody:
         required: true
         content:
@@ -87,10 +87,22 @@ paths:
                 data:
                   adapterId: site-adapter
                   chapterUrl: https://comic.example/manga/example/chapter-10
+                  chapter:
+                    id: chapter_nL7pRZ7Yf0tY02mI1y9lNrPq
+                    canonicalUrl: https://comic.example/manga/example/chapter-10
+                    stability: deterministic
+                    identitySource: normalized-url
                   imageUrlCount: 2
                   imageUrls:
                     - https://cdn.example/001.jpg
                     - https://cdn.example/002.jpg
+                  images:
+                    - id: page_XPtJJLh5Qm8kQ9V4yO0fYm2n
+                      orderIndex: 0
+                      url: https://cdn.example/001.jpg
+                    - id: page_qAsSNF3rNz7L1H9sK5b0mV2x
+                      orderIndex: 1
+                      url: https://cdn.example/002.jpg
                   domSource: static
                   durationMs: 42
                   renderContext:
@@ -1194,15 +1206,53 @@ components:
         - $ref: "#/components/schemas/RenderContext"
         - type: object
           required: [deviceScaleFactor]
+    ChapterIdentityDescriptor:
+      type: object
+      required: [id, canonicalUrl, stability, identitySource]
+      properties:
+        id:
+          type: string
+          description: Opaque adapter-scoped deterministic chapter identity. Clients must not parse it.
+        canonicalUrl:
+          type: string
+          format: uri
+        stability:
+          type: string
+          enum: [deterministic]
+          description: The same adapter identity rules and logical chapter produce the same ID across Server restarts.
+        identitySource:
+          type: string
+          enum: [adapter, normalized-url]
+          description: Whether the adapter supplied identity rules or ComicCrawler used normalized URL identity.
+    ChapterImageDescriptor:
+      type: object
+      required: [id, orderIndex, url]
+      properties:
+        id:
+          type: string
+          description: Opaque deterministic identity scoped to the returned chapter. Clients must not parse it.
+        orderIndex:
+          type: integer
+          minimum: 0
+          description: Current zero-based position. Reordering changes this value without changing the ID when the source key remains stable.
+        url:
+          type: string
+          format: uri
+          description: Current retrievable image URL.
+        sourceFingerprint:
+          type: string
+          description: "Optional adapter-supplied revision token. Prefixes such as sha256:, etag:, or opaque: identify its semantics."
     ChapterImagesResponse:
       type: object
-      required: [adapterId, chapterUrl, imageUrlCount, imageUrls, domSource, durationMs, renderContext]
+      required: [adapterId, chapterUrl, chapter, imageUrlCount, imageUrls, images, domSource, durationMs, renderContext]
       properties:
         adapterId:
           type: string
         chapterUrl:
           type: string
           format: uri
+        chapter:
+          $ref: "#/components/schemas/ChapterIdentityDescriptor"
         imageUrlCount:
           type: integer
           minimum: 1
@@ -1214,6 +1264,12 @@ components:
           items:
             type: string
             format: uri
+        images:
+          type: array
+          minItems: 1
+          description: Complete ordered page descriptors. URLs and ordering exactly mirror imageUrls.
+          items:
+            $ref: "#/components/schemas/ChapterImageDescriptor"
         domSource:
           type: string
           enum: [static, rendered, verified-fixture, handoff-required]

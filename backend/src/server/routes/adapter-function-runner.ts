@@ -9,6 +9,7 @@ import type {
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
+import { createChapterImageIdentities } from '../../adapter/chapter-image-identity';
 import { looksLikeAntiBotChallenge } from '../../crawler/anti-bot';
 import type { HtmlRenderer } from '../../crawler/html-renderer';
 import type { ChallengeDiscoveryService } from '../../challenge';
@@ -138,9 +139,17 @@ async function runAdapterFunctionTest(
       const document = verifiedDocument?.document ?? await timings.measure('dom_acquisition', () => loadAdapterDocument(adapter, url));
       return timings.measure('extraction', async () => {
         const urls = await adapter.extractChapterImageUrls?.(document, url) ?? [];
+        const identities = createChapterImageIdentities({
+          adapter,
+          chapterUrl: url,
+          imageUrls: urls,
+          document,
+        });
         return {
           imageUrlCount: urls.length,
           imageUrls: urls,
+          chapter: identities.chapter,
+          images: identities.images,
           ...(verifiedDocument ? verifiedDocumentSourceSummary(verifiedDocument) : {}),
         };
       });

@@ -93,18 +93,39 @@ browser context for responsive pages. Viewport dimensions are CSS pixels from
 `1` through `10000`; `deviceScaleFactor` is optional and ranges from `0.1`
 through `10`. If omitted, the effective context is `1920x1080` at scale `1`.
 A successful response returns that effective context and does not truncate the list.
-`imageUrlCount` always equals `imageUrls.length`; the example below therefore
-contains two URLs and reports a count of `2`:
+It also returns opaque chapter and page identities. `imageUrlCount` always equals
+both `imageUrls.length` and `images.length`. `images.map(image => image.url)` is
+identical to `imageUrls`, including order. The example below therefore contains
+two URLs and reports a count of `2`:
 
 ```json
 {
   "data": {
     "adapterId": "site-adapter",
     "chapterUrl": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
+    "chapter": {
+      "id": "chapter_nL7pRZ7Yf0tY02mI1y9lNrPq",
+      "canonicalUrl": "https://{comic_site}/manga/{manga_name}/{manga_chapter}",
+      "stability": "deterministic",
+      "identitySource": "normalized-url"
+    },
     "imageUrlCount": 2,
     "imageUrls": [
       "https://cdn.example/001.jpg",
       "https://cdn.example/002.jpg"
+    ],
+    "images": [
+      {
+        "id": "page_XPtJJLh5Qm8kQ9V4yO0fYm2n",
+        "orderIndex": 0,
+        "url": "https://cdn.example/001.jpg"
+      },
+      {
+        "id": "page_qAsSNF3rNz7L1H9sK5b0mV2x",
+        "orderIndex": 1,
+        "url": "https://cdn.example/002.jpg",
+        "sourceFingerprint": "sha256:optional-adapter-revision"
+      }
     ],
     "domSource": "static",
     "durationMs": 42,
@@ -115,6 +136,39 @@ contains two URLs and reports a count of `2`:
   }
 }
 ```
+
+Identity guarantees:
+
+1. `chapter.id` is scoped to `adapterId`.
+2. Page `id` is scoped to `chapter.id`.
+3. IDs are deterministic across Server restarts.
+4. IDs are opaque and must not be parsed.
+5. IDs never contain filesystem paths, Browser Client handles, or tab IDs.
+6. Reordering changes `orderIndex`, not the ID of an unchanged source page.
+7. Inserting or removing a distinct page does not change unaffected page IDs.
+
+An adapter may provide site-native identity rules. Such responses report
+`chapter.identitySource` as `adapter`. Otherwise ComicCrawler reports
+`normalized-url` and derives page identity from the URL path plus non-volatile
+query parameters. The fallback ignores the CDN origin, fragment, and common
+signature parameters such as `token`, `signature`, `expires`, `x-amz-*`, and
+`x-goog-*`. Host rotation and signed URL renewal therefore do not change an ID
+when the remaining source key is unchanged.
+
+For source replacement, a changed source key receives a new page ID. An adapter
+may instead retain its stable source key and return `sourceFingerprint`; the page
+ID then remains stable while the fingerprint changes. Fingerprints are optional
+and use a semantic prefix such as `sha256:`, `etag:`, or `opaque:`. ComicCrawler
+does not download an image solely to calculate a fingerprint. A same-key content
+replacement cannot be detected when the adapter supplies no fingerprint.
+
+Consumers should persist `chapter.id` and `images[].id`, use `orderIndex` only
+for current presentation order, and use `url` only for retrieval. Changes to an
+adapter identity algorithm are data migrations and must not be made casually.
+
+`chapterUrl`, `imageUrlCount`, and `imageUrls` remain available throughout the
+0.x API line. Their removal requires a documented deprecation and a future major
+API version. Existing callers may ignore `chapter` and `images`.
 
 ### 2. Create task or queue adapter discovery
 
@@ -416,7 +470,7 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/.well-known/comiccrawler-browser-client` | Discover the Browser Client protocol and outbound connection endpoint. |
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
-| `POST` | `/api/adapters/chapter-images` | Resolve an adapter and return every ordered image URL extracted from one chapter. |
+| `POST` | `/api/adapters/chapter-images` | Return stable chapter/page identities and every ordered image URL. |
 | `GET` | `/api/adapters/deleted` | List deleted adapters, source deletion status, and restore availability. |
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
 | `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |

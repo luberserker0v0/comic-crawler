@@ -22,6 +22,9 @@
 13. Validate incomplete DOM rejection.
 14. Validate verified session reuse.
 15. Validate draft runtime isolation.
+16. Validate stable chapter and page identities.
+17. Validate reorder, insertion, removal, and URL renewal.
+18. Validate source replacement fingerprint behavior.
 
 ### Integration tests
 
@@ -35,6 +38,8 @@
 8. Close the session.
 9. Revoke the resource.
 10. Verify Worker availability.
+11. Repeat Dynamic/Playwright chapter extraction.
+12. Preserve IDs across renewed and reordered URLs.
 
 ### Functional tests
 
@@ -100,6 +105,8 @@
 | `backend/tests-e2e/api.test.ts` | BC-04, BC-05, BC-17, REL-01, REL-02 |
 | `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14 |
 | `backend/tests/unit/server/adapter-draft-routes.test.ts` | ADP-03, ADP-04, ADP-07 |
+| `backend/tests/unit/adapter/chapter-image-identity.test.ts` | ADP-08, ADP-09 |
+| `backend/tests/integration/chapter-image-identities.test.ts` | ADP-08 |
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
