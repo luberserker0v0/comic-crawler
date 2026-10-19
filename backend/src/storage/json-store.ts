@@ -246,6 +246,11 @@ export class JsonFileStore implements IStorage {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    // A flush removes operations from writeQueue before its filesystem writes
+    // finish. Wait for that in-flight batch before checking for work queued by
+    // callers that were already active when disposal began.
+    await this.flushChain;
+
     // Drain: writes may have been queued while a flush was in flight.
     while (this.writeQueue.length > 0) {
       await this.flush();
