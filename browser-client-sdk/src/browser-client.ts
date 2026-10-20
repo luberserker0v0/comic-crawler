@@ -79,85 +79,87 @@ export class BrowserClient {
 
   async enroll(options: BrowserClientEnrollOptions = {}): Promise<BrowserClientState> {
     const discovery = await this.discover();
-    const credentials = options.credentials;
-    if (discovery.apiSecurityMode === 'token' && !credentials) {
-      throw new BrowserClientError(
-        'The ComicCrawler Server requires a user ID and user API token for Browser Client enrollment.',
-        'INVALID_STATE'
-      );
-    }
+    requireEnrollmentCredentials(discovery, options.credentials);
     const capabilities = await this.options.executor.describe();
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (credentials) {
-      headers['x-comiccrawler-user-id'] = credentials.userId;
-      headers.authorization = `Bearer ${credentials.userToken}`;
-    }
     const response = await this.fetchImplementation(new URL(discovery.endpoints.enroll, this.options.serverUrl), {
       method: 'POST',
-      headers,
+      headers: enrollmentHeaders(options.credentials),
       body: JSON.stringify({ name: options.name, capabilities }),
     });
     const body = await readDataResponse<BrowserClientEnrollmentResponse>(response, 'Browser Client enrollment');
-    const state: BrowserClientState = {
-      schemaVersion: 1,
-      serverUrl: normalizeServerUrl(this.options.serverUrl),
-      clientId: body.clientId,
-      credentialId: body.credentialId,
-      credential: body.credential,
-      registeredAt: body.registeredAt,
-    };
+    const state = enrollmentState(this.options.serverUrl, body);
     await this.options.stateStore.set(state);
     return state;
   }
 
   async connect(): Promise<BrowserClientConnection> {
     if (this.socket) throw new BrowserClientError('Browser Client is already connected.', 'INVALID_STATE');
-    const state = await this.options.stateStore.get();
-    if (!state) throw new BrowserClientError('Browser Client is not enrolled.', 'INVALID_STATE');
-    if (normalizeServerUrl(state.serverUrl) !== normalizeServerUrl(this.options.serverUrl)) {
-      throw new BrowserClientError('Browser Client state belongs to a different server.', 'INVALID_STATE');
-    }
-
+    const state = await this.requireClientState();
     const [discovery, capabilities] = await Promise.all([
       this.discover(),
       this.options.executor.describe(),
     ]);
-    const socket = this.webSocketFactory.create(toWebSocketUrl(discovery.endpoints.controlWebSocket, this.options.serverUrl));
-    socket.binaryType = 'arraybuffer';
-    this.socket = socket;
-    this.closing = false;
-    this.authentication = deferred<BrowserClientConnection>();
-    socket.addEventListener('message', this.handleSocketMessage);
-    socket.addEventListener('close', this.handleSocketClose);
-
+    const socket = this.createSocket(discovery);
     try {
-      await waitForSocketOpen(socket, this.connectTimeoutMs);
-      this.send({
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'client.authenticate',
-        clientId: state.clientId,
-        credential: state.credential,
-        processInstanceId: this.processInstanceId,
-        capabilities,
-      });
-      const connection = await withTimeout(
-        this.authentication.promise,
-        this.connectTimeoutMs,
-        'Browser Client authentication timed out.'
-      );
-      this.connection = {
-        clientId: state.clientId,
-        workerId: connection.workerId,
-        processInstanceId: this.processInstanceId,
-      };
-      await this.restoreResources();
-      return this.connection;
+      return await this.authenticateConnection(socket, state, capabilities);
     } catch (error) {
       await this.disconnectSocket();
       throw error;
     } finally {
       this.authentication = undefined;
     }
+  }
+
+  private async requireClientState(): Promise<BrowserClientState> {
+    const state = await this.options.stateStore.get();
+    if (!state) throw new BrowserClientError('Browser Client is not enrolled.', 'INVALID_STATE');
+    if (normalizeServerUrl(state.serverUrl) !== normalizeServerUrl(this.options.serverUrl)) {
+      throw new BrowserClientError('Browser Client state belongs to a different server.', 'INVALID_STATE');
+    }
+    return state;
+  }
+
+  private createSocket(discovery: BrowserClientDiscovery): BrowserClientSocket {
+    const url = toWebSocketUrl(discovery.endpoints.controlWebSocket, this.options.serverUrl);
+    const socket = this.webSocketFactory.create(url);
+    socket.binaryType = 'arraybuffer';
+    this.socket = socket;
+    this.closing = false;
+    this.authentication = deferred<BrowserClientConnection>();
+    socket.addEventListener('message', this.handleSocketMessage);
+    socket.addEventListener('close', this.handleSocketClose);
+    return socket;
+  }
+
+  private async authenticateConnection(
+    socket: BrowserClientSocket,
+    state: BrowserClientState,
+    capabilities: Awaited<ReturnType<BrowserExecutor['describe']>>
+  ): Promise<BrowserClientConnection> {
+    await waitForSocketOpen(socket, this.connectTimeoutMs);
+    this.sendAuthentication(state, capabilities);
+    const authenticated = await withTimeout(
+      this.authentication!.promise,
+      this.connectTimeoutMs,
+      'Browser Client authentication timed out.'
+    );
+    this.connection = toConnection(state, authenticated.workerId, this.processInstanceId);
+    await this.restoreResources();
+    return this.connection;
+  }
+
+  private sendAuthentication(
+    state: BrowserClientState,
+    capabilities: Awaited<ReturnType<BrowserExecutor['describe']>>
+  ): void {
+    this.send({
+      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+      type: 'client.authenticate',
+      clientId: state.clientId,
+      credential: state.credential,
+      processInstanceId: this.processInstanceId,
+      capabilities,
+    });
   }
 
   async disconnect(): Promise<void> {
@@ -247,26 +249,42 @@ export class BrowserClient {
 
   private async processSocketMessage(event: BrowserClientSocketMessageEvent): Promise<void> {
     const message = parseServerMessage(await decodeSocketMessage(event.data));
+    if (this.processAuthenticationMessage(message)) return;
+    if (this.processResourceMessage(message)) return;
+    await this.processSessionMessage(message);
+  }
+
+  private processAuthenticationMessage(message: BrowserServerToClientMessage): boolean {
     switch (message.type) {
       case 'client.authenticated':
         this.acceptAuthentication(message);
-        break;
+        return true;
       case 'client.rejected':
         this.authentication?.reject(new BrowserClientError(message.reason, 'INVALID_STATE'));
-        break;
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private processResourceMessage(message: BrowserServerToClientMessage): boolean {
+    switch (message.type) {
       case 'resource.registered':
         this.pendingControls.get(message.requestId)?.resolve(message.resource);
-        break;
+        return true;
       case 'resource.revoked':
         this.pendingControls.get(message.requestId)?.resolve(message.resourceId);
-        break;
+        return true;
       case 'resource.rejected':
-        this.pendingControls.get(message.requestId)?.reject(new BrowserClientError(
-          message.error.message,
-          message.error.code,
-          message.error.retryable
-        ));
-        break;
+        this.pendingControls.get(message.requestId)?.reject(toClientError(message.error));
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private async processSessionMessage(message: BrowserServerToClientMessage): Promise<void> {
+    switch (message.type) {
       case 'session.open':
         await this.openSession(message);
         break;
@@ -293,38 +311,39 @@ export class BrowserClient {
 
   private async openSession(message: Extract<BrowserServerToClientMessage, { type: 'session.open' }>): Promise<void> {
     const { sessionId, leaseId } = message.request;
-    if (this.activeSession) {
-      if (this.activeSession.sessionId === sessionId && this.activeSession.leaseId === leaseId) {
-        this.send({
-          protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-          type: 'session.ready',
-          sessionId,
-          leaseId,
-        });
-        return;
-      }
-      this.sendSessionFailure(sessionId, leaseId, new BrowserClientError('Browser Worker is busy.', 'INVALID_STATE', true));
-      return;
-    }
+    if (this.handleActiveSessionOpen(sessionId, leaseId)) return;
     const abortController = new AbortController();
     try {
       const session = await this.options.executor.openSession(message.request, abortController.signal);
-      this.activeSession = {
-        sessionId,
-        leaseId,
-        session,
-        abortController,
-        commandTail: Promise.resolve(),
-      };
-      this.send({
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'session.ready',
-        sessionId,
-        leaseId,
-      });
+      this.activateSession({ sessionId, leaseId, session, abortController, commandTail: Promise.resolve() });
     } catch (error) {
       this.sendSessionFailure(sessionId, leaseId, error);
     }
+  }
+
+  private handleActiveSessionOpen(sessionId: string, leaseId: string): boolean {
+    if (!this.activeSession) return false;
+    if (this.activeSession.sessionId === sessionId && this.activeSession.leaseId === leaseId) {
+      this.sendSessionReady(sessionId, leaseId);
+      return true;
+    }
+    const error = new BrowserClientError('Browser Worker is busy.', 'INVALID_STATE', true);
+    this.sendSessionFailure(sessionId, leaseId, error);
+    return true;
+  }
+
+  private activateSession(session: ActiveSession): void {
+    this.activeSession = session;
+    this.sendSessionReady(session.sessionId, session.leaseId);
+  }
+
+  private sendSessionReady(sessionId: string, leaseId: string): void {
+    this.send({
+      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+      type: 'session.ready',
+      sessionId,
+      leaseId,
+    });
   }
 
   private queueCommand(message: Extract<BrowserServerToClientMessage, { type: 'command.execute' }>): void {
@@ -481,30 +500,82 @@ function defaultWebSocketFactory(): WebSocketFactory {
   };
 }
 
+function requireEnrollmentCredentials(
+  discovery: BrowserClientDiscovery,
+  credentials: BrowserClientEnrollmentCredentials | undefined
+): void {
+  if (discovery.apiSecurityMode !== 'token' || credentials) return;
+  throw new BrowserClientError(
+    'The ComicCrawler Server requires a user ID and user API token for Browser Client enrollment.',
+    'INVALID_STATE'
+  );
+}
+
+function enrollmentHeaders(credentials: BrowserClientEnrollmentCredentials | undefined): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (!credentials) return headers;
+  headers['x-comiccrawler-user-id'] = credentials.userId;
+  headers.authorization = `Bearer ${credentials.userToken}`;
+  return headers;
+}
+
+function enrollmentState(serverUrl: string, body: BrowserClientEnrollmentResponse): BrowserClientState {
+  return {
+    schemaVersion: 1,
+    serverUrl: normalizeServerUrl(serverUrl),
+    clientId: body.clientId,
+    credentialId: body.credentialId,
+    credential: body.credential,
+    registeredAt: body.registeredAt,
+  };
+}
+
+function toConnection(state: BrowserClientState, workerId: string, processInstanceId: string): BrowserClientConnection {
+  return { clientId: state.clientId, workerId, processInstanceId };
+}
+
+function toClientError(error: { message: string; code: BrowserClientError['code']; retryable: boolean }): BrowserClientError {
+  return new BrowserClientError(error.message, error.code, error.retryable);
+}
+
 function waitForSocketOpen(socket: BrowserClientSocket, timeoutMs: number): Promise<void> {
   if (socket.readyState === SOCKET_OPEN) return Promise.resolve();
-  return withTimeout(new Promise<void>((resolve, reject) => {
-    const opened = () => {
-      cleanup();
-      resolve();
-    };
-    const errored = () => {
-      cleanup();
-      reject(new BrowserClientError('Browser Client WebSocket failed to open.', 'BROWSER_CLOSED', true));
-    };
+  return withTimeout(socketOpenPromise(socket), timeoutMs, 'Browser Client WebSocket connection timed out.');
+}
+
+function socketOpenPromise(socket: BrowserClientSocket): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => removeSocketOpenListeners(socket, opened, errored, closed);
+    const opened = () => { cleanup(); resolve(); };
+    const errored = () => { cleanup(); reject(socketOpenError()); };
     const closed = (event: BrowserClientSocketCloseEvent) => {
       cleanup();
-      reject(new BrowserClientError(`Browser Client WebSocket closed before opening${event.reason ? `: ${event.reason}` : ''}.`, 'BROWSER_CLOSED', true));
-    };
-    const cleanup = () => {
-      socket.removeEventListener('open', opened);
-      socket.removeEventListener('error', errored);
-      socket.removeEventListener('close', closed);
+      reject(socketClosedBeforeOpenError(event));
     };
     socket.addEventListener('open', opened);
     socket.addEventListener('error', errored);
     socket.addEventListener('close', closed);
-  }), timeoutMs, 'Browser Client WebSocket connection timed out.');
+  });
+}
+
+function removeSocketOpenListeners(
+  socket: BrowserClientSocket,
+  opened: () => void,
+  errored: () => void,
+  closed: (event: BrowserClientSocketCloseEvent) => void
+): void {
+  socket.removeEventListener('open', opened);
+  socket.removeEventListener('error', errored);
+  socket.removeEventListener('close', closed);
+}
+
+function socketOpenError(): BrowserClientError {
+  return new BrowserClientError('Browser Client WebSocket failed to open.', 'BROWSER_CLOSED', true);
+}
+
+function socketClosedBeforeOpenError(event: BrowserClientSocketCloseEvent): BrowserClientError {
+  const reason = event.reason ? `: ${event.reason}` : '';
+  return new BrowserClientError(`Browser Client WebSocket closed before opening${reason}.`, 'BROWSER_CLOSED', true);
 }
 
 async function readDataResponse<T>(response: Response, operation: string): Promise<T> {

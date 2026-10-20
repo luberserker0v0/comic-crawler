@@ -30,27 +30,33 @@ test('copies a Chrome Profile and excludes cache and lock entries', async (conte
   const root = await mkdtemp(join(tmpdir(), 'comiccrawler-acceptance-profile-'));
   context.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source');
-  await mkdir(join(source, 'Default', 'Cache'), { recursive: true });
-  await writeFile(join(source, 'Default', 'Cookies'), 'cookies');
-  await writeFile(join(source, 'Default', 'Cache', 'cache.bin'), 'cache');
-  await writeFile(join(source, 'Local State'), 'local-state');
-
+  await createChromeProfile(source);
   const directories = new TemporaryProfileDirectoryAccess();
   const target = await directories.createTemporaryDirectory('comiccrawler-profile-test-');
-  await directories.copyChromeProfile({
-    sourceUserDataRoot: source,
-    sourceProfile: 'Default',
-    targetUserDataRoot: target,
-    excludedNames: ['Cache', 'SingletonLock'],
-    signal: new AbortController().signal,
-  });
-
+  await directories.copyChromeProfile(copyInput(source, target));
   assert.equal(await readFile(join(target, 'Default', 'Cookies'), 'utf8'), 'cookies');
   assert.equal(await readFile(join(target, 'Local State'), 'utf8'), 'local-state');
   await assert.rejects(() => access(join(target, 'Default', 'Cache')));
   await directories.removeDirectory(target);
   await assert.rejects(() => access(target));
 });
+
+async function createChromeProfile(source) {
+  await mkdir(join(source, 'Default', 'Cache'), { recursive: true });
+  await writeFile(join(source, 'Default', 'Cookies'), 'cookies');
+  await writeFile(join(source, 'Default', 'Cache', 'cache.bin'), 'cache');
+  await writeFile(join(source, 'Local State'), 'local-state');
+}
+
+function copyInput(source, target) {
+  return {
+    sourceUserDataRoot: source,
+    sourceProfile: 'Default',
+    targetUserDataRoot: target,
+    excludedNames: ['Cache', 'SingletonLock'],
+    signal: new AbortController().signal,
+  };
+}
 
 test('refuses copy mode while the source Chrome User Data is locked', async (context) => {
   const root = await mkdtemp(join(tmpdir(), 'comiccrawler-acceptance-locked-profile-'));

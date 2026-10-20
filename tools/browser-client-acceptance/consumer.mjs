@@ -14,19 +14,11 @@ const {
 export function createAcceptanceConsumer(config) {
   const directories = new TemporaryProfileDirectoryAccess();
   const profile = config.browser.profile;
-  const provisioner = profile.type === 'copy'
-    ? new CopyProfileProvisioner(
-        directories,
-        profile.sourceUserDataRoot,
-        profile.sourceProfile
-      )
-    : new FreshProfileProvisioner(directories);
-  const args = [...config.browser.args];
-  if (profile.type === 'copy') args.push(`--profile-directory=${profile.sourceProfile}`);
+  const provisioner = createProvisioner(directories, profile);
   const launcher = new PlaywrightManagedProfileLauncher(chromium, provisioner, {
     channel: config.browser.channel,
     headless: config.browser.headless,
-    args,
+    args: browserArguments(config.browser),
   });
   const executor = new ManagedProfileExecutor(new PlaywrightPageDriver(), launcher);
   const stateStore = new FileClientStateStore(config.statePath);
@@ -37,6 +29,18 @@ export function createAcceptanceConsumer(config) {
     webSocketFactory: nodeWebSocketFactory,
   });
   return { client, stateStore };
+}
+
+function createProvisioner(directories, profile) {
+  return profile.type === 'copy'
+    ? new CopyProfileProvisioner(directories, profile.sourceUserDataRoot, profile.sourceProfile)
+    : new FreshProfileProvisioner(directories);
+}
+
+function browserArguments(browser) {
+  const args = [...browser.args];
+  if (browser.profile.type === 'copy') args.push(`--profile-directory=${browser.profile.sourceProfile}`);
+  return args;
 }
 
 export async function keepConnected(client, options = {}) {

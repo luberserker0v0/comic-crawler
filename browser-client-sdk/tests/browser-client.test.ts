@@ -23,40 +23,55 @@ const capabilities: BrowserCapabilities = {
   responsiveViewport: true,
 };
 
-test('enrolls with user credentials and saves the returned client credential', async () => {
+test('enrolls with user credentials and saves the returned client credential', testEnrollment);
+test('authenticates, binds commands to the active lease, and executes them sequentially', testSequentialCommands);
+test('rejects a connection when saved state belongs to another server', testWrongServer);
+test('registers and revokes an opaque browser resource over the control WebSocket', testResourceLifecycle);
+test('keeps the active browser session when the same process reconnects', testSessionReconnect);
+test('re-registers process-memory browser resources after reconnect', testResourceReconnect);
+
+async function testEnrollment(): Promise<void> {
   const stateStore = new MemoryStateStore();
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const client = new BrowserClient({
     serverUrl: 'https://crawler.example',
     executor: new TestExecutor(),
     stateStore,
-    fetch: async (input, init) => {
-      const url = String(input);
-      requests.push({ url, init });
-      if (url.endsWith('/.well-known/comiccrawler-browser-client')) {
-        return jsonResponse({
-          protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-          apiSecurityMode: 'token',
-          endpoints: {
-            enroll: '/api/browser-clients/enroll',
-            controlWebSocket: '/api/browser-clients/connect',
-          },
-        });
-      }
-      return jsonResponse({
-        clientId: 'client-1',
-        credentialId: 'credential-1',
-        credential: 'secret-1',
-        registeredAt: '2026-10-16T00:00:00.000Z',
-      }, 201);
-    },
+    fetch: createEnrollmentFetch(requests),
   });
+  const state = await client.enroll(enrollmentOptions());
+  assertEnrollmentRequest(requests);
+  assert.deepEqual(stateStore.state, state);
+  assert.equal(state.credential, 'secret-1');
+}
 
-  const state = await client.enroll({
-    name: 'Alice Chrome',
-    credentials: { userId: 'alice', userToken: 'user-secret' },
+function createEnrollmentFetch(requests: Array<{ url: string; init?: RequestInit }>): typeof fetch {
+  return async (input, init) => {
+    const url = String(input);
+    requests.push({ url, init });
+    if (url.endsWith('/.well-known/comiccrawler-browser-client')) return tokenDiscoveryResponse();
+    return jsonResponse({
+      clientId: 'client-1',
+      credentialId: 'credential-1',
+      credential: 'secret-1',
+      registeredAt: '2026-10-16T00:00:00.000Z',
+    }, 201);
+  };
+}
+
+function tokenDiscoveryResponse(): Response {
+  return jsonResponse({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    apiSecurityMode: 'token',
+    endpoints: { enroll: '/api/browser-clients/enroll', controlWebSocket: '/api/browser-clients/connect' },
   });
+}
 
+function enrollmentOptions() {
+  return { name: 'Alice Chrome', credentials: { userId: 'alice', userToken: 'user-secret' } };
+}
+
+function assertEnrollmentRequest(requests: Array<{ url: string; init?: RequestInit }>): void {
   assert.equal(requests.length, 2);
   const enrollment = requests[1];
   assert.equal(enrollment.url, 'https://crawler.example/api/browser-clients/enroll');
@@ -69,66 +84,23 @@ test('enrolls with user credentials and saves the returned client credential', a
     name: 'Alice Chrome',
     capabilities,
   });
-  assert.deepEqual(stateStore.state, state);
-  assert.equal(state.credential, 'secret-1');
-});
+}
 
-test('authenticates, binds commands to the active lease, and executes them sequentially', async () => {
+async function testSequentialCommands(): Promise<void> {
   const socket = new FakeSocket();
   const session = new ControlledSession();
   const executor = new TestExecutor(session);
-  const client = new BrowserClient({
-    serverUrl: 'https://crawler.example',
-    executor,
-    stateStore: new MemoryStateStore({
-      schemaVersion: 1,
-      serverUrl: 'https://crawler.example/',
-      clientId: 'client-1',
-      credentialId: 'credential-1',
-      credential: 'secret-1',
-      registeredAt: '2026-10-16T00:00:00.000Z',
-    }),
-    fetch: discoveryFetch,
-    webSocketFactory: { create: () => socket },
-    randomUUID: () => 'process-1',
-  });
+  const client = createClient(() => socket, executor);
+  await connectClient(client, socket);
+  await openRemoteSession(socket);
+  await verifySequentialExecution(socket, session);
+  await verifyLeaseMismatch(socket);
+  await closeRemoteSession(socket, session);
+  await client.close();
+  assert.equal(executor.closed, true);
+}
 
-  const connecting = client.connect();
-  await waitFor(() => socket.listenerCount('open') === 1);
-  socket.open();
-  await waitFor(() => socket.sent.length === 1);
-  assert.deepEqual(socket.jsonMessages()[0], {
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'client.authenticate',
-    clientId: 'client-1',
-    credential: 'secret-1',
-    processInstanceId: 'process-1',
-    capabilities,
-  });
-
-  socket.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'client.authenticated',
-    workerId: 'worker-1',
-    heartbeatIntervalMs: 60_000,
-  });
-  assert.deepEqual(await connecting, {
-    clientId: 'client-1',
-    workerId: 'worker-1',
-    processInstanceId: 'process-1',
-  });
-
-  socket.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'session.open',
-    request: {
-      sessionId: 'session-1',
-      leaseId: 'lease-1',
-      source: { type: 'managed-profile', navigationPolicy: 'navigate-to-target' },
-    },
-  });
-  await waitForMessage(socket, 'session.ready');
-
+async function verifySequentialExecution(socket: FakeSocket, session: ControlledSession): Promise<void> {
   socket.serverSend(commandMessage('request-1', 'page.get-url'));
   socket.serverSend(commandMessage('request-2', 'page.get-content'));
   await waitFor(() => session.started.length === 1);
@@ -146,7 +118,9 @@ test('authenticates, binds commands to the active lease, and executes them seque
   const results = socket.jsonMessages().filter((message) => message.type === 'command.result');
   assert.deepEqual(results.map((message) => message.requestId), ['request-1', 'request-2']);
   assert.equal(session.maxConcurrent, 1);
+}
 
+async function verifyLeaseMismatch(socket: FakeSocket): Promise<void> {
   socket.serverSend({
     ...commandMessage('request-3', 'page.get-url'),
     leaseId: 'wrong-lease',
@@ -164,7 +138,9 @@ test('authenticates, binds commands to the active lease, and executes them seque
       retryable: false,
     },
   });
+}
 
+async function closeRemoteSession(socket: FakeSocket, session: ControlledSession): Promise<void> {
   socket.serverSend({
     protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
     type: 'session.close',
@@ -173,214 +149,150 @@ test('authenticates, binds commands to the active lease, and executes them seque
   });
   await waitForMessage(socket, 'session.closed');
   assert.equal(session.closed, true);
-  await client.close();
-  assert.equal(executor.closed, true);
-});
+}
 
-test('rejects a connection when saved state belongs to another server', async () => {
+async function testWrongServer(): Promise<void> {
   const client = new BrowserClient({
     serverUrl: 'https://crawler.example',
     executor: new TestExecutor(),
-    stateStore: new MemoryStateStore({
-      schemaVersion: 1,
-      serverUrl: 'https://other.example/',
-      clientId: 'client-1',
-      credentialId: 'credential-1',
-      credential: 'secret-1',
-      registeredAt: '2026-10-16T00:00:00.000Z',
-    }),
+    stateStore: new MemoryStateStore(enrolledState('https://other.example/')),
     fetch: discoveryFetch,
   });
-
   await assert.rejects(() => client.connect(), /belongs to a different server/);
-});
+}
 
-test('registers and revokes an opaque browser resource over the control WebSocket', async () => {
+async function testResourceLifecycle(): Promise<void> {
   const socket = new FakeSocket();
-  const client = new BrowserClient({
-    serverUrl: 'https://crawler.example',
-    executor: new TestExecutor(),
-    stateStore: new MemoryStateStore({
-      schemaVersion: 1,
-      serverUrl: 'https://crawler.example/',
-      clientId: 'client-1',
-      credentialId: 'credential-1',
-      credential: 'secret-1',
-      registeredAt: '2026-10-16T00:00:00.000Z',
-    }),
-    fetch: discoveryFetch,
-    webSocketFactory: { create: () => socket },
-    randomUUID: () => 'fixed-id',
-  });
-
-  const connecting = client.connect();
-  await waitFor(() => socket.listenerCount('open') === 1);
-  socket.open();
-  socket.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'client.authenticated',
-    workerId: 'worker-1',
-    heartbeatIntervalMs: 60_000,
-  });
-  await connecting;
-
-  const registering = client.registerResource({
-    kind: 'tab',
-    url: 'https://example.test/chapter',
-    title: 'Chapter',
-  });
-  await waitForMessage(socket, 'resource.register');
-  const registerMessage = socket.jsonMessages().find((message) => message.type === 'resource.register')!;
-  socket.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'resource.registered',
-    requestId: registerMessage.requestId,
-    resource: registerMessage.resource,
-  });
-  const resource = await registering;
+  const client = createClient(() => socket, new TestExecutor(), () => 'fixed-id');
+  await connectClient(client, socket, 'fixed-id');
+  const resource = await registerTestResource(client, socket);
   assert.equal(resource.resourceId, 'brr_fixed-id');
-
-  const revoking = client.revokeResource(resource.resourceId);
-  await waitForMessageCount(socket, 'resource.revoke', 1);
-  const revokeMessage = socket.jsonMessages().find((message) => message.type === 'resource.revoke')!;
-  socket.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'resource.revoked',
-    requestId: revokeMessage.requestId,
-    resourceId: resource.resourceId,
-  });
-  await revoking;
+  await revokeTestResource(client, socket, resource.resourceId);
   await client.close();
-});
+}
 
-test('keeps the active browser session when the same process reconnects', async () => {
+async function testSessionReconnect(): Promise<void> {
   const first = new FakeSocket();
   const second = new FakeSocket();
   const sockets = [first, second];
   const session = new ControlledSession();
   const executor = new TestExecutor(session);
-  const client = new BrowserClient({
-    serverUrl: 'https://crawler.example',
-    executor,
-    stateStore: new MemoryStateStore({
-      schemaVersion: 1,
-      serverUrl: 'https://crawler.example/',
-      clientId: 'client-1',
-      credentialId: 'credential-1',
-      credential: 'secret-1',
-      registeredAt: '2026-10-16T00:00:00.000Z',
-    }),
-    fetch: discoveryFetch,
-    webSocketFactory: { create: () => sockets.shift()! },
-    randomUUID: () => 'process-1',
-  });
-
-  const firstConnect = client.connect();
-  await waitFor(() => first.listenerCount('open') === 1);
-  first.open();
-  first.serverSend({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'client.authenticated', workerId: 'worker-1', heartbeatIntervalMs: 60_000 });
-  await firstConnect;
-  first.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'session.open',
-    request: {
-      sessionId: 'session-1',
-      leaseId: 'lease-1',
-      source: { type: 'managed-profile', navigationPolicy: 'navigate-to-target' },
-    },
-  });
-  await waitForMessage(first, 'session.ready');
+  const client = createClient(() => sockets.shift()!, executor);
+  await connectClient(client, first);
+  await openRemoteSession(first);
   assert.equal(executor.opened, 1);
-
   first.close();
   assert.equal(session.closed, false);
-
-  const secondConnect = client.connect();
-  await waitFor(() => second.listenerCount('open') === 1);
-  second.open();
-  second.serverSend({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'client.authenticated', workerId: 'worker-1', heartbeatIntervalMs: 60_000 });
-  await secondConnect;
-  second.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'session.open',
-    request: {
-      sessionId: 'session-1',
-      leaseId: 'lease-1',
-      source: { type: 'managed-profile', navigationPolicy: 'navigate-to-target' },
-    },
-  });
-  await waitForMessage(second, 'session.ready');
-
+  await connectClient(client, second);
+  await openRemoteSession(second);
   assert.equal(executor.opened, 1);
   assert.equal(session.closed, false);
   await client.close();
   assert.equal(session.closed, true);
-});
+}
 
-test('re-registers process-memory browser resources after reconnect', async () => {
+async function testResourceReconnect(): Promise<void> {
   const first = new FakeSocket();
   const second = new FakeSocket();
   const sockets = [first, second];
   let nextId = 0;
-  const client = new BrowserClient({
-    serverUrl: 'https://crawler.example',
-    executor: new TestExecutor(),
-    stateStore: new MemoryStateStore({
-      schemaVersion: 1,
-      serverUrl: 'https://crawler.example/',
-      clientId: 'client-1',
-      credentialId: 'credential-1',
-      credential: 'secret-1',
-      registeredAt: '2026-10-16T00:00:00.000Z',
-    }),
-    fetch: discoveryFetch,
-    webSocketFactory: { create: () => sockets.shift()! },
-    randomUUID: () => `id-${nextId += 1}`,
-  });
-
-  const firstConnect = client.connect();
-  await waitFor(() => first.listenerCount('open') === 1);
-  first.open();
-  first.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'client.authenticated',
-    workerId: 'worker-1',
-    heartbeatIntervalMs: 60_000,
-  });
-  await firstConnect;
-  const registering = client.registerResource({ kind: 'tab', url: 'https://example.test/chapter' });
-  await waitForMessage(first, 'resource.register');
-  const firstRegistration = first.jsonMessages().find((message) => message.type === 'resource.register')!;
-  first.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'resource.registered',
-    requestId: firstRegistration.requestId,
-    resource: firstRegistration.resource,
-  });
-  const resource = await registering;
+  const client = createClient(() => sockets.shift()!, new TestExecutor(), () => `id-${nextId += 1}`);
+  await connectClient(client, first, 'id-1');
+  const resource = await registerTestResource(client, first);
   first.close();
-
   const secondConnect = client.connect();
-  await waitFor(() => second.listenerCount('open') === 1);
-  second.open();
-  second.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'client.authenticated',
-    workerId: 'worker-1',
-    heartbeatIntervalMs: 60_000,
-  });
+  await authenticateSocket(second);
   await waitForMessage(second, 'resource.register');
-  const restored = second.jsonMessages().find((message) => message.type === 'resource.register')!;
+  const restored = messageOfType(second, 'resource.register');
   assert.deepEqual(restored.resource, resource);
-  second.serverSend({
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'resource.registered',
-    requestId: restored.requestId,
-    resource: restored.resource,
-  });
+  sendResourceRegistered(second, restored);
   await secondConnect;
   await client.close();
-});
+}
+
+function enrolledState(serverUrl = 'https://crawler.example/'): BrowserClientState {
+  return { schemaVersion: 1, serverUrl, clientId: 'client-1', credentialId: 'credential-1', credential: 'secret-1', registeredAt: '2026-10-16T00:00:00.000Z' };
+}
+
+function createClient(
+  createSocket: () => FakeSocket,
+  executor: BrowserExecutor,
+  randomUUID: () => string = () => 'process-1'
+): BrowserClient {
+  return new BrowserClient({
+    serverUrl: 'https://crawler.example',
+    executor,
+    stateStore: new MemoryStateStore(enrolledState()),
+    fetch: discoveryFetch,
+    webSocketFactory: { create: createSocket },
+    randomUUID,
+  });
+}
+
+async function connectClient(client: BrowserClient, socket: FakeSocket, processId = 'process-1'): Promise<void> {
+  const connecting = client.connect();
+  await authenticateSocket(socket);
+  assert.deepEqual(await connecting, { clientId: 'client-1', workerId: 'worker-1', processInstanceId: processId });
+}
+
+async function authenticateSocket(socket: FakeSocket): Promise<void> {
+  await waitFor(() => socket.listenerCount('open') === 1);
+  socket.open();
+  await waitFor(() => socket.sent.length === 1);
+  socket.serverSend({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    type: 'client.authenticated',
+    workerId: 'worker-1',
+    heartbeatIntervalMs: 60_000,
+  });
+}
+
+async function openRemoteSession(socket: FakeSocket): Promise<void> {
+  socket.serverSend({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    type: 'session.open',
+    request: {
+      sessionId: 'session-1',
+      leaseId: 'lease-1',
+      source: { type: 'managed-profile', navigationPolicy: 'navigate-to-target' },
+    },
+  });
+  await waitForMessage(socket, 'session.ready');
+}
+
+async function registerTestResource(client: BrowserClient, socket: FakeSocket) {
+  const registering = client.registerResource({ kind: 'tab', url: 'https://example.test/chapter', title: 'Chapter' });
+  await waitForMessage(socket, 'resource.register');
+  const message = messageOfType(socket, 'resource.register');
+  sendResourceRegistered(socket, message);
+  return registering;
+}
+
+function sendResourceRegistered(socket: FakeSocket, message: Record<string, any>): void {
+  socket.serverSend({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    type: 'resource.registered',
+    requestId: message.requestId,
+    resource: message.resource,
+  });
+}
+
+async function revokeTestResource(client: BrowserClient, socket: FakeSocket, resourceId: string): Promise<void> {
+  const revoking = client.revokeResource(resourceId);
+  await waitForMessageCount(socket, 'resource.revoke', 1);
+  const message = messageOfType(socket, 'resource.revoke');
+  socket.serverSend({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    type: 'resource.revoked',
+    requestId: message.requestId,
+    resourceId,
+  });
+  await revoking;
+}
+
+function messageOfType(socket: FakeSocket, type: string): Record<string, any> {
+  return socket.jsonMessages().find((message) => message.type === type)!;
+}
 
 class MemoryStateStore implements ClientStateStore {
   constructor(public state?: BrowserClientState) {}

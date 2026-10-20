@@ -1,6 +1,6 @@
 import type { BrowserPageDriver } from './executors';
 import { BrowserClientError } from './errors';
-import { scrollThroughDocument } from './content-preparation';
+import { prepareScrollableContent } from './content-preparation';
 
 export interface WebExtensionTab {
   id?: number;
@@ -85,12 +85,24 @@ export class WebExtensionTabDriver implements BrowserPageDriver<number> {
     if (strategy !== 'scroll-through') {
       throw new BrowserClientError(`Unsupported content preparation strategy "${strategy}".`, 'UNSUPPORTED_COMMAND');
     }
-    await this.api.scripting.executeScript({
-      target: { tabId },
-      func: scrollThroughDocument,
-      args: [normalizeTimeout(timeoutMs)],
-    });
+    await prepareScrollableContent(
+      (script, argument) => this.executePreparationScript(tabId, script, argument),
+      normalizeTimeout(timeoutMs)
+    );
     assertNotAborted(signal);
+  }
+
+  private async executePreparationScript<Argument, Result>(
+    tabId: number,
+    script: (argument: Argument) => Result | Promise<Result>,
+    argument: Argument
+  ): Promise<Result> {
+    const [result] = await this.api.scripting.executeScript({
+      target: { tabId },
+      func: script,
+      args: [argument],
+    });
+    return result?.result as Result;
   }
 
   async focus(tabId: number, signal: AbortSignal): Promise<void> {

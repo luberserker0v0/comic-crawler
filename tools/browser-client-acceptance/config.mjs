@@ -8,23 +8,34 @@ const PROFILE_KEYS = new Set(['type', 'sourceUserDataRoot', 'sourceProfile']);
 export async function loadAcceptanceConfig(configPath, stateOverride) {
   const absoluteConfigPath = resolve(configPath);
   const raw = JSON.parse(await readFile(absoluteConfigPath, 'utf8'));
+  const browser = validateConfig(raw);
+  const profile = validateProfile(browser.profile ?? { type: 'fresh' });
+  const baseDirectory = dirname(absoluteConfigPath);
+  return buildAcceptanceConfig(raw, browser, profile, baseDirectory, stateOverride);
+}
+
+function validateConfig(raw) {
   assertRecord(raw, 'config');
   rejectUnknownKeys(raw, ROOT_KEYS, 'config');
   requireString(raw.serverUrl, 'serverUrl');
   new URL(raw.serverUrl);
-
   const browser = raw.browser ?? {};
   assertRecord(browser, 'browser');
   rejectUnknownKeys(browser, BROWSER_KEYS, 'browser');
   if (browser.channel !== undefined) requireString(browser.channel, 'browser.channel');
-  if (browser.headless !== undefined && typeof browser.headless !== 'boolean') {
-    throw new Error('browser.headless must be a boolean.');
-  }
-  if (browser.args !== undefined && (!Array.isArray(browser.args) || browser.args.some((value) => typeof value !== 'string'))) {
-    throw new Error('browser.args must be a string array.');
-  }
+  validateBrowserOptions(browser);
+  validateRootOptions(raw);
+  return browser;
+}
 
-  const profile = browser.profile ?? { type: 'fresh' };
+function validateBrowserOptions(browser) {
+  if (browser.headless !== undefined && typeof browser.headless !== 'boolean') throw new Error('browser.headless must be a boolean.');
+  const invalidArgs = browser.args !== undefined
+    && (!Array.isArray(browser.args) || browser.args.some((value) => typeof value !== 'string'));
+  if (invalidArgs) throw new Error('browser.args must be a string array.');
+}
+
+function validateProfile(profile) {
   assertRecord(profile, 'browser.profile');
   rejectUnknownKeys(profile, PROFILE_KEYS, 'browser.profile');
   if (profile.type !== 'fresh' && profile.type !== 'copy') {
@@ -34,14 +45,18 @@ export async function loadAcceptanceConfig(configPath, stateOverride) {
     requireString(profile.sourceUserDataRoot, 'browser.profile.sourceUserDataRoot');
     requireString(profile.sourceProfile, 'browser.profile.sourceProfile');
   }
+  return profile;
+}
 
+function validateRootOptions(raw) {
   if (raw.clientName !== undefined) requireString(raw.clientName, 'clientName');
   if (raw.statePath !== undefined) requireString(raw.statePath, 'statePath');
   if (raw.reconnectDelayMs !== undefined && (!Number.isInteger(raw.reconnectDelayMs) || raw.reconnectDelayMs < 250)) {
     throw new Error('reconnectDelayMs must be an integer of at least 250.');
   }
+}
 
-  const baseDirectory = dirname(absoluteConfigPath);
+function buildAcceptanceConfig(raw, browser, profile, baseDirectory, stateOverride) {
   const statePath = resolveFrom(baseDirectory, stateOverride ?? raw.statePath ?? '.state/browser-client.json');
   return {
     serverUrl: new URL(raw.serverUrl).toString(),
@@ -53,13 +68,17 @@ export async function loadAcceptanceConfig(configPath, stateOverride) {
       headless: browser.headless ?? false,
       args: [...(browser.args ?? [])],
       profile: profile.type === 'copy'
-        ? {
-            type: 'copy',
-            sourceUserDataRoot: resolveFrom(baseDirectory, profile.sourceUserDataRoot),
-            sourceProfile: profile.sourceProfile,
-          }
+        ? copyProfileConfig(profile, baseDirectory)
         : { type: 'fresh' },
     },
+  };
+}
+
+function copyProfileConfig(profile, baseDirectory) {
+  return {
+    type: 'copy',
+    sourceUserDataRoot: resolveFrom(baseDirectory, profile.sourceUserDataRoot),
+    sourceProfile: profile.sourceProfile,
   };
 }
 

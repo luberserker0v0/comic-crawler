@@ -28,40 +28,41 @@ main().catch((error) => {
 
 async function main() {
   await resolveDevPorts();
-  console.log('[dev] Preparing ComicCrawler development environment...');
-  console.log(`[dev] Backend target:  ${backendStatusUrl}`);
-  console.log(`[dev] Frontend URL:    ${frontendUrl}`);
-
-  await runOnce('shared:build', ['run', 'build:shared']);
-  await runOnce('browser-client-sdk:build', ['run', 'build:browser-client-sdk']);
-
-  const shared = spawnLabeled('shared', ['run', 'dev:shared']);
-  const browserClientSdk = spawnLabeled('browser-client-sdk', ['run', 'dev:browser-client-sdk']);
-  const backend = spawnLabeled('backend', ['run', 'dev:backend']);
-
-  await waitForServiceOrExit('backend', backend, backendStatusUrl, readyTimeoutMs);
-
-  const frontend = spawnLabeled('frontend', ['run', 'dev:frontend'], handleFrontendLine);
-  await waitForServiceOrExit('frontend', frontend, () => frontendUrl, readyTimeoutMs);
-
+  logDevelopmentTargets();
+  const services = await startDevelopmentServices();
   if (process.env.COMICCRAWLER_DEV_EXIT_AFTER_READY === '1') {
     console.log('[dev] Exit-after-ready requested; stopping dev environment.');
     await shutdown(0);
     return;
   }
+  await handleFirstServiceExit(services);
+}
 
-  const exitResult = await Promise.race([
-    childExit(shared),
-    childExit(browserClientSdk),
-    childExit(backend),
-    childExit(frontend),
-  ]);
+function logDevelopmentTargets() {
+  console.log('[dev] Preparing ComicCrawler development environment...');
+  console.log(`[dev] Backend target:  ${backendStatusUrl}`);
+  console.log(`[dev] Frontend URL:    ${frontendUrl}`);
+}
 
-  if (!shuttingDown) {
-    const code = exitResult.code ?? 1;
-    console.error(`[dev] ${exitResult.label} exited${exitResult.signal ? ` with signal ${exitResult.signal}` : ` with code ${code}`}. Stopping dev environment.`);
-    await shutdown(code);
-  }
+async function startDevelopmentServices() {
+  await runOnce('shared:build', ['run', 'build:shared']);
+  await runOnce('browser-client-sdk:build', ['run', 'build:browser-client-sdk']);
+  const shared = spawnLabeled('shared', ['run', 'dev:shared']);
+  const browserClientSdk = spawnLabeled('browser-client-sdk', ['run', 'dev:browser-client-sdk']);
+  const backend = spawnLabeled('backend', ['run', 'dev:backend']);
+  await waitForServiceOrExit('backend', backend, backendStatusUrl, readyTimeoutMs);
+  const frontend = spawnLabeled('frontend', ['run', 'dev:frontend'], handleFrontendLine);
+  await waitForServiceOrExit('frontend', frontend, () => frontendUrl, readyTimeoutMs);
+  return [shared, browserClientSdk, backend, frontend];
+}
+
+async function handleFirstServiceExit(services) {
+  const exitResult = await Promise.race(services.map(childExit));
+  if (shuttingDown) return;
+  const code = exitResult.code ?? 1;
+  const detail = exitResult.signal ? ` with signal ${exitResult.signal}` : ` with code ${code}`;
+  console.error(`[dev] ${exitResult.label} exited${detail}. Stopping dev environment.`);
+  await shutdown(code);
 }
 
 async function runOnce(label, args) {
@@ -172,20 +173,29 @@ async function waitUntilReady(label, url, timeoutMs) {
   const getUrl = typeof url === 'function' ? url : () => url;
   while (Date.now() < deadline) {
     const currentUrl = getUrl();
-    try {
-      const statusCode = await httpStatus(currentUrl);
-      if (statusCode >= 200 && statusCode < 500) {
-        console.log(`[dev] ${label} ready: ${currentUrl} (${statusCode})`);
-        return;
-      }
-      lastError = `HTTP ${statusCode}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
+    const probe = await probeService(currentUrl);
+    if (probe.ready) return logServiceReady(label, currentUrl, probe.statusCode);
+    lastError = probe.error;
     await delay(probeIntervalMs);
   }
+  reportServiceTimeout(label, getUrl(), timeoutMs, lastError);
+}
 
-  console.error(`[dev] ${label} not ready after ${Math.round(timeoutMs / 1000)}s: ${getUrl()}`);
+async function probeService(url) {
+  try {
+    const statusCode = await httpStatus(url);
+    return { ready: statusCode >= 200 && statusCode < 500, statusCode, error: `HTTP ${statusCode}` };
+  } catch (error) {
+    return { ready: false, statusCode: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function logServiceReady(label, url, statusCode) {
+  console.log(`[dev] ${label} ready: ${url} (${statusCode})`);
+}
+
+function reportServiceTimeout(label, url, timeoutMs, lastError) {
+  console.error(`[dev] ${label} not ready after ${Math.round(timeoutMs / 1000)}s: ${url}`);
   console.error(`[dev] Last ${label} probe error: ${lastError || 'unknown error'}`);
   if (label === 'backend') {
     console.error('[dev] Frontend was not started because the backend is not listening. Inspect the [backend] lines above.');
@@ -209,8 +219,10 @@ function handleFrontendLine(line) {
 }
 
 function stripAnsi(value) {
-  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+  return value.replace(ansiPattern, '');
 }
+
+const ansiPattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 'g');
 
 function httpStatus(url) {
   return new Promise((resolve, reject) => {
@@ -310,6 +322,15 @@ async function stopChildTree(child, graceMs) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
   const label = getChildLabel(child);
   const exited = waitForChildExit(child, graceMs);
+  await terminateChild(child, graceMs);
+  const didExit = await exited;
+  await forceKillChild(child, didExit);
+  if (child.exitCode === null && child.signalCode === null) {
+    console.error(`[dev] Warning: ${label} did not exit within ${graceMs}ms.`);
+  }
+}
+
+async function terminateChild(child, graceMs) {
   if (isWindows) {
     const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
       stdio: 'ignore',
@@ -319,17 +340,15 @@ async function stopChildTree(child, graceMs) {
       once(killer, 'exit').catch(() => undefined),
       delay(Math.min(graceMs, 1000)),
     ]);
-  } else {
-    killProcessGroup(child, 'SIGTERM');
+    return;
   }
+  killProcessGroup(child, 'SIGTERM');
+}
 
-  const didExit = await exited;
+async function forceKillChild(child, didExit) {
   if (!didExit && !isWindows && child.exitCode === null && child.signalCode === null) {
     killProcessGroup(child, 'SIGKILL');
     await waitForChildExit(child, 1000);
-  }
-  if (child.exitCode === null && child.signalCode === null) {
-    console.error(`[dev] Warning: ${label} did not exit within ${graceMs}ms.`);
   }
 }
 

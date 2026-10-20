@@ -55,15 +55,7 @@ test('real npm run dev reaches ready and releases ports on test shutdown', async
   const frontendPort = await getFreePort();
   const dataPath = await createTestDataPath(context);
 
-  const child = spawnRealNpmDev({
-    COMICCRAWLER_PORT: String(backendPort),
-    COMICCRAWLER_FRONTEND_PORT: String(frontendPort),
-    COMICCRAWLER_DATA_PATH: dataPath,
-    COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
-    COMICCRAWLER_DEV_READY_TIMEOUT_MS: '30000',
-    COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
-    COMICCRAWLER_DEV_SHUTDOWN_GRACE_MS: '5000',
-  });
+  const child = spawnRealNpmDev(realDevEnv(backendPort, dataPath, frontendPort));
 
   const exit = await waitForExit(child);
   assert.equal(exit.code, 0, exit.output);
@@ -82,14 +74,7 @@ test('real npm run dev falls back when the default frontend port is unavailable'
   const dataPath = await createTestDataPath(context);
 
   try {
-    const child = spawnRealNpmDev({
-      COMICCRAWLER_PORT: String(backendPort),
-      COMICCRAWLER_DATA_PATH: dataPath,
-      COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
-      COMICCRAWLER_DEV_READY_TIMEOUT_MS: '30000',
-      COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
-      COMICCRAWLER_DEV_SHUTDOWN_GRACE_MS: '5000',
-    });
+    const child = spawnRealNpmDev(realDevEnv(backendPort, dataPath));
 
     const exit = await waitForExit(child);
     assert.equal(exit.code, 0, exit.output);
@@ -108,14 +93,7 @@ test('npm run dev fails fast when an explicitly configured frontend port is unav
   const dataPath = await createTestDataPath(context);
 
   try {
-    const child = spawnRealNpmDev({
-      COMICCRAWLER_PORT: String(backendPort),
-      COMICCRAWLER_FRONTEND_PORT: String(blockedFrontendPort),
-      COMICCRAWLER_DATA_PATH: dataPath,
-      COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
-      COMICCRAWLER_DEV_READY_TIMEOUT_MS: '5000',
-      COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
-    });
+    const child = spawnRealNpmDev(realDevEnv(backendPort, dataPath, blockedFrontendPort, '5000'));
 
     const exit = await waitForExit(child);
     assert.notEqual(exit.code, 0);
@@ -146,28 +124,32 @@ function spawnDev(extraEnv) {
 }
 
 function spawnRealNpmDev(extraEnv) {
+  const options = realDevSpawnOptions(extraEnv);
   if (process.platform === 'win32') {
-    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'npm', 'run', 'dev'], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        ...extraEnv,
-        FORCE_COLOR: '0',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
+    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'npm', 'run', 'dev'], options);
   }
+  return spawn('npm', ['run', 'dev'], options);
+}
 
-  return spawn('npm', ['run', 'dev'], {
+function realDevSpawnOptions(extraEnv) {
+  return {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      ...extraEnv,
-      FORCE_COLOR: '0',
-    },
+    env: { ...process.env, ...extraEnv, FORCE_COLOR: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+    windowsHide: true,
+  };
+}
+
+function realDevEnv(backendPort, dataPath, frontendPort, timeout = '30000') {
+  return {
+    COMICCRAWLER_PORT: String(backendPort),
+    ...(frontendPort === undefined ? {} : { COMICCRAWLER_FRONTEND_PORT: String(frontendPort) }),
+    COMICCRAWLER_DATA_PATH: dataPath,
+    COMICCRAWLER_DEV_EXIT_AFTER_READY: '1',
+    COMICCRAWLER_DEV_READY_TIMEOUT_MS: timeout,
+    COMICCRAWLER_DEV_PROBE_INTERVAL_MS: '100',
+    COMICCRAWLER_DEV_SHUTDOWN_GRACE_MS: '5000',
+  };
 }
 
 async function waitForExit(child) {

@@ -49,15 +49,17 @@
     "verify:local": "npm run verify:quick && npm run -w backend test:e2e -- --project=chromium",
     "verify:utf8": "node ./scripts/verify-utf8.mjs",
     "acceptance:browser-client": "npm run build:browser-client-sdk && node ./tools/browser-client-acceptance/cli.mjs",
-    "lint": "npm run lint --workspaces",
+    "lint": "npm run lint:root && npm run lint --workspaces",
+    "lint:root": "eslint \"*.{js,mjs,cjs,ts}\" \"scripts/**/*.mjs\" \"tools/**/*.{js,mjs,cjs,ts,tsx}\"",
     "typecheck": "npm run build:shared && npm run build:browser-client-sdk && npm run typecheck --workspaces"
   },
   "devDependencies": {
     "concurrently": "^8.0.0",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "playwright": "^1.60.0",
-    "ws": "^8.21.0",
-    "typescript-eslint": "^8.62.0"
+    "typescript-eslint": "^8.62.0",
+    "ws": "^8.21.0"
   }
 }

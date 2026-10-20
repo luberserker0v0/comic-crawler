@@ -12,25 +12,21 @@ export class BrowserClientError extends Error {
 }
 
 export function toBrowserCommandError(error: unknown): BrowserCommandError {
-  if (error instanceof BrowserClientError) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-    };
-  }
-  if (isAbortError(error)) {
-    return {
-      code: 'CANCELLED',
-      message: 'Browser operation was cancelled.',
-      retryable: false,
-    };
-  }
+  if (error instanceof BrowserClientError) return clientCommandError(error);
+  if (isAbortError(error)) return cancelledCommandError();
   return {
     code: 'INTERNAL_ERROR',
     message: error instanceof Error ? error.message : String(error),
     retryable: false,
   };
+}
+
+function clientCommandError(error: BrowserClientError): BrowserCommandError {
+  return { code: error.code, message: error.message, retryable: error.retryable };
+}
+
+function cancelledCommandError(): BrowserCommandError {
+  return { code: 'CANCELLED', message: 'Browser operation was cancelled.', retryable: false };
 }
 
 function isAbortError(error: unknown): boolean {

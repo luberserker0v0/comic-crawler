@@ -1,5 +1,5 @@
 import type { BrowserRenderContext } from './contracts';
-import { scrollThroughDocument } from './content-preparation';
+import { prepareScrollableContent } from './content-preparation';
 import type { BrowserPageDriver, ManagedProfile, ManagedProfileLauncher } from './executors';
 import { BrowserClientError } from './errors';
 
@@ -140,7 +140,11 @@ export class PlaywrightPageDriver<Page extends PlaywrightPageLike> implements Br
     if (strategy !== 'scroll-through') {
       throw new BrowserClientError(`Unsupported content preparation strategy "${strategy}".`, 'UNSUPPORTED_COMMAND');
     }
-    await raceAbort(page.evaluate(scrollThroughDocument, normalizePreparationTimeout(timeoutMs)), signal);
+    const operation = prepareScrollableContent(
+      (script, argument) => page.evaluate(script, argument),
+      normalizePreparationTimeout(timeoutMs)
+    );
+    await raceAbort(operation, signal);
   }
 
   async focus(page: Page, signal: AbortSignal): Promise<void> {
@@ -160,32 +164,45 @@ implements ManagedProfileLauncher<Page> {
     const prepared = await this.provisioner.prepare(input.signal);
     let context: PlaywrightBrowserContextLike<Page> | undefined;
     try {
-      context = await raceAbort(this.chromium.launchPersistentContext(prepared.userDataDir, {
-        channel: this.options.channel ?? 'chrome',
-        headless: this.options.headless ?? false,
-        args: mergeArguments(this.options.args),
-        ...toPlaywrightContext(input.renderContext),
-      }), input.signal);
+      context = await this.launchContext(prepared.userDataDir, input);
       const page = context.pages()[0] ?? await context.newPage();
-      let closed = false;
-      return {
-        page,
-        close: async () => {
-          if (closed) return;
-          closed = true;
-          try {
-            await context!.close();
-          } finally {
-            await prepared.release();
-          }
-        },
-      };
+      return managedProfile(page, context, prepared);
     } catch (error) {
       await context?.close().catch(() => undefined);
       await prepared.release().catch(() => undefined);
       throw error;
     }
   }
+
+  private launchContext(
+    userDataDir: string,
+    input: { renderContext?: BrowserRenderContext; signal: AbortSignal }
+  ): Promise<PlaywrightBrowserContextLike<Page>> {
+    const operation = this.chromium.launchPersistentContext(userDataDir, {
+      channel: this.options.channel ?? 'chrome',
+      headless: this.options.headless ?? false,
+      args: mergeArguments(this.options.args),
+      ...toPlaywrightContext(input.renderContext),
+    });
+    return raceAbort(operation, input.signal);
+  }
+}
+
+function managedProfile<Page extends PlaywrightPageLike>(
+  page: Page,
+  context: PlaywrightBrowserContextLike<Page>,
+  prepared: PreparedProfile
+): ManagedProfile<Page> {
+  let closed = false;
+  return { page, close: async () => {
+    if (closed) return;
+    closed = true;
+    try {
+      await context.close();
+    } finally {
+      await prepared.release();
+    }
+  } };
 }
 
 function disposableProfile(userDataDir: string, directories: ProfileDirectoryAccess): PreparedProfile {

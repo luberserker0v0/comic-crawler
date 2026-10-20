@@ -17,40 +17,30 @@ class FakePage implements PlaywrightPageLike {
   async goto(url: string): Promise<void> { this.current = url; }
   async content(): Promise<string> { return '<main>chapter</main>'; }
   async waitForLoadState(): Promise<void> {}
-  async evaluate<R, A>(_pageFunction: (argument: A) => R | Promise<R>, _argument: A): Promise<R> {
+  async evaluate<R, A>(pageFunction: (argument: A) => R | Promise<R>, _argument: A): Promise<R> {
+    if (pageFunction.name === 'initializeScrollPreparation') return 0 as R;
+    if (pageFunction.name === 'scrollPreparationBottomStep') return true as R;
     return undefined as R;
   }
   async bringToFront(): Promise<void> { this.focused = true; }
 }
 
-test('Playwright launcher uses a fresh persistent context and deletes it on close', async () => {
-  const removed: string[] = [];
-  const directories: ProfileDirectoryAccess = {
-    async createTemporaryDirectory(prefix) { return `C:/tmp/${prefix}123`; },
-    async removeDirectory(path) { removed.push(path); },
-  };
-  const page = new FakePage();
-  let contextClosed = false;
-  let launch: { userDataDir: string; options: Record<string, unknown> } | undefined;
-  const launcher = new PlaywrightManagedProfileLauncher(
-    {
-      async launchPersistentContext(userDataDir, options) {
-        launch = { userDataDir, options };
-        return {
-          pages: () => [page],
-          async newPage() { return page; },
-          async close() { contextClosed = true; },
-        };
-      },
-    },
-    new FreshProfileProvisioner(directories)
-  );
+test('Playwright launcher uses a fresh persistent context and deletes it on close', testFreshLauncher);
 
-  const profile = await launcher.open({
+async function testFreshLauncher(): Promise<void> {
+  const fixture = createLauncherFixture();
+  const profile = await fixture.launcher.open({
     renderContext: { viewport: { width: 390, height: 844 }, isMobile: true },
     signal: new AbortController().signal,
   });
-  assert.equal(profile.page, page);
+  assert.equal(profile.page, fixture.page);
+  assertLaunch(fixture.state.launch);
+  await profile.close();
+  assert.equal(fixture.state.contextClosed, true);
+  assert.deepEqual(fixture.state.removed, ['C:/tmp/comiccrawler-profile-123']);
+}
+
+function assertLaunch(launch: LauncherState['launch']): void {
   assert.equal(launch?.userDataDir, 'C:/tmp/comiccrawler-profile-123');
   assert.deepEqual(launch?.options, {
     channel: 'chrome',
@@ -62,11 +52,38 @@ test('Playwright launcher uses a fresh persistent context and deletes it on clos
     hasTouch: undefined,
     userAgent: undefined,
   });
+}
 
-  await profile.close();
-  assert.equal(contextClosed, true);
-  assert.deepEqual(removed, ['C:/tmp/comiccrawler-profile-123']);
-});
+interface LauncherState {
+  removed: string[];
+  contextClosed: boolean;
+  launch?: { userDataDir: string; options: Record<string, unknown> };
+}
+
+function createLauncherFixture() {
+  const state: LauncherState = { removed: [], contextClosed: false };
+  const page = new FakePage();
+  const directories: ProfileDirectoryAccess = {
+    async createTemporaryDirectory(prefix) { return `C:/tmp/${prefix}123`; },
+    async removeDirectory(path) { state.removed.push(path); },
+  };
+  const launcher = new PlaywrightManagedProfileLauncher(
+    fakeChromium(page, state),
+    new FreshProfileProvisioner(directories)
+  );
+  return { state, page, launcher };
+}
+
+function fakeChromium(page: FakePage, state: LauncherState) {
+  return { async launchPersistentContext(userDataDir: string, options: Record<string, unknown>) {
+    state.launch = { userDataDir, options };
+    return {
+      pages: () => [page],
+      async newPage() { return page; },
+      async close() { state.contextClosed = true; },
+    };
+  } };
+}
 
 test('PlaywrightPageDriver maps semantic page commands', async () => {
   const page = new FakePage();
