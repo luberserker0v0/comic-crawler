@@ -87,78 +87,11 @@ export class SelectorDiscoveryBundleManager {
   async getStatus(): Promise<SelectorDiscoveryBundleStatus> {
     const root = await this.resolveBundleRoot();
     const activePath = join(root, 'active.json');
-    let active: SelectorDiscoveryActiveRelease | undefined;
-    try {
-      active = JSON.parse(await fs.readFile(activePath, 'utf-8')) as SelectorDiscoveryActiveRelease;
-    } catch {
-      const activeRoot = join(root, 'draft');
-      return {
-        mode: 'draft',
-        bundleRoot: root,
-        activePath,
-        activeRoot,
-        actualSha256: await hashDirectory(activeRoot).catch(() => undefined),
-        verified: false,
-        error: 'active.json is missing or unreadable; using draft bundle.',
-      };
-    }
-
-    if (!active.release) {
-      const activeRoot = join(root, 'draft');
-      return {
-        mode: 'draft',
-        bundleRoot: root,
-        activePath,
-        activeRelease: active,
-        activeRoot,
-        actualSha256: await hashDirectory(activeRoot).catch(() => undefined),
-        verified: false,
-      };
-    }
-
-    const activeRoot = join(root, 'releases', active.release);
-    if (!active.sha256) {
-      return {
-        mode: 'release',
-        bundleRoot: root,
-        activePath,
-        activeRelease: active,
-        activeRoot,
-        release: active.release,
-        verified: false,
-        error: `Active selector-discovery release "${active.release}" is missing sha256.`,
-      };
-    }
-
-    try {
-      const actualSha256 = await hashDirectory(activeRoot);
-      return {
-        mode: 'release',
-        bundleRoot: root,
-        activePath,
-        activeRelease: active,
-        activeRoot,
-        release: active.release,
-        expectedSha256: active.sha256,
-        actualSha256,
-        verified: actualSha256 === active.sha256,
-        error: actualSha256 === active.sha256
-          ? undefined
-          : `Active selector-discovery release "${active.release}" SHA-256 mismatch.`,
-      };
-    } catch (error) {
-      return {
-        mode: 'release',
-        bundleRoot: root,
-        activePath,
-        activeRelease: active,
-        activeRoot,
-        release: active.release,
-        expectedSha256: active.sha256,
-        verified: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    const active = await readActiveRelease(activePath);
+    if (!active) return draftStatus(root, activePath, undefined,
+      'active.json is missing or unreadable; using draft bundle.');
+    if (!active.release) return draftStatus(root, activePath, active);
+    return releaseStatus(root, activePath, active);
   }
 
   async freezeDraft(input: { version?: string; evalBundleHash?: string } = {}): Promise<SelectorDiscoveryFreezeResult> {
@@ -167,67 +100,22 @@ export class SelectorDiscoveryBundleManager {
     const releasesRoot = join(root, 'releases');
     await fs.mkdir(releasesRoot, { recursive: true });
     const release = input.version ?? await this.nextReleaseName(releasesRoot);
-    if (!/^v[0-9]+(?:[.-][A-Za-z0-9]+)*$/.test(release)) {
-      throw new Error('Release version must look like "v1", "v2", or "v1-rc1".');
-    }
-
+    validateReleaseName(release);
     const releaseRoot = join(releasesRoot, release);
-    try {
-      await fs.access(releaseRoot);
-      throw new Error(`Release "${release}" already exists.`);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('already exists')) throw error;
-    }
-
+    await ensureReleaseAbsent(releaseRoot, release);
     await fs.cp(sourceRoot, releaseRoot, { recursive: true, errorOnExist: true, force: false });
-    const sha256 = await hashDirectory(releaseRoot);
-    const activePath = join(root, 'active.json');
-    await fs.writeFile(activePath, `${JSON.stringify({
-      release,
-      sha256,
-      frozenAt: new Date().toISOString(),
-      source: 'draft',
-      evalBundleHash: input.evalBundleHash,
-      note: 'Frozen selector-discovery AO bundle. Runtime should load this active release.',
-    }, null, 2)}\n`, 'utf-8');
-
-    return {
-      release,
-      sourceRoot,
-      releaseRoot,
-      sha256,
-      activePath,
-      evalBundleHash: input.evalBundleHash,
-    };
+    return writeFrozenRelease(root, sourceRoot, releaseRoot, release, input.evalBundleHash);
   }
 
   private async resolveActiveReleaseRoot(): Promise<string> {
     const root = await this.resolveBundleRoot();
     const activePath = join(root, 'active.json');
-    let active: SelectorDiscoveryActiveRelease | undefined;
-    try {
-      active = JSON.parse(await fs.readFile(activePath, 'utf-8')) as SelectorDiscoveryActiveRelease;
-    } catch {
-      // Fall back to draft while the bundle is still being tuned and active.json is absent or unreadable.
-      return join(root, 'draft');
-    }
-
-    if (!active.release) {
-      return join(root, 'draft');
-    }
-
-    if (!active.sha256) {
-      throw new Error(`Active selector-discovery release "${active.release}" is missing sha256 in ${activePath}.`);
-    }
-
+    const active = await readActiveRelease(activePath);
+    if (!active?.release) return join(root, 'draft');
+    if (!active.sha256) throw new Error(
+      `Active selector-discovery release "${active.release}" is missing sha256 in ${activePath}.`);
     const releaseRoot = join(root, 'releases', active.release);
-    const actualSha256 = await hashDirectory(releaseRoot);
-    if (actualSha256 !== active.sha256) {
-      throw new Error(
-        `Active selector-discovery release "${active.release}" SHA-256 mismatch. Expected ${active.sha256}, got ${actualSha256}.`
-      );
-    }
-
+    await verifyReleaseHash(releaseRoot, active);
     return releaseRoot;
   }
 
@@ -289,6 +177,61 @@ export class SelectorDiscoveryBundleManager {
       content: await fs.readFile(join(dir, file), 'utf-8'),
     })));
   }
+}
+
+async function readActiveRelease(path: string): Promise<SelectorDiscoveryActiveRelease | undefined> {
+  try { return JSON.parse(await fs.readFile(path, 'utf-8')) as SelectorDiscoveryActiveRelease; }
+  catch { return undefined; }
+}
+
+async function draftStatus(root: string, activePath: string,
+  activeRelease?: SelectorDiscoveryActiveRelease, error?: string): Promise<SelectorDiscoveryBundleStatus> {
+  const activeRoot = join(root, 'draft');
+  return { mode: 'draft', bundleRoot: root, activePath, activeRelease, activeRoot,
+    actualSha256: await hashDirectory(activeRoot).catch(() => undefined), verified: false, error };
+}
+
+async function releaseStatus(root: string, activePath: string,
+  active: SelectorDiscoveryActiveRelease): Promise<SelectorDiscoveryBundleStatus> {
+  const activeRoot = join(root, 'releases', active.release!);
+  const base = { mode: 'release' as const, bundleRoot: root, activePath, activeRelease: active,
+    activeRoot, release: active.release ?? undefined, expectedSha256: active.sha256 };
+  if (!active.sha256) return { ...base, verified: false,
+    error: `Active selector-discovery release "${active.release}" is missing sha256.` };
+    try {
+    const actualSha256 = await hashDirectory(activeRoot);
+    const verified = actualSha256 === active.sha256;
+    return { ...base, actualSha256, verified, error: verified ? undefined
+      : `Active selector-discovery release "${active.release}" SHA-256 mismatch.` };
+    } catch (error) {
+    return { ...base, verified: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+function validateReleaseName(release: string): void {
+  if (!/^v[0-9]+(?:[.-][A-Za-z0-9]+)*$/.test(release))
+    throw new Error('Release version must look like "v1", "v2", or "v1-rc1".');
+}
+
+async function ensureReleaseAbsent(path: string, release: string): Promise<void> {
+  try { await fs.access(path); throw new Error(`Release "${release}" already exists.`); }
+  catch (error) { if (error instanceof Error && error.message.includes('already exists')) throw error; }
+}
+
+async function writeFrozenRelease(root: string, sourceRoot: string, releaseRoot: string,
+  release: string, evalBundleHash?: string): Promise<SelectorDiscoveryFreezeResult> {
+  const sha256 = await hashDirectory(releaseRoot);
+  const activePath = join(root, 'active.json');
+  const active = { release, sha256, frozenAt: new Date().toISOString(), source: 'draft', evalBundleHash,
+    note: 'Frozen selector-discovery AO bundle. Runtime should load this active release.' };
+  await fs.writeFile(activePath, `${JSON.stringify(active, null, 2)}\n`, 'utf-8');
+  return { release, sourceRoot, releaseRoot, sha256, activePath, evalBundleHash };
+}
+
+async function verifyReleaseHash(root: string, active: SelectorDiscoveryActiveRelease): Promise<void> {
+  const actual = await hashDirectory(root);
+  if (actual !== active.sha256) throw new Error(
+    `Active selector-discovery release "${active.release}" SHA-256 mismatch. Expected ${active.sha256}, got ${actual}.`);
 }
 
 function injectModel(content: string, model: string): string {
