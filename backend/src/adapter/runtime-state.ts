@@ -75,24 +75,23 @@ export async function registerProjectAdapters(
 ): Promise<void> {
   const deletedAdapterIds = await readDeletedAdapterIds(storage);
   if (adapters) {
-    for (const adapter of adapters) {
-      if (!deletedAdapterIds.has(adapter.id)) {
-        register(adapter);
-      }
-    }
+    registerAvailableAdapters(adapters, deletedAdapterIds, register);
     return;
   }
+  await loadAvailableProjectAdapters(deletedAdapterIds, register);
+}
 
+function registerAvailableAdapters(adapters: IComicAdapter[], deleted: Set<string>, register: (adapter: IComicAdapter) => void): void {
+  for (const adapter of adapters) if (!deleted.has(adapter.id)) register(adapter);
+}
+
+async function loadAvailableProjectAdapters(deleted: Set<string>, register: (adapter: IComicAdapter) => void): Promise<void> {
   for (const adapterId of Object.keys(PROJECT_ADAPTER_SOURCE)) {
-    if (deletedAdapterIds.has(adapterId) || !projectAdapterSourceExists(adapterId)) {
-      continue;
-    }
+    if (deleted.has(adapterId) || !projectAdapterSourceExists(adapterId)) continue;
     const loader = PROJECT_ADAPTER_LOADERS[adapterId];
     if (!loader) continue;
     const { adapter } = await loader();
-    if (!deletedAdapterIds.has(adapter.id)) {
-      register(adapter);
-    }
+    if (!deleted.has(adapter.id)) register(adapter);
   }
 }
 
@@ -134,52 +133,46 @@ export async function restoreDeletedAdapter(
   reason?: string;
 }> {
   const record = (await readDeletedAdapterRecords(storage)).find((item) => item.adapterId === adapterId);
-  if (!record) {
-    return { restored: false, reason: 'Deleted adapter record was not found.' };
-  }
+  if (!record) return { restored: false, reason: 'Deleted adapter record was not found.' };
+  if (record.activeManifest) return restoreManifest(storage, record, register);
+  if (record.activeImplementationRecord) return restoreImplementation(storage, record, register);
+  if (PROJECT_ADAPTER_SOURCE[adapterId]) return restoreProjectAdapter(storage, record, register);
+  return { restored: false, record, reason: 'No restorable runtime manifest, TypeScript implementation, or project source is available.' };
+}
 
-  if (record.activeManifest) {
-    const manifests = (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [
-      ...manifests.filter((item) => item.adapterId !== adapterId),
-      record.activeManifest,
-    ]);
-    register(new DynamicSiteAdapter(record.activeManifest));
-    await removeDeletedAdapterRecord(storage, adapterId);
-    return { restored: true, record };
-  }
+async function restoreManifest(storage: IStorage, record: DeletedAdapterRecord,
+  register: (adapter: IComicAdapter) => void) {
+  const manifests = (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+  await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [
+    ...manifests.filter((item) => item.adapterId !== record.adapterId), record.activeManifest!,
+  ]);
+  register(new DynamicSiteAdapter(record.activeManifest!));
+  await removeDeletedAdapterRecord(storage, record.adapterId);
+  return { restored: true, record };
+}
 
-  if (record.activeImplementationRecord) {
-    const implementationRecords = (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [
-      ...implementationRecords.filter((item) => item.adapterId !== adapterId),
-      record.activeImplementationRecord,
-    ]);
-    const { instantiateAdapterImplementationDraft } = await import('../selector-discovery/adapter-draft-runtime');
-    register(instantiateAdapterImplementationDraft(record.activeImplementationRecord.adapterImplementationTs));
-    await removeDeletedAdapterRecord(storage, adapterId);
-    return { restored: true, record };
-  }
+async function restoreImplementation(storage: IStorage, record: DeletedAdapterRecord,
+  register: (adapter: IComicAdapter) => void) {
+  const records = (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+  await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [
+    ...records.filter((item) => item.adapterId !== record.adapterId), record.activeImplementationRecord!,
+  ]);
+  const { instantiateAdapterImplementationDraft } = await import('../selector-discovery/adapter-draft-runtime');
+  register(instantiateAdapterImplementationDraft(record.activeImplementationRecord!.adapterImplementationTs));
+  await removeDeletedAdapterRecord(storage, record.adapterId);
+  return { restored: true, record };
+}
 
-  if (PROJECT_ADAPTER_SOURCE[adapterId]) {
-    if (!projectAdapterSourceExists(adapterId)) {
-      return {
-        restored: false,
-        record,
-        reason: 'Project TypeScript source is missing. Restore the source directory with git before restoring this adapter.',
-      };
-    }
-    await removeDeletedAdapterRecord(storage, adapterId);
-    const { adapter } = await loadProjectAdapterModule(adapterId, PROJECT_ADAPTER_CLASS_NAMES[adapterId] ?? '');
-    register(adapter);
-    return { restored: true, record };
-  }
-
-  return {
-    restored: false,
-    record,
-    reason: 'No restorable runtime manifest, TypeScript implementation, or project source is available.',
+async function restoreProjectAdapter(storage: IStorage, record: DeletedAdapterRecord,
+  register: (adapter: IComicAdapter) => void) {
+  if (!projectAdapterSourceExists(record.adapterId)) return {
+    restored: false, record,
+    reason: 'Project TypeScript source is missing. Restore the source directory with git before restoring this adapter.',
   };
+  await removeDeletedAdapterRecord(storage, record.adapterId);
+  const { adapter } = await loadProjectAdapterModule(record.adapterId, PROJECT_ADAPTER_CLASS_NAMES[record.adapterId] ?? '');
+  register(adapter);
+  return { restored: true, record };
 }
 
 function resolveProjectPathCandidates(relativePath: string): string[] {

@@ -5,6 +5,18 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { resolveRuntimeConfig } from '../../config/runtime';
 
+interface BundleEvaluation {
+  hash: string;
+  passed: boolean;
+  createdAt?: string;
+  model?: string;
+  aoBaseUrl?: string;
+  jobId?: string;
+  url?: string;
+  reasons: string[];
+  path: string;
+}
+
 export async function instantiateDiscoveryDraftAdapter(discoveryService: SelectorDiscoveryService, id: string) {
   const job = await discoveryService.get(id);
   if (!job) {
@@ -23,30 +35,19 @@ export function createImplementationOutline(source: string): AdapterImplementati
   const lines = source.split(/\r?\n/);
   const symbols: AdapterImplementationSymbol[] = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? '';
-    const classMatch = /\b(?:export\s+)?class\s+(\w+)\s+extends\s+(\w+)/.exec(line);
-    if (classMatch?.[1]) {
-      symbols.push({
-        id: classMatch[1],
-        label: classMatch[1],
-        kind: 'class',
-        startLine: index + 1,
-        capability: capabilityFromBaseClass(classMatch[2]),
-      });
-      continue;
-    }
-    const methodMatch = /^\s*(?:public\s+|protected\s+|private\s+)?(?:override\s+)?(?:async\s+)?(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/.exec(line);
-    if (methodMatch?.[1]) {
-      symbols.push({
-        id: methodMatch[1],
-        label: methodMatch[1],
-        kind: 'method',
-        startLine: index + 1,
-        capability: capabilityFromFunction(methodMatch[1]),
-      });
-    }
+    const symbol = implementationSymbol(lines[index] ?? '', index + 1);
+    if (symbol) symbols.push(symbol);
   }
   return symbols;
+}
+
+function implementationSymbol(line: string, startLine: number): AdapterImplementationSymbol | undefined {
+  const classMatch = /\b(?:export\s+)?class\s+(\w+)\s+extends\s+(\w+)/.exec(line);
+  if (classMatch?.[1]) return { id: classMatch[1], label: classMatch[1], kind: 'class', startLine,
+    capability: capabilityFromBaseClass(classMatch[2]) };
+  const method = /^\s*(?:public\s+|protected\s+|private\s+)?(?:override\s+)?(?:async\s+)?(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/.exec(line)?.[1];
+  return method ? { id: method, label: method, kind: 'method', startLine,
+    capability: capabilityFromFunction(method) } : undefined;
 }
 
 export function capabilityFromBaseClass(baseClass?: string): AdapterImplementationSymbol['capability'] {
@@ -64,47 +65,30 @@ export function capabilityFromFunction(functionId: string): AdapterImplementatio
   return 'metadata';
 }
 
-export async function listBundleEvaluations(): Promise<Array<{
-  hash: string;
-  passed: boolean;
-  createdAt?: string;
-  model?: string;
-  aoBaseUrl?: string;
-  jobId?: string;
-  url?: string;
-  reasons: string[];
-  path: string;
-}>> {
+export async function listBundleEvaluations(): Promise<BundleEvaluation[]> {
   const workspaceRoot = resolveRuntimeConfig().agentWorkspacePath;
   const evaluationsRoot = join(workspaceRoot, 'bundle-evaluations');
   const entries = await fs.readdir(evaluationsRoot, { withFileTypes: true }).catch(() => []);
   const evaluations = await Promise.all(entries
     .filter((entry) => entry.isDirectory() && /^[a-f0-9]{64}$/i.test(entry.name))
-    .map(async (entry) => {
-      const directory = join(evaluationsRoot, entry.name);
-      try {
-        const summary = JSON.parse(await fs.readFile(join(directory, 'summary.json'), 'utf-8')) as any;
-        return {
-          hash: entry.name,
-          passed: summary.passed === true,
-          createdAt: summary.createdAt,
-          model: summary.runtime?.model,
-          aoBaseUrl: summary.runtime?.aoBaseUrl,
-          jobId: summary.job?.id,
-          url: summary.job?.url,
-          caseCount: Array.isArray(summary.cases) ? new Set(summary.cases.map((item: any) => item.case?.id).filter(Boolean)).size : undefined,
-          runCount: Array.isArray(summary.cases) ? summary.cases.length : undefined,
-          policy: summary.policy,
-          reasons: Array.isArray(summary.reasons) ? summary.reasons : [],
-          path: directory,
-        };
-      } catch {
-        return null;
-      }
-    }));
+    .map((entry) => readBundleEvaluation(evaluationsRoot, entry.name)));
 
   return evaluations
     .filter((evaluation): evaluation is NonNullable<typeof evaluation> => Boolean(evaluation))
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
     .slice(0, 20);
+}
+
+async function readBundleEvaluation(root: string, hash: string) {
+  const path = join(root, hash);
+  try {
+    const summary = JSON.parse(await fs.readFile(join(path, 'summary.json'), 'utf-8')) as any;
+    const cases = Array.isArray(summary.cases) ? summary.cases : [];
+    return { hash, passed: summary.passed === true, createdAt: summary.createdAt,
+      model: summary.runtime?.model, aoBaseUrl: summary.runtime?.aoBaseUrl,
+      jobId: summary.job?.id, url: summary.job?.url,
+      caseCount: new Set(cases.map((item: any) => item.case?.id).filter(Boolean)).size,
+      runCount: cases.length, policy: summary.policy,
+      reasons: Array.isArray(summary.reasons) ? summary.reasons : [], path };
+  } catch { return null; }
 }

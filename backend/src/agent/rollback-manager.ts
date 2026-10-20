@@ -28,74 +28,25 @@ export class RollbackManager {
   async rollback(adapterId: string): Promise<RollbackResult> {
     const currentActive = await this.versionManager.getActiveVersion(adapterId);
     const previousVersion = await this.versionManager.getPreviousVersion(adapterId);
-    if (!previousVersion) {
-      return {
-        success: false,
-        error: 'No previous version available',
-      };
-    }
-
-    const success = await this.versionManager.rollbackToVersion(
-      adapterId,
-      previousVersion.version
-    );
-
-    if (!success) {
-      return {
-        success: false,
-        error: 'Failed to rollback',
-      };
-    }
-
-    await this.sessionManager.rollback(adapterId);
-    this.eventBus?.emit('adapter:repair:rolled-back', {
-      adapterId,
-      fromVersion: currentActive?.version,
-      toVersion: previousVersion.version,
-    });
-    await this.notifier?.notifyRollback({
-      adapterId,
-      fromVersion: currentActive?.version,
-      toVersion: previousVersion.version,
-      reason: 'Manual rollback to previous version',
-    });
-
-    return {
-      success: true,
-      previousVersion: previousVersion.version,
-      currentVersion: previousVersion.version,
-    };
+    if (!previousVersion) return { success: false, error: 'No previous version available' };
+    return this.performRollback(adapterId, previousVersion.version, currentActive?.version,
+      'Manual rollback to previous version', 'Failed to rollback');
   }
 
   async rollbackToVersion(adapterId: string, version: string): Promise<RollbackResult> {
     const currentActive = await this.versionManager.getActiveVersion(adapterId);
+    return this.performRollback(adapterId, version, currentActive?.version,
+      'Manual rollback to target version', `Version ${version} not found`);
+  }
+
+  private async performRollback(adapterId: string, version: string, fromVersion: string | undefined,
+    reason: string, failure: string): Promise<RollbackResult> {
     const success = await this.versionManager.rollbackToVersion(adapterId, version);
-
-    if (!success) {
-      return {
-        success: false,
-        error: `Version ${version} not found`,
-      };
-    }
-
+    if (!success) return { success: false, error: failure };
     await this.sessionManager.rollback(adapterId);
-    this.eventBus?.emit('adapter:repair:rolled-back', {
-      adapterId,
-      fromVersion: currentActive?.version,
-      toVersion: version,
-    });
-    await this.notifier?.notifyRollback({
-      adapterId,
-      fromVersion: currentActive?.version,
-      toVersion: version,
-      reason: 'Manual rollback to target version',
-    });
-
-    return {
-      success: true,
-      previousVersion: version,
-      currentVersion: version,
-    };
+    this.eventBus?.emit('adapter:repair:rolled-back', { adapterId, fromVersion, toVersion: version });
+    await this.notifier?.notifyRollback({ adapterId, fromVersion, toVersion: version, reason });
+    return { success: true, previousVersion: version, currentVersion: version };
   }
 
   async getStableVersion(adapterId: string): Promise<string | null> {

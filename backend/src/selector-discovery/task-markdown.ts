@@ -10,6 +10,73 @@ export interface ExistingAdapterCapabilityContext {
   imageSelectors?: SiteSelectors['images'];
   note?: string;
 }
+
+const PHASE1_INTRO = `# Selector Discovery Phase 1
+
+## Goal
+
+Analyze the comic metadata page and discover the site behavior needed to write TypeScript capability implementations.
+
+Important rules:
+
+- Output final Markdown analysis, not JSON, code, a plan, or a waiting note.
+- Analyze each field separately.
+- Exclude read/continue shortcuts from the catalog.
+- Flag collapsed or incomplete catalogs; do not invent missing chapters.`;
+
+const PHASE1_HEADINGS = `## Mandatory Phase 1 Output Headings
+
+Your output is invalid unless it uses these exact headings:
+
+## Site Decision
+## Title Extraction
+## Author Extraction
+## Description Extraction
+## Cover URL Extraction
+## Tags Extraction
+## Status Extraction
+## Chapter List Extraction
+## Representative Chapter URL
+## Evidence
+## Uncertainty
+
+Do not include "Adapter Identity", "Implementation Notes", TypeScript advice,
+or code in Phase 1.`;
+
+const PHASE2_INTRO = `# Selector Discovery Phase 2
+
+## Goal
+
+Use the Phase 1 result and the representative chapter page to produce human-reviewable TypeScript capability drafts plus Markdown review notes.
+
+Important rules:
+
+- Write requested TypeScript drafts and Markdown notes only; no JSON or
+  AdapterBase shell.
+- Confirm this is the representative reader URL.
+- Use the reusable chapter-image capability for direct and full crawling.
+- Prefer reader containers and lazy-load/CDN signals over broad image selectors.
+- Return every comic page URL present; exclude covers, logos, UI, ads, and
+  tracking pixels.
+- If the reader DOM is incomplete after upstream preparation, record the risk.`;
+
+const CHAPTER_ONLY_INTRO = `# Selector Discovery Chapter-Only Candidate
+
+## Goal
+
+Analyze a comic reader chapter page and produce chapter-only TypeScript capability drafts.
+
+This target implements only chapter image URL extraction:
+
+- Metadata extraction functions are not required.
+- Chapter list extraction is not required.
+- Chapter Image URL Extraction is required.
+- Write only requested TypeScript drafts and Markdown notes; no JSON or
+  AdapterBase shell.
+- Confirm this is the requested reader URL.
+- Use reader containers and lazy-load/CDN signals, not broad image selectors.
+- Return every comic page URL present; exclude non-comic images.
+- Report incomplete DOM evidence instead of inventing URLs.`;
 export function createCapabilityPipelineMarkdown(input: {
   target: 'full' | 'chapter-only';
   existingAdapter?: ExistingAdapterCapabilityContext;
@@ -37,58 +104,18 @@ export function createPhase1TaskMarkdown(input: {
   metadataFetch: SafeHtmlFetchResult;
   existingAdapter?: ExistingAdapterCapabilityContext;
 }): string {
-  return `# Selector Discovery Phase 1
+  const mode = input.existingAdapter ? 'augment' : 'create';
+  return [PHASE1_INTRO, `## Source URL\n\n${input.url}`, adapterImplementationContract(mode),
+    createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter }),
+    formatExistingAdapterCapability(input.existingAdapter), phase1FetchSummary(input.metadataFetch),
+    `## DOM Summary\n\n${summarizeHtmlForAgent(input.metadataFetch.html,
+      input.metadataFetch.finalUrl, 'metadata')}`, PHASE1_HEADINGS, ''].join('\n\n');
+}
 
-## Goal
-
-Analyze the comic metadata page and discover the site behavior needed to write TypeScript capability implementations.
-
-Important rules:
-
-- Output final Markdown analysis, not JSON, code, a plan, or a waiting note.
-- Analyze each field separately.
-- Exclude read/continue shortcuts from the catalog.
-- Flag collapsed or incomplete catalogs; do not invent missing chapters.
-
-## Source URL
-
-${input.url}
-
-${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
-
-${createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter })}
-
-${formatExistingAdapterCapability(input.existingAdapter)}
-
-## Safe Fetch Summary
-
-- Final URL: ${input.metadataFetch.finalUrl}
-- Content-Type: ${input.metadataFetch.contentType || 'unknown'}
-- Redirects: ${input.metadataFetch.redirectChain.length === 0 ? 'none' : input.metadataFetch.redirectChain.join(' -> ')}
-
-## DOM Summary
-
-${summarizeHtmlForAgent(input.metadataFetch.html, input.metadataFetch.finalUrl, 'metadata')}
-
-## Mandatory Phase 1 Output Headings
-
-Your output is invalid unless it uses these exact headings:
-
-## Site Decision
-## Title Extraction
-## Author Extraction
-## Description Extraction
-## Cover URL Extraction
-## Tags Extraction
-## Status Extraction
-## Chapter List Extraction
-## Representative Chapter URL
-## Evidence
-## Uncertainty
-
-Do not include "Adapter Identity", "Implementation Notes", TypeScript advice,
-or code in Phase 1.
-`;
+function phase1FetchSummary(fetch: SafeHtmlFetchResult): string {
+  const redirects = fetch.redirectChain.length ? fetch.redirectChain.join(' -> ') : 'none';
+  return `## Safe Fetch Summary\n\n- Final URL: ${fetch.finalUrl}\n` +
+    `- Content-Type: ${fetch.contentType || 'unknown'}\n- Redirects: ${redirects}`;
 }
 
 export function createPhase2TaskMarkdown(input: {
@@ -97,47 +124,18 @@ export function createPhase2TaskMarkdown(input: {
   chapterFetch: SafeHtmlFetchResult;
   existingAdapter?: ExistingAdapterCapabilityContext;
 }): string {
-  return `# Selector Discovery Phase 2
+  const mode = input.existingAdapter ? 'augment' : 'create';
+  return [PHASE2_INTRO, `## Source URL\n\n${input.url}`, adapterImplementationContract(mode),
+    createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter }),
+    formatExistingAdapterCapability(input.existingAdapter),
+    `## Phase 1 Result\n\n${input.phase1Markdown}`, phase2FetchSummary(input.chapterFetch),
+    `## Representative Chapter DOM Summary\n\n${summarizeHtmlForAgent(input.chapterFetch.html,
+      input.chapterFetch.finalUrl, 'chapter')}`, ''].join('\n\n');
+}
 
-## Goal
-
-Use the Phase 1 result and the representative chapter page to produce human-reviewable TypeScript capability drafts plus Markdown review notes.
-
-Important rules:
-
-- Write requested TypeScript drafts and Markdown notes only; no JSON or
-  AdapterBase shell.
-- Confirm this is the representative reader URL.
-- Use the reusable chapter-image capability for direct and full crawling.
-- Prefer reader containers and lazy-load/CDN signals over broad image selectors.
-- Return every comic page URL present; exclude covers, logos, UI, ads, and
-  tracking pixels.
-- If the reader DOM is incomplete after upstream preparation, record the risk.
-
-## Source URL
-
-${input.url}
-
-${adapterImplementationContract(input.existingAdapter ? 'augment' : 'create')}
-
-${createCapabilityPipelineMarkdown({ target: 'full', existingAdapter: input.existingAdapter })}
-
-${formatExistingAdapterCapability(input.existingAdapter)}
-
-## Phase 1 Result
-
-${input.phase1Markdown}
-
-## Representative Chapter Fetch Summary
-
-- Final URL: ${input.chapterFetch.finalUrl}
-- Content-Type: ${input.chapterFetch.contentType || 'unknown'}
-
-## Representative Chapter DOM Summary
-
-${summarizeHtmlForAgent(input.chapterFetch.html, input.chapterFetch.finalUrl, 'chapter')}
-
-`;
+function phase2FetchSummary(fetch: SafeHtmlFetchResult): string {
+  return `## Representative Chapter Fetch Summary\n\n- Final URL: ${fetch.finalUrl}\n` +
+    `- Content-Type: ${fetch.contentType || 'unknown'}`;
 }
 
 function formatExistingAdapterCapability(existing?: ExistingAdapterCapabilityContext): string {
@@ -164,47 +162,18 @@ export function createChapterOnlyTaskMarkdown(input: {
   url: string;
   chapterFetch: SafeHtmlFetchResult;
 }): string {
-  return `# Selector Discovery Chapter-Only Candidate
+  return [CHAPTER_ONLY_INTRO, `## Source URL\n\n${input.url}`,
+    adapterImplementationContract('create', 'chapter-only'),
+    createCapabilityPipelineMarkdown({ target: 'chapter-only' }),
+    '## Discovery Target\n\nchapter-only adapter', chapterFetchSummary(input.chapterFetch),
+    `## Chapter DOM Summary\n\n${summarizeHtmlForAgent(input.chapterFetch.html,
+      input.chapterFetch.finalUrl, 'chapter')}`, ''].join('\n\n');
+}
 
-## Goal
-
-Analyze a comic reader chapter page and produce chapter-only TypeScript capability drafts.
-
-This target implements only chapter image URL extraction:
-
-- Metadata extraction functions are not required.
-- Chapter list extraction is not required.
-- Chapter Image URL Extraction is required.
-- Write only requested TypeScript drafts and Markdown notes; no JSON or
-  AdapterBase shell.
-- Confirm this is the requested reader URL.
-- Use reader containers and lazy-load/CDN signals, not broad image selectors.
-- Return every comic page URL present; exclude non-comic images.
-- Report incomplete DOM evidence instead of inventing URLs.
-
-## Source URL
-
-${input.url}
-
-${adapterImplementationContract('create', 'chapter-only')}
-
-${createCapabilityPipelineMarkdown({ target: 'chapter-only' })}
-
-## Discovery Target
-
-chapter-only adapter
-
-## Chapter Fetch Summary
-
-- Final URL: ${input.chapterFetch.finalUrl}
-- Content-Type: ${input.chapterFetch.contentType || 'unknown'}
-- Redirects: ${input.chapterFetch.redirectChain.length === 0 ? 'none' : input.chapterFetch.redirectChain.join(' -> ')}
-
-## Chapter DOM Summary
-
-${summarizeHtmlForAgent(input.chapterFetch.html, input.chapterFetch.finalUrl, 'chapter')}
-
-`;
+function chapterFetchSummary(fetch: SafeHtmlFetchResult): string {
+  const redirects = fetch.redirectChain.length ? fetch.redirectChain.join(' -> ') : 'none';
+  return `## Chapter Fetch Summary\n\n- Final URL: ${fetch.finalUrl}\n` +
+    `- Content-Type: ${fetch.contentType || 'unknown'}\n- Redirects: ${redirects}`;
 }
 
 function adapterImplementationContract(mode: 'create' | 'augment', target: 'full' | 'chapter-only' = 'full'): string {

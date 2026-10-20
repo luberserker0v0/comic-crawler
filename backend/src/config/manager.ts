@@ -95,7 +95,11 @@ export class ConfigManager {
   }
 
   private getDefaultConfig(): GlobalConfig {
-    return {
+    return structuredClone(DEFAULT_GLOBAL_CONFIG);
+  }
+}
+
+const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
       download: {
         directory: './downloads',
         concurrency: 5,
@@ -137,9 +141,7 @@ export class ConfigManager {
         batchLimit: 100,
       },
       apiSecurity: { ...DEFAULTS.apiSecurity, rules: [] },
-    };
-  }
-}
+};
 
 function parseEnvBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined;
@@ -164,29 +166,19 @@ function applyMaintenanceEnvOverrides(config: GlobalConfig): GlobalConfig {
     deleteFiles: true,
     batchLimit: 100,
   };
+  return { ...config, maintenance: { ...base, ...maintenanceEnvOverrides() } };
+}
+
+function maintenanceEnvOverrides(): Partial<GlobalConfig['maintenance']> {
   const enabled = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_ENABLED);
   const intervalHours = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS);
   const tasksRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS);
-  const jobsRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS);
+  const discoveryJobsRetainDays = parseEnvNumber(process.env.COMICCRAWLER_MAINTENANCE_JOBS_RETAIN_DAYS);
   const deleteFiles = parseEnvBoolean(process.env.COMICCRAWLER_MAINTENANCE_DELETE_FILES);
-  if (
-    enabled === undefined &&
-    intervalHours === undefined &&
-    tasksRetainDays === undefined &&
-    jobsRetainDays === undefined &&
-    deleteFiles === undefined
-  ) {
-    return { ...config, maintenance: base };
-  }
   return {
-    ...config,
-    maintenance: {
-      ...base,
-      ...(enabled !== undefined ? { enabled } : {}),
-      ...(intervalHours !== undefined ? { intervalHours } : {}),
-      ...(tasksRetainDays !== undefined ? { tasksRetainDays } : {}),
-      ...(jobsRetainDays !== undefined ? { discoveryJobsRetainDays: jobsRetainDays } : {}),
-      ...(deleteFiles !== undefined ? { deleteFiles } : {}),
-    },
+    ...(enabled !== undefined ? { enabled } : {}), ...(intervalHours !== undefined ? { intervalHours } : {}),
+    ...(tasksRetainDays !== undefined ? { tasksRetainDays } : {}),
+    ...(discoveryJobsRetainDays !== undefined ? { discoveryJobsRetainDays } : {}),
+    ...(deleteFiles !== undefined ? { deleteFiles } : {}),
   };
 }

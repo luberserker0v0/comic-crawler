@@ -67,19 +67,12 @@ export class VersionManager {
     if (!versions) return false;
 
     const targetVersion = versions.versions.find((entry) => entry.version === version);
-    if (!targetVersion || targetVersion.status !== 'candidate') {
-      return false;
-    }
-
+    if (!targetVersion || targetVersion.status !== 'candidate') return false;
     const previousActive = versions.activeVersion
       ? versions.versions.find((entry) => entry.version === versions.activeVersion)
       : null;
 
-    if (previousActive && previousActive.version !== version) {
-      previousActive.status = 'rejected';
-      await this.writeVersionMetadata(adapterId, previousActive);
-    }
-
+    if (previousActive && previousActive.version !== version) await this.rejectActive(adapterId, previousActive);
     targetVersion.status = 'active';
     targetVersion.promotedAt = new Date();
     versions.activeVersion = targetVersion.version;
@@ -87,6 +80,11 @@ export class VersionManager {
     await this.writeVersionMetadata(adapterId, targetVersion);
     await this.save(adapterId, versions);
     return true;
+  }
+
+  private async rejectActive(adapterId: string, version: AgentVersion): Promise<void> {
+    version.status = 'rejected';
+    await this.writeVersionMetadata(adapterId, version);
   }
 
   async rejectVersion(adapterId: string, version: string): Promise<boolean> {
@@ -204,21 +202,11 @@ export class VersionManager {
       ? createHash('sha256').update(options.transformsContent).digest('hex')
       : undefined;
     const timestamp = new Date();
-    const version = `v${timestamp.getFullYear()}.${String(timestamp.getMonth() + 1).padStart(2, '0')}.${String(timestamp.getDate()).padStart(2, '0')}-${selectorsHash.slice(0, 8)}`;
-
     return {
-      version,
-      timestamp,
-      selectorsHash,
-      parserHash,
-      transformsHash,
-      testResults: options.testResults,
-      status: 'candidate',
-      adapterId: options.adapterId,
-      repairMode: options.repairMode,
-      sourceSessionId: options.sourceSessionId,
-      validation: options.validation,
-      basedOnVersion: options.basedOnVersion ?? null,
+      version: formatVersion(timestamp, selectorsHash), timestamp, selectorsHash, parserHash, transformsHash,
+      testResults: options.testResults, status: 'candidate', adapterId: options.adapterId,
+      repairMode: options.repairMode, sourceSessionId: options.sourceSessionId,
+      validation: options.validation, basedOnVersion: options.basedOnVersion ?? null,
     };
   }
 
@@ -254,4 +242,10 @@ export class VersionManager {
     return join(this.workspacePath, adapterId, 'index.json');
   }
 
+}
+
+function formatVersion(timestamp: Date, selectorsHash: string): string {
+  const month = String(timestamp.getMonth() + 1).padStart(2, '0');
+  const day = String(timestamp.getDate()).padStart(2, '0');
+  return `v${timestamp.getFullYear()}.${month}.${day}-${selectorsHash.slice(0, 8)}`;
 }

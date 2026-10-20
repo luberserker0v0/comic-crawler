@@ -28,26 +28,17 @@ export class JsonFileStore implements IStorage {
     // (direct writeFile truncates first), so a single attempt may observe
     // empty or half-written JSON. Transients heal within milliseconds; only
     // a persistently unreadable file falls through to null below.
-    let lastContent: string | undefined;
     for (let attempt = 0; attempt < 5; attempt++) {
-      let content: string;
       try {
-        content = await this.readFileWithRetry(filePath);
+        return JSON.parse(await this.readFileWithRetry(filePath)) as T;
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-        throw error;
-      }
-      try {
-        return JSON.parse(content) as T;
-      } catch {
-        lastContent = content;
+        if (!(error instanceof SyntaxError)) throw error;
+        if (attempt === 4) throw new SyntaxError(`JsonFileStore: invalid JSON for key "${key}"`);
         await new Promise((resolve) => setTimeout(resolve, 5 * (attempt + 1)));
       }
     }
-    throw new SyntaxError(
-      `JsonFileStore: invalid JSON for key "${key}" ` +
-        `(content head: ${JSON.stringify((lastContent ?? '').slice(0, 120))})`
-    );
+    throw new SyntaxError(`JsonFileStore: invalid JSON for key "${key}"`);
   }
 
   private async readFileWithRetry(filePath: string, attempts = 5): Promise<string> {
@@ -178,7 +169,6 @@ export class JsonFileStore implements IStorage {
 
   private async flushOnce(): Promise<void> {
     if (this.isFlushing || this.writeQueue.length === 0) return;
-
     this.isFlushing = true;
     // Drain in queue order, grouped by key: writes to the SAME key are
     // applied sequentially so rapid successive persists (e.g. task:started
@@ -186,29 +176,10 @@ export class JsonFileStore implements IStorage {
     // intermediate updates to a same-file race; DIFFERENT keys still flush
     // concurrently to preserve the original timing characteristics.
     const operations = this.writeQueue.splice(0, this.writeQueue.length);
-    const byKey = new Map<string, WriteOperation[]>();
-    for (const op of operations) {
-      const bucket = byKey.get(op.key);
-      if (bucket) bucket.push(op);
-      else byKey.set(op.key, [op]);
-    }
-
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-
+    const byKey = groupOperations(operations);
+    this.clearFlushTimer();
     try {
-      const writes = [...byKey.values()].map(async (bucket) => {
-        for (const op of bucket) {
-          const filePath = this.resolvePath(op.key);
-          const content = JSON.stringify(op.value, null, 2);
-          await this.atomicWriteFile(filePath, content);
-          op.resolve();
-        }
-      });
-
-      await Promise.all(writes);
+      await Promise.all([...byKey.values()].map((bucket) => this.flushBucket(bucket)));
     } catch (error) {
       // A failed flush rejects every write in the batch. Callers are often
       // fire-and-forget event handlers, so also log: silent loss here once
@@ -217,10 +188,20 @@ export class JsonFileStore implements IStorage {
       operations.forEach((op) => op.reject(error as Error));
     } finally {
       this.isFlushing = false;
+      if (this.writeQueue.length > 0) await this.flushOnce();
+    }
+  }
 
-      if (this.writeQueue.length > 0) {
-        await this.flushOnce();
-      }
+  private clearFlushTimer(): void {
+    if (!this.flushTimer) return;
+    clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  private async flushBucket(bucket: WriteOperation[]): Promise<void> {
+    for (const op of bucket) {
+      await this.atomicWriteFile(this.resolvePath(op.key), JSON.stringify(op.value, null, 2));
+      op.resolve();
     }
   }
 
@@ -256,4 +237,14 @@ export class JsonFileStore implements IStorage {
       await this.flush();
     }
   }
+}
+
+function groupOperations(operations: WriteOperation[]): Map<string, WriteOperation[]> {
+  const byKey = new Map<string, WriteOperation[]>();
+  for (const operation of operations) {
+    const bucket = byKey.get(operation.key);
+    if (bucket) bucket.push(operation);
+    else byKey.set(operation.key, [operation]);
+  }
+  return byKey;
 }

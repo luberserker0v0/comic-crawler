@@ -14,63 +14,39 @@ import type { AdapterFunctionId } from './adapter-function-types';
 export async function getAdapterImplementation(
   adapter: NonNullable<ReturnType<AdapterRegistry['get']>>
 ): Promise<AdapterImplementationResponse> {
-  if (adapter instanceof DynamicSiteAdapter) {
-    const manifest = adapter.getManifest();
-    const content = JSON.stringify({
-      genericImplementation: 'DynamicSiteAdapter',
-      adapterId: manifest.adapterId,
-      name: manifest.name,
-      domains: manifest.domains,
-      urlPatterns: manifest.urlPatterns,
-      parseMode: adapter.parseMode,
-      capabilities: adapter.capabilities,
-      selectors: manifest.selectors,
-    }, null, 2);
-    return {
-      adapterId: adapter.id,
-      sourceType: 'dynamic',
-      language: 'json',
-      content,
-      outline: createDynamicImplementationOutline(adapter),
-      notes: 'Dynamic adapters are reviewed as a full selector manifest plus the generic DynamicSiteAdapter runtime.',
-    };
-  }
-
+  if (adapter instanceof DynamicSiteAdapter) return dynamicImplementation(adapter);
   const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
-  if (!relativePath) {
-    return {
-      adapterId: adapter.id,
-      sourceType: 'summary',
-      language: 'markdown',
-      content: `# Adapter implementation\n\nFull source is not allowlisted for adapter "${adapter.id}".`,
-      outline: [],
-      notes: 'Only project adapter source files registered in the source map are exposed.',
-    };
-  }
-
+  if (!relativePath) return unavailableImplementation(adapter.id);
   const sourcePath = resolveAllowlistedSourcePath(relativePath);
-  if (!existsSync(sourcePath)) {
-    return {
-      adapterId: adapter.id,
-      sourceType: 'project-source',
-      language: 'markdown',
-      filePath: relativePath,
-      content: `# Adapter implementation\n\nAllowlisted source file was not found: ${relativePath}`,
-      outline: [],
-      notes: 'The application may be running from compiled output without source files.',
-    };
-  }
-
+  if (!existsSync(sourcePath)) return missingSourceImplementation(adapter.id, relativePath);
   const content = await readFile(sourcePath, 'utf-8');
-  return {
-    adapterId: adapter.id,
-    sourceType: 'project-source',
-    language: 'typescript',
-    filePath: relativePath,
-    content,
-    outline: createSourceOutline(content),
+  return { adapterId: adapter.id, sourceType: 'project-source', language: 'typescript',
+    filePath: relativePath, content, outline: createSourceOutline(content),
     notes: `Full adapter implementation from ${relativePath}. Function selection highlights a test target; the source is reviewed as one implementation artifact.`,
   };
+}
+
+function dynamicImplementation(adapter: DynamicSiteAdapter): AdapterImplementationResponse {
+  const manifest = adapter.getManifest();
+  const content = JSON.stringify({ genericImplementation: 'DynamicSiteAdapter',
+    adapterId: manifest.adapterId, name: manifest.name, domains: manifest.domains,
+    urlPatterns: manifest.urlPatterns, parseMode: adapter.parseMode,
+    capabilities: adapter.capabilities, selectors: manifest.selectors }, null, 2);
+  return { adapterId: adapter.id, sourceType: 'dynamic', language: 'json', content,
+    outline: createDynamicImplementationOutline(adapter),
+    notes: 'Dynamic adapters are reviewed as a full selector manifest plus the generic DynamicSiteAdapter runtime.' };
+}
+
+function unavailableImplementation(adapterId: string): AdapterImplementationResponse {
+  return { adapterId, sourceType: 'summary', language: 'markdown',
+    content: `# Adapter implementation\n\nFull source is not allowlisted for adapter "${adapterId}".`,
+    outline: [], notes: 'Only project adapter source files registered in the source map are exposed.' };
+}
+
+function missingSourceImplementation(adapterId: string, filePath: string): AdapterImplementationResponse {
+  return { adapterId, sourceType: 'project-source', language: 'markdown', filePath,
+    content: `# Adapter implementation\n\nAllowlisted source file was not found: ${filePath}`,
+    outline: [], notes: 'The application may be running from compiled output without source files.' };
 }
 export function createDynamicImplementationOutline(adapter: DynamicSiteAdapter): AdapterImplementationSymbol[] {
   const capabilities = adapter.capabilities;
@@ -82,14 +58,7 @@ export function createDynamicImplementationOutline(adapter: DynamicSiteAdapter):
     outline.push({ id: 'verification', label: 'verification capability', capability: 'verification', kind: 'manifest-section' });
   }
   if (capabilities.metadata) {
-    outline.push({ id: 'metadata', label: 'metadata selectors', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractTitle', label: 'extractTitle selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractAuthor', label: 'extractAuthor selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractDescription', label: 'extractDescription selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractCoverUrl', label: 'extractCoverUrl selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractTags', label: 'extractTags selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractStatus', label: 'extractStatus selector', capability: 'metadata', kind: 'manifest-section' });
-    outline.push({ id: 'extractChapterList', label: 'extractChapterList selectors', capability: 'metadata', kind: 'manifest-section' });
+    outline.push(...metadataOutline());
   }
   if (capabilities.chapterImages) {
     outline.push({ id: 'extractChapterImageUrls', label: 'extractChapterImageUrls selectors', capability: 'chapterImages', kind: 'manifest-section' });
@@ -97,45 +66,31 @@ export function createDynamicImplementationOutline(adapter: DynamicSiteAdapter):
   return outline;
 }
 
+function metadataOutline(): AdapterImplementationSymbol[] {
+  return ['metadata', 'extractTitle', 'extractAuthor', 'extractDescription', 'extractCoverUrl',
+    'extractTags', 'extractStatus', 'extractChapterList'].map((id) => ({ id,
+      label: id === 'metadata' ? 'metadata selectors' : `${id} selector${id === 'extractChapterList' ? 's' : ''}`,
+      capability: 'metadata', kind: 'manifest-section' }));
+}
+
 export function createSourceOutline(source: string): AdapterImplementationSymbol[] {
   const lines = source.split(/\r?\n/);
   const symbols: AdapterImplementationSymbol[] = [];
   for (const [index, line] of lines.entries()) {
-    const classMatch = line.match(/\bclass\s+([A-Za-z0-9_]+)/);
-    if (classMatch?.[1]) {
-      symbols.push({
-        id: `class:${classMatch[1]}`,
-        label: classMatch[1],
-        kind: 'class',
-        startLine: index + 1,
-      });
-    }
-
-    const methodMatch = line.match(/\b(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/);
-    if (methodMatch?.[1]) {
-      symbols.push({
-        id: methodMatch[1],
-        label: `${methodMatch[1]}()`,
-        capability: capabilityForFunction(methodMatch[1] as AdapterFunctionId),
-        kind: 'method',
-        startLine: index + 1,
-        endLine: findBlockEndLine(lines, index),
-      });
-      continue;
-    }
-
-    const helperMatch = line.match(/^function\s+([A-Za-z0-9_]+)\s*\(/);
-    if (helperMatch?.[1]) {
-      symbols.push({
-        id: `helper:${helperMatch[1]}`,
-        label: `${helperMatch[1]}()`,
-        kind: 'helper',
-        startLine: index + 1,
-        endLine: findBlockEndLine(lines, index),
-      });
-    }
+    symbols.push(...outlineSymbolsForLine(lines, index, line));
   }
   return symbols;
+}
+
+function outlineSymbolsForLine(lines: string[], index: number, line: string): AdapterImplementationSymbol[] {
+  const className = line.match(/\bclass\s+([A-Za-z0-9_]+)/)?.[1];
+  if (className) return [{ id: `class:${className}`, label: className, kind: 'class', startLine: index + 1 }];
+  const method = line.match(/\b(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/)?.[1];
+  if (method) return [{ id: method, label: `${method}()`, capability: capabilityForFunction(method as AdapterFunctionId),
+    kind: 'method', startLine: index + 1, endLine: findBlockEndLine(lines, index) }];
+  const helper = line.match(/^function\s+([A-Za-z0-9_]+)\s*\(/)?.[1];
+  return helper ? [{ id: `helper:${helper}`, label: `${helper}()`, kind: 'helper',
+    startLine: index + 1, endLine: findBlockEndLine(lines, index) }] : [];
 }
 
 export function capabilityForFunction(functionId: AdapterFunctionId): AdapterFunctionCapability {

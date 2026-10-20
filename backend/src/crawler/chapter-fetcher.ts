@@ -19,28 +19,13 @@ export class ChapterFetcher {
   async fetchChapters(adapter: AdapterBase, url: string, options?: ChapterFetcherOptions): Promise<Array<{ id: string; title: string; url: string }>> {
     const html = await adapter.fetchHtml(url);
     const $ = this.parser.parse(html);
-
     const chapters: Array<{ id: string; title: string; url: string }> = [];
-
     if (options?.selector) {
       const links = this.parser.extractLinks($, options.selector);
-      links.forEach((link, i) => {
-        let resolvedUrl = link.href;
-        if (options.baseUrl) {
-          try {
-            resolvedUrl = new URL(link.href, options.baseUrl).href;
-          } catch {
-            resolvedUrl = link.href;
-          }
-        }
-        chapters.push({
-          id: `ch-${i}`,
-          title: link.text,
-          url: resolvedUrl,
-        });
-      });
+      links.forEach((link, index) => chapters.push({
+        id: `ch-${index}`, title: link.text, url: resolveChapterUrl(link.href, options.baseUrl),
+      }));
     }
-
     return chapters;
   }
 
@@ -51,24 +36,23 @@ export class ChapterFetcher {
     const selector = options?.selector ?? 'img';
     const srcAttr = options?.srcAttr ?? 'src';
 
-    const images = $(selector)
-      .map((i, el) => {
-        const $el = $(el);
-        const src = $el.attr(srcAttr) || $el.attr('data-src') || $el.attr('data-original');
-        return src ? { url: src, index: i } : null;
-      })
+    const images = $(selector).map((i, el) => {
+      const node = $(el);
+      const src = node.attr(srcAttr) || node.attr('data-src') || node.attr('data-original');
+      return src ? { url: src, index: i } : null;
+    })
       .get()
       .filter(Boolean) as ImageInfo[];
 
-    if (images.length === 0) {
-      throw new ComicError(
-        `No images found in chapter: ${chapterUrl}`,
-        ErrorType.PARSING_ERROR,
-        false,
-        { chapterUrl }
-      );
-    }
-
+    if (images.length === 0) throw new ComicError(
+      `No images found in chapter: ${chapterUrl}`, ErrorType.PARSING_ERROR, false, { chapterUrl }
+    );
     return images;
   }
+}
+
+function resolveChapterUrl(href: string, baseUrl?: string): string {
+  if (!baseUrl) return href;
+  try { return new URL(href, baseUrl).href; }
+  catch { return href; }
 }

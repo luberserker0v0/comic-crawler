@@ -42,34 +42,14 @@ function containsTokenWithNumericBoundary(value: string, token: string): boolean
 function matchesChapter(chapter: ComicMetadata['chapters'][number], token: string): boolean {
   const normalized = normalizeToken(token);
   if (!normalized) return false;
-
-  const id = normalizeToken(chapter.id);
-  const title = normalizeToken(chapter.title);
-  const url = normalizeToken(chapter.url);
-
+  const values = [chapter.id, chapter.title, chapter.url].map(normalizeToken);
   if (/^\d+$/.test(normalized)) {
-    return containsNumberToken(id, normalized) || containsNumberToken(title, normalized) || containsNumberToken(url, normalized);
+    return values.some((value) => containsNumberToken(value, normalized));
   }
-
   if (/\d/.test(normalized)) {
-    return (
-      id === normalized ||
-      title === normalized ||
-      url === normalized ||
-      containsTokenWithNumericBoundary(id, normalized) ||
-      containsTokenWithNumericBoundary(title, normalized) ||
-      containsTokenWithNumericBoundary(url, normalized)
-    );
+    return values.some((value) => value === normalized || containsTokenWithNumericBoundary(value, normalized));
   }
-
-  return (
-    id === normalized ||
-    title === normalized ||
-    url === normalized ||
-    id.includes(normalized) ||
-    title.includes(normalized) ||
-    url.includes(normalized)
-  );
+  return values.some((value) => value === normalized || value.includes(normalized));
 }
 
 export function selectChapters(
@@ -77,37 +57,22 @@ export function selectChapters(
   selectors?: string[]
 ): ChapterSelectionResult {
   const requested = selectors?.map((selector) => selector.trim()).filter(Boolean) ?? [];
-  if (requested.length === 0) {
-    return { chapters, unmatched: [] };
-  }
-
+  if (requested.length === 0) return { chapters, unmatched: [] };
   const selected = new Map<string, ComicMetadata['chapters'][number]>();
   const unmatched: string[] = [];
-
   for (const token of requested) {
-    let matches = chapters.filter((chapter) => matchesChapter(chapter, token));
-
-    const explicitIndex = isOneBasedIndexToken(token) ? parseOneBasedIndex(token) : null;
-    if (matches.length === 0 && explicitIndex !== null) {
-      const chapter = chapters[explicitIndex - 1];
-      matches = chapter ? [chapter] : [];
-    }
-
-    const implicitIndex = parseOneBasedIndex(token);
-    if (matches.length === 0 && implicitIndex !== null) {
-      const chapter = chapters[implicitIndex - 1];
-      matches = chapter ? [chapter] : [];
-    }
-
-    if (matches.length === 0) {
-      unmatched.push(token);
-      continue;
-    }
-
-    for (const chapter of matches) {
-      selected.set(chapter.id, chapter);
-    }
+    const matches = findChapterMatches(chapters, token);
+    if (matches.length === 0) unmatched.push(token);
+    else for (const chapter of matches) selected.set(chapter.id, chapter);
   }
-
   return { chapters: Array.from(selected.values()), unmatched };
+}
+
+function findChapterMatches(chapters: ComicMetadata['chapters'], token: string): ComicMetadata['chapters'] {
+  const matches = chapters.filter((chapter) => matchesChapter(chapter, token));
+  if (matches.length > 0) return matches;
+  const explicit = isOneBasedIndexToken(token) ? parseOneBasedIndex(token) : null;
+  const index = explicit ?? parseOneBasedIndex(token);
+  const chapter = index === null ? undefined : chapters[index - 1];
+  return chapter ? [chapter] : [];
 }

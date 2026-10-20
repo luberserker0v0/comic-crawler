@@ -21,118 +21,106 @@ interface AdapterDraftRouteOptions {
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
 }
 
+interface DraftRouteContext {
+  service: AdapterDraftService;
+  options: AdapterDraftRouteOptions;
+}
+
 export function setupAdapterDraftRoutes(app: FastifyInstance, service: AdapterDraftService, options: AdapterDraftRouteOptions = {}): void {
-  app.get('/api/adapter-drafts', async (_request: FastifyRequest, reply: FastifyReply) => {
-    reply.send({ data: { drafts: await service.list() } });
-  });
+  const context = { service, options };
+  app.get('/api/adapter-drafts', (_request, reply) => listDrafts(reply, service));
+  app.post('/api/adapters/:id/drafts', (request, reply) => createDraft(request, reply, service));
+  app.get('/api/adapter-drafts/:draftId', (request, reply) => getDraft(request, reply, service));
+  app.put('/api/adapter-drafts/:draftId/content', (request, reply) => saveDraft(request, reply, service));
+  app.post('/api/adapter-drafts/:draftId/reset', (request, reply) => resetDraft(request, reply, service));
+  app.post('/api/adapter-drafts/:draftId/functions/:functionId/test',
+    (request, reply) => testDraftFunction(request, reply, context));
+  app.delete('/api/adapter-drafts/:draftId', (request, reply) => discardDraft(request, reply, service));
+}
 
-  app.post('/api/adapters/:id/drafts', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { id } = request.params as { id: string };
-      reply.send({ data: await service.create(id) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function listDrafts(reply: FastifyReply, service: AdapterDraftService): Promise<void> {
+  reply.send({ data: { drafts: await service.list() } });
+}
 
-  app.get('/api/adapter-drafts/:draftId', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { draftId } = request.params as { draftId: string };
-    const draft = await service.get(draftId);
-    if (!draft) {
-      reply.code(404).send({ error: 'Adapter draft not found' });
-      return;
-    }
-    reply.send({ data: draft });
-  });
+async function createDraft(request: FastifyRequest, reply: FastifyReply,
+  service: AdapterDraftService): Promise<void> {
+  try { reply.send({ data: await service.create(draftParam(request, 'id')) }); }
+  catch (error) { sendDraftError(reply, error, 400); }
+}
 
-  app.put('/api/adapter-drafts/:draftId/content', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { draftId } = request.params as { draftId: string };
-      const body = request.body as SaveAdapterDraftContentRequest;
-      if (typeof body.content !== 'string') {
-        reply.code(400).send({ error: 'content is required' });
-        return;
-      }
-      reply.send({ data: await service.save(draftId, body.content) });
-    } catch (error) {
-      reply.code(404).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function getDraft(request: FastifyRequest, reply: FastifyReply,
+  service: AdapterDraftService): Promise<void> {
+  const draft = await service.get(draftParam(request));
+  if (!draft) return void reply.code(404).send({ error: 'Adapter draft not found' });
+  reply.send({ data: draft });
+}
 
-  app.post('/api/adapter-drafts/:draftId/reset', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { draftId } = request.params as { draftId: string };
-      reply.send({ data: await service.reset(draftId) });
-    } catch (error) {
-      reply.code(404).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function saveDraft(request: FastifyRequest, reply: FastifyReply,
+  service: AdapterDraftService): Promise<void> {
+  try {
+    const body = request.body as SaveAdapterDraftContentRequest;
+    if (typeof body.content !== 'string') return void reply.code(400).send({ error: 'content is required' });
+    reply.send({ data: await service.save(draftParam(request), body.content) });
+  } catch (error) { sendDraftError(reply, error, 404); }
+}
 
-  app.post('/api/adapter-drafts/:draftId/functions/:functionId/test', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const { draftId, functionId } = request.params as { draftId: string; functionId: string };
-      if (!isKnownAdapterFunction(functionId)) {
-        reply.code(400).send({ error: 'Unknown adapter function.' });
-        return;
-      }
+async function resetDraft(request: FastifyRequest, reply: FastifyReply,
+  service: AdapterDraftService): Promise<void> {
+  try { reply.send({ data: await service.reset(draftParam(request)) }); }
+  catch (error) { sendDraftError(reply, error, 404); }
+}
 
-      const draft = await service.get(draftId);
-      if (!draft) {
-        reply.code(404).send({ error: 'Adapter draft not found' });
-        return;
-      }
-      const body = request.body as AdapterFunctionTestRequest;
-      if (!body.url) {
-        reply.code(400).send({ error: 'URL is required' });
-        return;
-      }
+async function discardDraft(request: FastifyRequest, reply: FastifyReply,
+  service: AdapterDraftService): Promise<void> {
+  await service.discard(draftParam(request));
+  reply.send({ data: { message: 'Adapter draft discarded.' } });
+}
 
-      const adapter = draft.draft.sourceKind === 'project-source'
-        ? instantiateProjectAdapterDraft(draft.content, service.getProjectSourcePath(draft.draft.baseAdapterId))
-        : draft.draft.sourceKind === 'generated-draft'
-          ? instantiateAdapterImplementationDraft(draft.content)
-          : new DynamicSiteAdapter(parseDynamicManifestDraft(draft.content));
-      const network = await options.getNetworkConfig?.();
-      if (options.htmlRenderer) {
-        const result = await testAdapterFunction(adapter, functionId, body.url, {
-          challengeDiscoveryId: body.challengeDiscoveryId,
-          challengeDiscoveryService: options.challengeDiscoveryService,
-          network,
-          htmlRenderer: options.htmlRenderer,
-        });
-        reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
-        return;
-      }
-      if (body.challengeDiscoveryId) {
-        const result = await testAdapterFunction(adapter, functionId, body.url, {
-          challengeDiscoveryId: body.challengeDiscoveryId,
-          challengeDiscoveryService: options.challengeDiscoveryService,
-          network,
-        });
-        reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
-        return;
-      }
-      if (!options.withBrowserSession || !options.browserRenderService) {
-        throw new Error('Browser Worker service is not configured.');
-      }
-      const result = await options.withBrowserSession(request, body.browserTarget, body.url, (sessionId) =>
-        testAdapterFunction(adapter, functionId, body.url, {
-          challengeDiscoveryId: body.challengeDiscoveryId,
-          challengeDiscoveryService: options.challengeDiscoveryService,
-          network,
-          htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
-        }));
-      reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function testDraftFunction(request: FastifyRequest, reply: FastifyReply,
+  context: DraftRouteContext): Promise<void> {
+  try {
+    const { draftId, functionId } = request.params as { draftId: string; functionId: string };
+    if (!isKnownAdapterFunction(functionId)) return void reply.code(400).send({ error: 'Unknown adapter function.' });
+    const draft = await context.service.get(draftId);
+    if (!draft) return void reply.code(404).send({ error: 'Adapter draft not found' });
+    const body = request.body as AdapterFunctionTestRequest;
+    if (!body.url) return void reply.code(400).send({ error: 'URL is required' });
+    const result = await executeDraftTest(request, functionId, body, draft, context);
+    reply.send({ data: withDraftSummary(result, draftId, draft.draft.baseAdapterId) });
+  } catch (error) { sendDraftError(reply, error, 400); }
+}
 
-  app.delete('/api/adapter-drafts/:draftId', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { draftId } = request.params as { draftId: string };
-    await service.discard(draftId);
-    reply.send({ data: { message: 'Adapter draft discarded.' } });
-  });
+async function executeDraftTest(request: FastifyRequest, functionId: any,
+  body: AdapterFunctionTestRequest, draft: Awaited<ReturnType<AdapterDraftService['get']>> & {},
+  context: DraftRouteContext) {
+  const adapter = instantiateDraft(draft, context.service);
+  const network = await context.options.getNetworkConfig?.();
+  const testOptions = { challengeDiscoveryId: body.challengeDiscoveryId,
+    challengeDiscoveryService: context.options.challengeDiscoveryService, network };
+  if (context.options.htmlRenderer) return testAdapterFunction(adapter, functionId, body.url,
+    { ...testOptions, htmlRenderer: context.options.htmlRenderer });
+  if (body.challengeDiscoveryId) return testAdapterFunction(adapter, functionId, body.url, testOptions);
+  const { withBrowserSession, browserRenderService } = context.options;
+  if (!withBrowserSession || !browserRenderService) throw new Error('Browser Worker service is not configured.');
+  return withBrowserSession(request, body.browserTarget, body.url, (sessionId) =>
+    testAdapterFunction(adapter, functionId, body.url,
+      { ...testOptions, htmlRenderer: createSessionRenderer(browserRenderService, sessionId) }));
+}
+
+function instantiateDraft(draft: NonNullable<Awaited<ReturnType<AdapterDraftService['get']>>>,
+  service: AdapterDraftService) {
+  if (draft.draft.sourceKind === 'project-source') return instantiateProjectAdapterDraft(
+    draft.content, service.getProjectSourcePath(draft.draft.baseAdapterId));
+  if (draft.draft.sourceKind === 'generated-draft') return instantiateAdapterImplementationDraft(draft.content);
+  return new DynamicSiteAdapter(parseDynamicManifestDraft(draft.content));
+}
+
+function draftParam(request: FastifyRequest, key: 'draftId' | 'id' = 'draftId'): string {
+  return (request.params as Record<string, string>)[key]!;
+}
+
+function sendDraftError(reply: FastifyReply, error: unknown, status: number): void {
+  reply.code(status).send({ error: error instanceof Error ? error.message : String(error) });
 }
 
 function withDraftSummary<T extends { resultSummary?: Record<string, unknown> }>(
@@ -155,25 +143,27 @@ function createSessionRenderer(renderService: BrowserRenderService, sessionId: s
 }
 
 function parseDynamicManifestDraft(content: string): DynamicSiteAdapterManifest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch (error) {
-    throw new Error(`Draft manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const parsed = parseManifestJson(content);
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Draft manifest must be a JSON object.');
   }
   const manifest = parsed as Partial<DynamicSiteAdapterManifest>;
+  validateManifestDraft(manifest);
+  return { sourceDiscoveryId: 'adapter-draft', promotedAt: new Date().toISOString(),
+    ...manifest } as DynamicSiteAdapterManifest;
+}
+
+function parseManifestJson(content: string): unknown {
+  try { return JSON.parse(content); }
+  catch (error) { throw new Error(
+    `Draft manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`); }
+}
+
+function validateManifestDraft(manifest: Partial<DynamicSiteAdapterManifest>): void {
   if (!manifest.adapterId || typeof manifest.adapterId !== 'string') throw new Error('Draft manifest requires adapterId.');
   if (!manifest.name || typeof manifest.name !== 'string') throw new Error('Draft manifest requires name.');
   if (!Array.isArray(manifest.domains) || manifest.domains.length === 0) throw new Error('Draft manifest requires domains.');
   if (!Array.isArray(manifest.urlPatterns) || manifest.urlPatterns.length === 0) throw new Error('Draft manifest requires urlPatterns.');
   if (!manifest.selectors || typeof manifest.selectors !== 'object') throw new Error('Draft manifest requires selectors.');
   if (!manifest.selectors.images) throw new Error('Draft manifest requires selectors.images for executable draft tests.');
-  return {
-    sourceDiscoveryId: 'adapter-draft',
-    promotedAt: new Date().toISOString(),
-    ...manifest,
-  } as DynamicSiteAdapterManifest;
 }
