@@ -21,10 +21,7 @@ export class ExtractionOrchestrator {
   }
 
   async execute(context: ExtractionContext, strategyName?: string): Promise<ExtractionResult> {
-    const strategy = strategyName
-      ? this.strategies.get(strategyName)
-      : this.defaultStrategy;
-
+    const strategy = this.resolveStrategy(strategyName);
     if (!strategy) {
       throw new ComicError(
         `No extraction strategy available${strategyName ? `: "${strategyName}"` : ''}`,
@@ -38,11 +35,11 @@ export class ExtractionOrchestrator {
       strategy.extractImages(context).catch(() => undefined),
     ]);
 
-    return {
-      metadata,
-      chapters,
-      images,
-    };
+    return { metadata, chapters, images };
+  }
+
+  private resolveStrategy(name?: string): IExtractionStrategy | undefined {
+    return name ? this.strategies.get(name) : this.defaultStrategy;
   }
 
   async validate(context: ExtractionContext, strategyName?: string): Promise<boolean> {

@@ -63,54 +63,26 @@ export class MaintenanceService {
     const startedAt = new Date();
     const policy = await this.resolvePolicy(overrides);
     const batchLimit = Math.max(1, policy.batchLimit);
+    const scopes = await this.cleanupScopes(policy, batchLimit, dryRun);
+    const finishedAt = new Date();
+    const result = createMaintenanceResult(dryRun, startedAt, finishedAt, scopes);
+    if (!dryRun) this.lastResult = result;
+    logMaintenanceResult(result);
+    return result;
+  }
 
+  private async cleanupScopes(policy: MaintenanceConfig, batchLimit: number, dryRun: boolean) {
     const tasks = await cleanupTasks(
-      { taskManager: this.options.taskManager, downloadDir: this.options.downloadDir },
-      policy,
-      batchLimit,
-      dryRun
+      { taskManager: this.options.taskManager, downloadDir: this.options.downloadDir }, policy, batchLimit, dryRun
     );
-    const discoveryJobs = await cleanupDiscoveryJobs(
-      {
-        storage: this.options.storage,
-        taskManager: this.options.taskManager,
-        selectorDiscoveryService: this.options.selectorDiscoveryService,
-        challengeDiscoveryService: this.options.challengeDiscoveryService,
-      },
-      policy,
-      batchLimit,
-      dryRun,
-      tasks.deleted
-    );
+    const discoveryJobs = await cleanupDiscoveryJobs({
+      storage: this.options.storage, taskManager: this.options.taskManager,
+      selectorDiscoveryService: this.options.selectorDiscoveryService,
+      challengeDiscoveryService: this.options.challengeDiscoveryService,
+    }, policy, batchLimit, dryRun, tasks.deleted);
     const fixtures = await cleanupFixtures({ workspaceRoot: this.options.workspaceRoot }, policy, dryRun);
     const agentSessions = await cleanupAgentSessions({ workspaceRoot: this.options.workspaceRoot }, policy, dryRun);
-
-    const finishedAt = new Date();
-    const result: MaintenanceResult = {
-      dryRun,
-      tasks,
-      discoveryJobs,
-      fixtures,
-      agentSessions,
-      startedAt: startedAt.toISOString(),
-      finishedAt: finishedAt.toISOString(),
-      durationMs: finishedAt.getTime() - startedAt.getTime(),
-    };
-    if (!dryRun) {
-      this.lastResult = result;
-    }
-    logger.info(
-      {
-        dryRun,
-        tasksDeleted: tasks.deleted.length,
-        jobsDeleted: discoveryJobs.deleted.length,
-        fixturesDeleted: fixtures.deleted.length,
-        agentSessionsDeleted: agentSessions.deleted.length,
-        bytesFreed: fixtures.bytesFreed,
-      },
-      dryRun ? 'Maintenance preview completed' : 'Maintenance cleanup completed'
-    );
-    return result;
+    return { tasks, discoveryJobs, fixtures, agentSessions };
   }
 
   private async resolvePolicy(overrides?: MaintenancePolicyOverrides): Promise<MaintenanceConfig> {
@@ -132,4 +104,20 @@ export class MaintenanceService {
       ...(overrides?.batchLimit !== undefined ? { batchLimit: overrides.batchLimit } : {}),
     };
   }
+}
+
+function createMaintenanceResult(dryRun: boolean, startedAt: Date, finishedAt: Date,
+  scopes: Pick<MaintenanceResult, 'tasks' | 'discoveryJobs' | 'fixtures' | 'agentSessions'>): MaintenanceResult {
+  return {
+    dryRun, ...scopes, startedAt: startedAt.toISOString(), finishedAt: finishedAt.toISOString(),
+    durationMs: finishedAt.getTime() - startedAt.getTime(),
+  };
+}
+
+function logMaintenanceResult(result: MaintenanceResult): void {
+  logger.info({
+    dryRun: result.dryRun, tasksDeleted: result.tasks.deleted.length,
+    jobsDeleted: result.discoveryJobs.deleted.length, fixturesDeleted: result.fixtures.deleted.length,
+    agentSessionsDeleted: result.agentSessions.deleted.length, bytesFreed: result.fixtures.bytesFreed,
+  }, result.dryRun ? 'Maintenance preview completed' : 'Maintenance cleanup completed');
 }

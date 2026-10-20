@@ -48,27 +48,17 @@ export class AgentTriggerMonitor {
 
   getProgress(adapterId: string): AgentTriggerProgress | null {
     const records = this.triggerManager.getFailureRecords(adapterId);
-    if (records.length === 0) {
-      return null;
-    }
-
+    if (records.length === 0) return null;
     const record = [...records].sort((left, right) => right.lastOccurredAt.getTime() - left.lastOccurredAt.getTime())[0]!;
     const threshold = this.triggerManager.getThreshold();
     const cooldownRemainingMs = this.triggerManager.getCooldownRemainingMs(record.triggerKey);
-
     return {
-      adapterId,
-      triggerKey: record.triggerKey,
-      pageType: record.pageType,
-      selectorName: record.selectorName,
-      count: record.count,
-      threshold,
+      adapterId, triggerKey: record.triggerKey, pageType: record.pageType,
+      selectorName: record.selectorName, count: record.count, threshold,
       remainingFailures: Math.max(0, threshold - record.count),
-      inCooldown: cooldownRemainingMs > 0,
-      cooldownRemainingMs,
+      inCooldown: cooldownRemainingMs > 0, cooldownRemainingMs,
       activeSession: this.triggerManager.hasActiveSession(adapterId),
-      lastMessage: record.lastMessage,
-      firstOccurredAt: record.firstOccurredAt,
+      lastMessage: record.lastMessage, firstOccurredAt: record.firstOccurredAt,
       lastOccurredAt: record.lastOccurredAt,
     };
   }

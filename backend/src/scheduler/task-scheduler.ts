@@ -139,44 +139,42 @@ export class TaskScheduler<T = unknown> {
   private async executeTask(task: TaskItem<T>): Promise<void> {
     let deferred: TaskDeferredError | undefined;
     try {
-      await this.executor(task);
-      if (task.status === 'running') {
-        task.status = 'completed';
-        task.completedAt = new Date();
-      }
-    } catch (error) {
-      if (error instanceof TaskDeferredError) {
-        deferred = error;
-        task.status = 'waiting_for_browser_worker';
-        task.error = error.message;
-        task.startedAt = undefined;
-        return;
-      }
-      if (task.status === 'running') {
-        task.status = 'failed';
-        task.error = errorToLogObject(error).message as string;
-        task.completedAt = new Date();
-        logger.error({ taskId: task.id, error: errorToLogObject(error) }, 'Scheduled task execution failed');
-      }
+      deferred = await this.runTask(task);
     } finally {
       this.running.delete(task.id);
-      if (deferred) {
-        // Let other runnable work claim the freed slot before putting the
-        // externally blocked task back into the queue.
-        this.process();
-        this.queue.push(task);
-        this.sortQueue();
-        const timer = setTimeout(() => {
-          if (task.status === 'waiting_for_browser_worker') task.status = 'pending';
-          this.process();
-        }, Math.max(1, deferred.retryAfterMs));
-        timer.unref();
-      } else {
-        this.history.set(task.id, task);
-        this.process();
-      }
+      if (deferred) this.deferTask(task, deferred);
+      else { this.history.set(task.id, task); this.process(); }
       this.notifyIfIdle();
     }
+  }
+
+  private async runTask(task: TaskItem<T>): Promise<TaskDeferredError | undefined> {
+    try {
+      await this.executor(task);
+      if (task.status === 'running') { task.status = 'completed'; task.completedAt = new Date(); }
+      return undefined;
+    } catch (error) {
+      if (error instanceof TaskDeferredError) {
+        task.status = 'waiting_for_browser_worker'; task.error = error.message; task.startedAt = undefined;
+        return error;
+      }
+      if (task.status === 'running') {
+        task.status = 'failed'; task.error = errorToLogObject(error).message as string; task.completedAt = new Date();
+        logger.error({ taskId: task.id, error: errorToLogObject(error) }, 'Scheduled task execution failed');
+      }
+      return undefined;
+    }
+  }
+
+  private deferTask(task: TaskItem<T>, deferred: TaskDeferredError): void {
+    this.process();
+    this.queue.push(task);
+    this.sortQueue();
+    const timer = setTimeout(() => {
+      if (task.status === 'waiting_for_browser_worker') task.status = 'pending';
+      this.process();
+    }, Math.max(1, deferred.retryAfterMs));
+    timer.unref();
   }
 
   private sortQueue(): void {

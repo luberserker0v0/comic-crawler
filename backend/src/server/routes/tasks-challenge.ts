@@ -26,13 +26,14 @@ export async function recreateChallengeJobForTask(
     browserTarget: task.data.browserTarget,
   });
   const message = `Verification handoff expired or was removed. New challenge discovery job: ${challengeJob.id}`;
-  await taskManager.updateResult(taskId, {
-    challengeDiscoveryId: challengeJob.id,
-    challengeStatus: challengeJob.status,
-    error: message,
-  });
-  await taskManager.updateTaskError(taskId, message);
+  await updateTaskChallenge(taskManager, taskId, challengeJob.id, challengeJob.status, message);
   return challengeJob;
+}
+
+async function updateTaskChallenge(taskManager: TaskManager, taskId: string, challengeDiscoveryId: string,
+  challengeStatus: string, error: string): Promise<void> {
+  await taskManager.updateResult(taskId, { challengeDiscoveryId, challengeStatus, error });
+  await taskManager.updateTaskError(taskId, error);
 }
 
 export function isMissingChallengeJobError(error: unknown): boolean {

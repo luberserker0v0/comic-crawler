@@ -121,9 +121,7 @@ class DynamicMetadataCapability extends MetadataCapability {
   }
 
   extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
-    if (!this.adapter.capabilities.metadata) {
-      throw this.unsupportedCapability('metadata', 'extractChapterList');
-    }
+    if (!this.adapter.capabilities.metadata) throw this.unsupportedCapability('metadata', 'extractChapterList');
     const $ = this.adapter.asCheerio(document);
     const chapterSelectors = this.requiredChapterSelectors();
     return $(chapterSelectors.list)

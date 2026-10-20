@@ -11,62 +11,52 @@ export function createStoredZip(files: Array<{ name: string; content: string | B
     content: Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content, 'utf-8'),
   }));
 
-  const localParts: Buffer[] = [];
-  const centralParts: Buffer[] = [];
+  const localParts: Buffer[] = [], centralParts: Buffer[] = [];
   let offset = 0;
-
   for (const entry of entries) {
     const name = Buffer.from(entry.name, 'utf-8');
     const crc = crc32(entry.content);
-    const localHeader = Buffer.alloc(30);
-    localHeader.writeUInt32LE(0x04034b50, 0);
-    localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
-    localHeader.writeUInt16LE(0, 8);
-    localHeader.writeUInt16LE(0, 10);
-    localHeader.writeUInt16LE(0, 12);
-    localHeader.writeUInt32LE(crc, 14);
-    localHeader.writeUInt32LE(entry.content.length, 18);
-    localHeader.writeUInt32LE(entry.content.length, 22);
-    localHeader.writeUInt16LE(name.length, 26);
-    localHeader.writeUInt16LE(0, 28);
+    const localHeader = createLocalHeader(entry, name, crc);
     localParts.push(localHeader, name, entry.content);
-
-    const centralHeader = Buffer.alloc(46);
-    centralHeader.writeUInt32LE(0x02014b50, 0);
-    centralHeader.writeUInt16LE(20, 4);
-    centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
-    centralHeader.writeUInt16LE(0, 10);
-    centralHeader.writeUInt16LE(0, 12);
-    centralHeader.writeUInt16LE(0, 14);
-    centralHeader.writeUInt32LE(crc, 16);
-    centralHeader.writeUInt32LE(entry.content.length, 20);
-    centralHeader.writeUInt32LE(entry.content.length, 24);
-    centralHeader.writeUInt16LE(name.length, 28);
-    centralHeader.writeUInt16LE(0, 30);
-    centralHeader.writeUInt16LE(0, 32);
-    centralHeader.writeUInt16LE(0, 34);
-    centralHeader.writeUInt16LE(0, 36);
-    centralHeader.writeUInt32LE(0, 38);
-    centralHeader.writeUInt32LE(offset, 42);
+    const centralHeader = createCentralHeader(entry, name, crc, offset);
     centralParts.push(centralHeader, name);
-
     offset += localHeader.length + name.length + entry.content.length;
   }
-
   const centralDirectory = Buffer.concat(centralParts);
+  return Buffer.concat([...localParts, centralDirectory, createEndRecord(entries.length, centralDirectory.length, offset)]);
+}
+
+function createLocalHeader(entry: ZipEntry, name: Buffer, crc: number): Buffer {
+  const header = Buffer.alloc(30);
+  header.writeUInt32LE(0x04034b50, 0); header.writeUInt16LE(20, 4);
+  for (const offset of [6, 8, 10, 12, 28]) header.writeUInt16LE(0, offset);
+  header.writeUInt32LE(crc, 14); header.writeUInt32LE(entry.content.length, 18);
+  header.writeUInt32LE(entry.content.length, 22); header.writeUInt16LE(name.length, 26);
+  return header;
+}
+
+function createCentralHeader(entry: ZipEntry, name: Buffer, crc: number, offset: number): Buffer {
+  const header = Buffer.alloc(46);
+  header.writeUInt32LE(0x02014b50, 0); header.writeUInt16LE(20, 4); header.writeUInt16LE(20, 6);
+  for (const position of [8, 10, 12, 14, 30, 32, 34, 36]) header.writeUInt16LE(0, position);
+  header.writeUInt32LE(crc, 16); header.writeUInt32LE(entry.content.length, 20);
+  header.writeUInt32LE(entry.content.length, 24); header.writeUInt16LE(name.length, 28);
+  header.writeUInt32LE(0, 38); header.writeUInt32LE(offset, 42);
+  return header;
+}
+
+function createEndRecord(count: number, directoryLength: number, offset: number): Buffer {
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(0, 4);
   end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt16LE(count, 8);
+  end.writeUInt16LE(count, 10);
+  end.writeUInt32LE(directoryLength, 12);
   end.writeUInt32LE(offset, 16);
   end.writeUInt16LE(0, 20);
 
-  return Buffer.concat([...localParts, centralDirectory, end]);
+  return end;
 }
 
 function crc32(buffer: Buffer): number {

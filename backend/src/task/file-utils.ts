@@ -29,16 +29,21 @@ export async function deleteTaskOutputDir(
   if (!isPathInsideDir(candidate, resolve(process.cwd(), base)) && !isPathInsideDir(candidate, base)) {
     return { deleted: false, skipped: `outputPath outside download directory: ${outputPath}` };
   }
-  try {
-    const stats = await fs.stat(candidate);
-    if (!stats.isDirectory()) return { deleted: false, skipped: `outputPath is not a directory: ${outputPath}` };
-  } catch {
-    return { deleted: false, skipped: `outputPath not found: ${outputPath}` };
-  }
+  const validationError = await validateOutputDirectory(candidate, outputPath);
+  if (validationError) return { deleted: false, skipped: validationError };
   try {
     await fs.rm(candidate, { recursive: true, force: true });
     return { deleted: true };
   } catch (error) {
     return { deleted: false, skipped: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function validateOutputDirectory(candidate: string, outputPath: string): Promise<string | undefined> {
+  try {
+    const stats = await fs.stat(candidate);
+    return stats.isDirectory() ? undefined : `outputPath is not a directory: ${outputPath}`;
+  } catch {
+    return `outputPath not found: ${outputPath}`;
   }
 }

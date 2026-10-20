@@ -64,32 +64,24 @@ export function mergeProviderIntoOpenCodeConfig(baseConfig: Record<string, unkno
 
 export function diagnoseProviderDocument(document: ProviderDocument): string[] {
   const warnings: string[] = [];
-
   for (const [providerId, provider] of Object.entries(document.provider)) {
-    const apiKey = provider.options?.apiKey;
-    if (typeof apiKey === 'string') {
-      const fileRef = /^\{file:(.+)\}$/.exec(apiKey);
-      if (fileRef) {
-        const filePath = fileRef[1]!;
-        if (/^[A-Za-z]:\\/.test(filePath)) {
-          warnings.push(
-            `Provider "${providerId}" uses a Windows file reference (${filePath}). AO/OpenCode must be able to read this path from its own runtime environment; containerized AO usually needs a mounted Linux path instead.`
-          );
-        }
-        if (filePath.includes('\\')) {
-          warnings.push(
-            `Provider "${providerId}" file reference contains backslashes. If AO runs in Linux/Docker, prefer an AO-visible POSIX path such as {file:/data/secrets/lmstudio-api-token.txt}.`
-          );
-        }
-      }
-    }
-
-    if (typeof provider.options?.baseURL === 'string' && provider.options.baseURL.includes('host.docker.internal')) {
-      warnings.push(
-        `Provider "${providerId}" uses host.docker.internal. This works only when AO/OpenCode runs in an environment where that hostname resolves to the host.`
-      );
-    }
+    warnings.push(...diagnoseProvider(providerId, provider.options));
   }
-
   return Array.from(new Set(warnings));
+}
+
+function diagnoseProvider(providerId: string, options: Record<string, unknown> | undefined): string[] {
+  const warnings: string[] = [];
+  const apiKey = options?.apiKey;
+  const filePath = typeof apiKey === 'string' ? /^\{file:(.+)\}$/.exec(apiKey)?.[1] : undefined;
+  if (filePath && /^[A-Za-z]:\\/.test(filePath)) {
+    warnings.push(`Provider "${providerId}" uses a Windows file reference (${filePath}). AO/OpenCode must be able to read this path from its own runtime environment; containerized AO usually needs a mounted Linux path instead.`);
+  }
+  if (filePath?.includes('\\')) {
+    warnings.push(`Provider "${providerId}" file reference contains backslashes. If AO runs in Linux/Docker, prefer an AO-visible POSIX path such as {file:/data/secrets/lmstudio-api-token.txt}.`);
+  }
+  if (typeof options?.baseURL === 'string' && options.baseURL.includes('host.docker.internal')) {
+    warnings.push(`Provider "${providerId}" uses host.docker.internal. This works only when AO/OpenCode runs in an environment where that hostname resolves to the host.`);
+  }
+  return warnings;
 }

@@ -9,14 +9,26 @@ export function loadChallengeStrategyFromSource(source: string): ChallengeStrate
     throw new Error(`Invalid challenge strategy source: ${sourceValidation.errors.join(' ')}`);
   }
 
-  const transpiled = ts.transpileModule(source, {
+  const transpiled = transpileStrategy(source);
+  const exported = evaluateStrategy(transpiled);
+  const moduleValidation = validateChallengeStrategyModule(exported);
+  if (!moduleValidation.valid) {
+    throw new Error(`Invalid challenge strategy module: ${moduleValidation.errors.join(' ')}`);
+  }
+  return exported as ChallengeStrategyModule;
+}
+
+function transpileStrategy(source: string): string {
+  return ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2020,
       esModuleInterop: false,
     },
   }).outputText;
+}
 
+function evaluateStrategy(transpiled: string): unknown {
   const sandbox: { exports: Record<string, unknown>; module: { exports: Record<string, unknown> } } = {
     exports: {},
     module: { exports: {} },
@@ -29,12 +41,5 @@ export function loadChallengeStrategyFromSource(source: string): ChallengeStrate
   new vm.Script(transpiled, { filename: 'challenge-strategy-candidate.js' }).runInContext(context, {
     timeout: 1000,
   });
-
-  const exported = sandbox.module.exports.strategy ?? sandbox.exports.strategy;
-  const moduleValidation = validateChallengeStrategyModule(exported);
-  if (!moduleValidation.valid) {
-    throw new Error(`Invalid challenge strategy module: ${moduleValidation.errors.join(' ')}`);
-  }
-
-  return exported as ChallengeStrategyModule;
+  return sandbox.module.exports.strategy ?? sandbox.exports.strategy;
 }

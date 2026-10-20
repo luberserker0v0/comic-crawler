@@ -1,4 +1,4 @@
-import type { BrowserCommand, BrowserCommandResult } from '@comiccrawler/browser-client-sdk';
+import type { BrowserCommand, BrowserCommandResult, BrowserSessionSource } from '@comiccrawler/browser-client-sdk';
 import type { BrowserSessionGateway } from './browser-session-gateway';
 
 interface BrowserCommandPort extends Pick<BrowserSessionGateway, 'execute'> {
@@ -20,38 +20,39 @@ export class BrowserRenderService {
 
   async render(sessionId: string, url: string, options: BrowserRenderOptions = {}): Promise<RenderedBrowserPage> {
     const timeoutMs = options.timeoutMs;
-    const preparationTimeoutMs = reserveCommandResponseTime(timeoutMs);
     const acquisition = this.gateway.claimInitialPage?.(sessionId) ?? {
       source: { type: 'managed-profile' as const, navigationPolicy: 'navigate-to-target' as const },
       initial: false,
     };
     const currentUrl = await this.currentUrl(sessionId);
+    await this.acquirePage(sessionId, url, currentUrl, acquisition, timeoutMs);
+    await this.preparePage(sessionId, timeoutMs);
+    if (options.postLoadDelayMs && options.postLoadDelayMs > 0) await delay(options.postLoadDelayMs);
+    const content = await this.gateway.execute(sessionId, { type: 'page.get-content' }, timeoutMs);
+    assertResult(content, 'page.get-content');
+    return { url: content.url, html: content.html };
+  }
+
+  private async acquirePage(sessionId: string, url: string, currentUrl: string,
+    acquisition: { source: BrowserSessionSource; initial: boolean }, timeoutMs?: number): Promise<void> {
     if (acquisition.initial && acquisition.source.type === 'existing-resource') {
       if (normalizeUrl(currentUrl) !== normalizeUrl(acquisition.source.expectedUrl)) {
         throw new Error('The registered browser tab moved away from the task URL before it was acquired.');
       }
-    } else if (normalizeUrl(currentUrl) !== normalizeUrl(url)) {
-      const navigation = await this.gateway.execute(sessionId, { type: 'page.navigate', url }, timeoutMs);
-      assertResult(navigation, 'page.navigate');
+      return;
     }
-    const ready = await this.gateway.execute(
-      sessionId,
-      { type: 'page.wait-for-ready', timeoutMs },
-      timeoutMs
-    );
+    if (normalizeUrl(currentUrl) === normalizeUrl(url)) return;
+    const result = await this.gateway.execute(sessionId, { type: 'page.navigate', url }, timeoutMs);
+    assertResult(result, 'page.navigate');
+  }
+
+  private async preparePage(sessionId: string, timeoutMs?: number): Promise<void> {
+    const ready = await this.gateway.execute(sessionId, { type: 'page.wait-for-ready', timeoutMs }, timeoutMs);
     assertResult(ready, 'page.wait-for-ready');
-    const prepared = await this.gateway.execute(
-      sessionId,
-      { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: preparationTimeoutMs },
-      timeoutMs
-    );
+    const prepared = await this.gateway.execute(sessionId, {
+      type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: reserveCommandResponseTime(timeoutMs),
+    }, timeoutMs);
     assertResult(prepared, 'page.prepare-content');
-    if (options.postLoadDelayMs && options.postLoadDelayMs > 0) {
-      await delay(options.postLoadDelayMs);
-    }
-    const content = await this.gateway.execute(sessionId, { type: 'page.get-content' }, timeoutMs);
-    assertResult(content, 'page.get-content');
-    return { url: content.url, html: content.html };
   }
 
   async focus(sessionId: string): Promise<void> {

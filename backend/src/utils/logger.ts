@@ -16,10 +16,15 @@ const defaultOptions: LoggerOptions = {
 
 export function createLogger(options?: LoggerOptions) {
   const opts = { ...defaultOptions, ...options };
+  const pinoOptions = createPinoOptions(opts);
+  configureTransport(pinoOptions, opts);
+  return pino(pinoOptions);
+}
 
-  const pinoOptions: pino.LoggerOptions = {
-    name: opts.name,
-    level: opts.level,
+function createPinoOptions(options: LoggerOptions): pino.LoggerOptions {
+  return {
+    name: options.name,
+    level: options.level,
     timestamp: pino.stdTimeFunctions.isoTime,
     redact: {
       paths: [
@@ -34,10 +39,12 @@ export function createLogger(options?: LoggerOptions) {
       censor: '[REDACTED]',
     },
   };
+}
 
-  if (process.env.NODE_ENV === 'test' && !opts.transport) {
+function configureTransport(pinoOptions: pino.LoggerOptions, options: LoggerOptions): void {
+  if (process.env.NODE_ENV === 'test' && !options.transport) {
     pinoOptions.enabled = false;
-  } else if (process.env.NODE_ENV !== 'production' && !opts.transport) {
+  } else if (process.env.NODE_ENV !== 'production' && !options.transport) {
     pinoOptions.transport = {
       target: 'pino-pretty',
       options: {
@@ -46,11 +53,9 @@ export function createLogger(options?: LoggerOptions) {
         ignore: 'pid,hostname',
       },
     };
-  } else if (opts.transport) {
-    pinoOptions.transport = opts.transport;
+  } else if (options.transport) {
+    pinoOptions.transport = options.transport;
   }
-
-  return pino(pinoOptions);
 }
 
 export type Logger = ReturnType<typeof createLogger>;

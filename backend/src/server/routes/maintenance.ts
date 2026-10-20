@@ -24,17 +24,6 @@ export function setupMaintenanceRoutes(app: FastifyInstance, maintenanceService:
 
 function parseOverrides(query: Record<string, string | undefined>): MaintenancePolicyOverrides {
   const overrides: MaintenancePolicyOverrides = {};
-  const toNumber = (value?: string): number | undefined => {
-    if (value === undefined) return undefined;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  };
-  const toBoolean = (value?: string): boolean | undefined => {
-    if (value === undefined) return undefined;
-    if (value === 'true' || value === '1') return true;
-    if (value === 'false' || value === '0') return false;
-    return undefined;
-  };
   const tasksRetainDays = toNumber(query.tasksRetainDays);
   const discoveryJobsRetainDays = toNumber(query.discoveryJobsRetainDays);
   const batchLimit = toNumber(query.batchLimit);
@@ -44,4 +33,17 @@ function parseOverrides(query: Record<string, string | undefined>): MaintenanceP
   if (batchLimit !== undefined) overrides.batchLimit = batchLimit;
   if (deleteFiles !== undefined) overrides.deleteFiles = deleteFiles;
   return overrides;
+}
+
+function toNumber(value?: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function toBoolean(value?: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'true' || value === '1') return true;
+  if (value === 'false' || value === '0') return false;
+  return undefined;
 }

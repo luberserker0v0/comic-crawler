@@ -42,41 +42,18 @@ export class TriggerManager {
     const cooldownUntil = this.cooldowns.get(triggerKey) ?? 0;
     const activeSession = this.activeSessions.has(context.adapterId);
     const inCooldown = cooldownUntil > occurredAt.getTime();
-
     const existingRecord = this.failureRecords.get(triggerKey);
     const count = (existingRecord?.count ?? 0) + 1;
+    this.failureRecords.set(triggerKey, createFailureRecord(context, triggerKey, count, existingRecord, occurredAt));
+    const triggered = count >= this.threshold && !inCooldown && !activeSession;
+    if (triggered) this.activateCooldown(triggerKey, occurredAt);
+    return { adapterId: context.adapterId, triggerKey, count, threshold: this.threshold, triggered,
+      inCooldown, activeSession, cooldownRemainingMs: inCooldown ? cooldownUntil - occurredAt.getTime() : 0 };
+  }
 
-    const record: TriggerFailureRecord = {
-      adapterId: context.adapterId,
-      triggerKey,
-      pageType: context.pageType,
-      selectorName: context.selectorName,
-      count,
-      firstOccurredAt: existingRecord?.firstOccurredAt ?? occurredAt,
-      lastOccurredAt: occurredAt,
-      lastMessage: context.message,
-    };
-
-    this.failureRecords.set(triggerKey, record);
-
-    const thresholdReached = count >= this.threshold;
-    const triggered = thresholdReached && !inCooldown && !activeSession;
-
-    if (triggered) {
-      this.cooldowns.set(triggerKey, occurredAt.getTime() + this.cooldownMs);
-      this.failureRecords.delete(triggerKey);
-    }
-
-    return {
-      adapterId: context.adapterId,
-      triggerKey,
-      count,
-      threshold: this.threshold,
-      triggered,
-      inCooldown,
-      activeSession,
-      cooldownRemainingMs: inCooldown ? cooldownUntil - occurredAt.getTime() : 0,
-    };
+  private activateCooldown(triggerKey: string, occurredAt: Date): void {
+    this.cooldowns.set(triggerKey, occurredAt.getTime() + this.cooldownMs);
+    this.failureRecords.delete(triggerKey);
   }
 
   startSession(adapterId: string, sessionId: string, startedAt = new Date()): boolean {
@@ -118,4 +95,14 @@ export class TriggerManager {
   buildTriggerKey(context: Pick<ExtractionFailureContext, 'adapterId' | 'pageType' | 'selectorName'>): string {
     return `${context.adapterId}:${context.pageType}:${context.selectorName ?? 'unknown'}`;
   }
+}
+
+function createFailureRecord(context: ExtractionFailureContext, triggerKey: string, count: number,
+  existing: TriggerFailureRecord | undefined, occurredAt: Date): TriggerFailureRecord {
+  return {
+    adapterId: context.adapterId, triggerKey, pageType: context.pageType,
+    selectorName: context.selectorName, count,
+    firstOccurredAt: existing?.firstOccurredAt ?? occurredAt,
+    lastOccurredAt: occurredAt, lastMessage: context.message,
+  };
 }
