@@ -1,26 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
-import type {
-  AdapterCapabilityDetailResponse,
-  AdapterDraftDetailResponse,
-  AdapterFunctionTestResponse,
-  AdapterImplementationResponse,
-  SelectorDiscoveryJobSummary,
-} from '@comiccrawler/shared';
+import { useEffect, useState } from 'react';
+import type { AdapterCapabilityDetailResponse, AdapterDraftDetailResponse, AdapterFunctionTestResponse,
+  AdapterImplementationResponse, SelectorDiscoveryJobSummary } from '@comiccrawler/shared';
 import { api, getApiErrorMessage } from '../../api/client';
 import { useI18n } from '../../text/i18n';
 import { defaultTestUrlForFunction } from './widgets';
 
-export function useReviewJob(options?: {
-  fetchBuildJobs?: () => Promise<void>;
-  fetchSiteAdapters?: () => Promise<void>;
-  fetchAdapters?: () => Promise<void>;
-}) {
-  const { fetchBuildJobs, fetchSiteAdapters, fetchAdapters } = options ?? {};
-  const { text } = useI18n();
-  const [reviewJob, setReviewJob] = useState<SelectorDiscoveryJobSummary | null>(null);
-  const [reviewImplementation, setReviewImplementation] = useState<AdapterImplementationResponse | null>(null);
-  const [reviewCapabilities, setReviewCapabilities] = useState<AdapterCapabilityDetailResponse | null>(null);
-  const [reviewDraft, setReviewDraft] = useState<AdapterDraftDetailResponse | null>(null);
+type ReviewOptions = { fetchBuildJobs?: () => Promise<void>; fetchSiteAdapters?: () => Promise<void>;
+  fetchAdapters?: () => Promise<void> };
+
+export function useReviewJob(options: ReviewOptions = {}) {
+  const state = useReviewState();
+  const context = { state, options, text: useI18n().text };
+  useRevisionPolling(state);
+  return { ...state, openReviewJob: (id: string) => openReview(context, id),
+    createEditableReviewDraft: () => createDraft(context), saveEditableReviewDraft: () => saveDraft(context),
+    resetEditableReviewDraft: () => resetDraft(state), requestFunctionRevision: () => requestRevision(context),
+    retryFunctionRevision: (id: string) => retryRevision(context, id), runReviewFunctionTest: () => runFunctionTest(context),
+    approveReviewJob: () => approveReview(context), rejectReviewJob: () => rejectReview(context),
+    closeReview: () => closeReview(state) };
+}
+
+function useReviewState() {
+  const [reviewJob, setReviewJob] = useState<SelectorDiscoveryJobSummary | null>(null), [reviewImplementation, setReviewImplementation] = useState<AdapterImplementationResponse | null>(null);
+  const [reviewCapabilities, setReviewCapabilities] = useState<AdapterCapabilityDetailResponse | null>(null), [reviewDraft, setReviewDraft] = useState<AdapterDraftDetailResponse | null>(null);
   const [reviewDraftContent, setReviewDraftContent] = useState('');
   const [savedReviewDraftContent, setSavedReviewDraftContent] = useState('');
   const [selectedReviewFunctionId, setSelectedReviewFunctionId] = useState('');
@@ -29,251 +31,227 @@ export function useReviewJob(options?: {
   const [functionRevisionInstruction, setFunctionRevisionInstruction] = useState('');
   const [functionRevisionModelMode, setFunctionRevisionModelMode] = useState<'current-settings' | 'previous-task'>('current-settings');
   const [functionRevisionMessage, setFunctionRevisionMessage] = useState<string | null>(null);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const [reviewLoading, setReviewLoading] = useState<'load' | 'test' | 'approve' | 'reject' | 'edit' | 'save' | 'revision' | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null), [reviewLoading, setReviewLoading]
+    = useState<'load' | 'test' | 'approve' | 'reject' | 'edit' | 'save' | 'revision' | null>(null);
+  return { reviewJob, setReviewJob, reviewImplementation, setReviewImplementation, reviewCapabilities,
+    setReviewCapabilities, reviewDraft, setReviewDraft, reviewDraftContent, setReviewDraftContent,
+    savedReviewDraftContent, setSavedReviewDraftContent, selectedReviewFunctionId, setSelectedReviewFunctionId,
+    reviewTestUrl, setReviewTestUrl, reviewTestResult, setReviewTestResult, functionRevisionInstruction,
+    setFunctionRevisionInstruction, functionRevisionModelMode, setFunctionRevisionModelMode,
+    functionRevisionMessage, setFunctionRevisionMessage, reviewError, setReviewError, reviewLoading, setReviewLoading };
+}
 
-  const openReviewJob = useCallback(async (id: string) => {
-    setReviewLoading('load');
-    setReviewError(null);
-    setReviewTestResult(null);
-    try {
-      const [jobResponse, implementationResponse, capabilitiesResponse] = await Promise.all([
-        api.getSelectorDiscovery(id),
-        api.getSelectorDiscoveryImplementation(id),
-        api.getSelectorDiscoveryCapabilities(id),
-      ]);
-      const implementedFunctions = capabilitiesResponse.data.functions.filter((item) => item.implemented);
-      const firstFunctionId = implementedFunctions[0]?.id ?? '';
-      setReviewJob(jobResponse.data);
-      setReviewImplementation(implementationResponse.data);
-      setReviewCapabilities(capabilitiesResponse.data);
-      setReviewDraft(null);
-      setReviewDraftContent('');
-      setSavedReviewDraftContent('');
-      setFunctionRevisionInstruction('');
-      setFunctionRevisionMessage(null);
-      setSelectedReviewFunctionId(firstFunctionId);
-      setReviewTestUrl(firstFunctionId ? defaultTestUrlForFunction(jobResponse.data, firstFunctionId) : jobResponse.data.normalizedUrl);
-      requestAnimationFrame(() => {
-        document.getElementById('review-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, []);
+type ReviewState = ReturnType<typeof useReviewState>;
+type ReviewContext = { state: ReviewState; options: ReviewOptions; text: ReturnType<typeof useI18n>['text'] };
 
-  const createEditableReviewDraft = useCallback(async () => {
-    if (!reviewJob) return;
-    setReviewLoading('edit');
-    setReviewError(null);
-    setReviewTestResult(null);
-    try {
-      const response = await api.createSelectorDiscoveryDraft(reviewJob.id);
-      setReviewDraft(response.data);
-      setReviewDraftContent(response.data.content);
-      setSavedReviewDraftContent(response.data.content);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [reviewJob]);
+async function openReview(context: ReviewContext, id: string) {
+  beginReviewAction(context.state, 'load', true);
+  try {
+    const responses = await Promise.all([api.getSelectorDiscovery(id),
+      api.getSelectorDiscoveryImplementation(id), api.getSelectorDiscoveryCapabilities(id)]);
+    applyOpenedReview(context.state, responses[0].data, responses[1].data, responses[2].data);
+    requestAnimationFrame(() => document.getElementById('review-panel')?.scrollIntoView(
+      { behavior: 'smooth', block: 'start' }));
+  } catch (error) {
+    context.state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    context.state.setReviewLoading(null);
+  }
+}
 
-  const saveEditableReviewDraft = useCallback(async () => {
-    if (!reviewDraft) return;
-    setReviewLoading('save');
-    setReviewError(null);
-    try {
-      const response = await api.saveAdapterDraftContent(reviewDraft.draft.draftId, { content: reviewDraftContent });
-      setReviewDraft(response.data);
-      setReviewDraftContent(response.data.content);
-      setSavedReviewDraftContent(response.data.content);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [reviewDraft, reviewDraftContent]);
+function applyOpenedReview(state: ReviewState, job: SelectorDiscoveryJobSummary,
+  implementation: AdapterImplementationResponse, capabilities: AdapterCapabilityDetailResponse) {
+  const firstFunctionId = capabilities.functions.find((item) => item.implemented)?.id ?? '';
+  state.setReviewJob(job); state.setReviewImplementation(implementation); state.setReviewCapabilities(capabilities);
+  state.setReviewDraft(null); state.setReviewDraftContent(''); state.setSavedReviewDraftContent('');
+  state.setFunctionRevisionInstruction(''); state.setFunctionRevisionMessage(null);
+  state.setSelectedReviewFunctionId(firstFunctionId);
+  state.setReviewTestUrl(firstFunctionId ? defaultTestUrlForFunction(job, firstFunctionId) : job.normalizedUrl);
+}
 
-  const resetEditableReviewDraft = useCallback(() => {
-    const source = reviewImplementation?.content ?? '';
-    setReviewDraftContent(source);
-    setReviewTestResult(null);
-  }, [reviewImplementation]);
+async function createDraft(context: ReviewContext) {
+  if (!context.state.reviewJob) return;
+  beginReviewAction(context.state, 'edit', true);
+  try {
+    const response = await api.createSelectorDiscoveryDraft(context.state.reviewJob.id);
+    applyDraft(context.state, response.data);
+  } catch (error) {
+    context.state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    context.state.setReviewLoading(null);
+  }
+}
 
-  const requestFunctionRevision = useCallback(async () => {
-    if (!reviewJob || !selectedReviewFunctionId) return;
-    setReviewLoading('revision');
-    setReviewError(null);
-    setFunctionRevisionMessage(null);
-    try {
-      const response = await api.requestSelectorDiscoveryFunctionRevision(reviewJob.id, selectedReviewFunctionId, {
-        functionId: selectedReviewFunctionId,
-        instruction: functionRevisionInstruction,
-        currentSource: reviewDraft ? reviewDraftContent : reviewImplementation?.content,
-      });
-      setReviewJob(response.data);
-      setFunctionRevisionInstruction('');
-      const latest = response.data.functionRevisionTasks?.at(-1);
-      setFunctionRevisionMessage(latest
-        ? `${text.agent.functionRevisionCreated}: ${latest.id}`
-        : text.agent.functionRevisionCreated);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [functionRevisionInstruction, reviewDraft, reviewDraftContent, reviewImplementation, reviewJob, selectedReviewFunctionId, text.agent.functionRevisionCreated]);
+async function saveDraft(context: ReviewContext) {
+  if (!context.state.reviewDraft) return;
+  beginReviewAction(context.state, 'save');
+  try {
+    const response = await api.saveAdapterDraftContent(context.state.reviewDraft.draft.draftId,
+      { content: context.state.reviewDraftContent });
+    applyDraft(context.state, response.data);
+  } catch (error) {
+    context.state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    context.state.setReviewLoading(null);
+  }
+}
 
-  const retryFunctionRevision = useCallback(async (revisionTaskId: string) => {
-    if (!reviewJob) return;
-    setReviewLoading('revision');
-    setReviewError(null);
-    setFunctionRevisionMessage(null);
-    try {
-      const response = await api.retrySelectorDiscoveryFunctionRevision(reviewJob.id, revisionTaskId, {
-        currentSource: reviewDraft ? reviewDraftContent : reviewImplementation?.content,
-        modelMode: functionRevisionModelMode,
-      });
-      setReviewJob(response.data);
-      setFunctionRevisionMessage(`${text.agent.functionRevisionRetryStarted}: ${revisionTaskId}`);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [functionRevisionModelMode, reviewDraft, reviewDraftContent, reviewImplementation, reviewJob, text.agent.functionRevisionRetryStarted]);
+function applyDraft(state: ReviewState, draft: AdapterDraftDetailResponse) {
+  state.setReviewDraft(draft);
+  state.setReviewDraftContent(draft.content);
+  state.setSavedReviewDraftContent(draft.content);
+}
 
-  const runReviewFunctionTest = useCallback(async () => {
-    if (!reviewJob || !selectedReviewFunctionId || !reviewTestUrl.trim()) return;
-    setReviewLoading('test');
-    setReviewError(null);
-    try {
-      if (reviewDraft) {
-        let draftId = reviewDraft.draft.draftId;
-        if (reviewDraftContent !== savedReviewDraftContent) {
-          const saved = await api.saveAdapterDraftContent(reviewDraft.draft.draftId, { content: reviewDraftContent });
-          setReviewDraft(saved.data);
-          setReviewDraftContent(saved.data.content);
-          setSavedReviewDraftContent(saved.data.content);
-          draftId = saved.data.draft.draftId;
-        }
-        const draftResponse = await api.testAdapterDraftFunction(draftId, selectedReviewFunctionId, {
-          url: reviewTestUrl.trim(),
-        });
-        setReviewTestResult(draftResponse.data);
-        return;
-      }
-      const response = await api.testSelectorDiscoveryFunction(reviewJob.id, selectedReviewFunctionId, {
-        url: reviewTestUrl.trim(),
-      });
-      setReviewTestResult(response.data);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [reviewDraft, reviewDraftContent, reviewJob, savedReviewDraftContent, selectedReviewFunctionId, reviewTestUrl]);
+function resetDraft(state: ReviewState) {
+  state.setReviewDraftContent(state.reviewImplementation?.content ?? '');
+  state.setReviewTestResult(null);
+}
 
-  const approveReviewJob = useCallback(async () => {
-    if (!reviewJob) return;
-    setReviewLoading('approve');
-    setReviewError(null);
-    try {
-      await api.promoteSelectorDiscovery(reviewJob.id);
-      await Promise.all([fetchBuildJobs?.(), fetchAdapters?.(), fetchSiteAdapters?.()]);
-      const refreshed = await api.getSelectorDiscovery(reviewJob.id);
-      setReviewJob(refreshed.data);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [fetchAdapters, fetchBuildJobs, fetchSiteAdapters, reviewJob]);
+async function requestRevision(context: ReviewContext) {
+  const { state } = context;
+  if (!state.reviewJob || !state.selectedReviewFunctionId) return;
+  beginRevision(state);
+  try {
+    const response = await api.requestSelectorDiscoveryFunctionRevision(state.reviewJob.id,
+      state.selectedReviewFunctionId, { functionId: state.selectedReviewFunctionId,
+        instruction: state.functionRevisionInstruction,
+        currentSource: state.reviewDraft ? state.reviewDraftContent : state.reviewImplementation?.content });
+    applyRequestedRevision(context, response.data);
+  } catch (error) {
+    state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    state.setReviewLoading(null);
+  }
+}
 
-  const rejectReviewJob = useCallback(async () => {
-    if (!reviewJob) return;
-    setReviewLoading('reject');
-    setReviewError(null);
-    try {
-      const response = await api.rejectSelectorDiscovery(reviewJob.id);
-      await fetchBuildJobs?.();
-      setReviewJob(response.data);
-    } catch (error) {
-      setReviewError(getApiErrorMessage(error));
-    } finally {
-      setReviewLoading(null);
-    }
-  }, [fetchBuildJobs, reviewJob]);
+function applyRequestedRevision(context: ReviewContext, job: SelectorDiscoveryJobSummary) {
+  context.state.setReviewJob(job);
+  context.state.setFunctionRevisionInstruction('');
+  const latest = job.functionRevisionTasks?.at(-1);
+  context.state.setFunctionRevisionMessage(latest
+    ? `${context.text.agent.functionRevisionCreated}: ${latest.id}` : context.text.agent.functionRevisionCreated);
+}
 
-  const closeReview = useCallback(() => {
-    setReviewJob(null);
-    setReviewImplementation(null);
-    setReviewCapabilities(null);
-    setReviewDraft(null);
-    setReviewDraftContent('');
-    setSavedReviewDraftContent('');
-    setFunctionRevisionInstruction('');
-    setFunctionRevisionMessage(null);
-    setReviewTestResult(null);
-    setReviewError(null);
-  }, []);
+async function retryRevision(context: ReviewContext, revisionTaskId: string) {
+  const { state } = context;
+  if (!state.reviewJob) return;
+  beginRevision(state);
+  try {
+    const response = await api.retrySelectorDiscoveryFunctionRevision(state.reviewJob.id, revisionTaskId,
+      { currentSource: state.reviewDraft ? state.reviewDraftContent : state.reviewImplementation?.content,
+        modelMode: state.functionRevisionModelMode });
+    state.setReviewJob(response.data);
+    state.setFunctionRevisionMessage(`${context.text.agent.functionRevisionRetryStarted}: ${revisionTaskId}`);
+  } catch (error) {
+    state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    state.setReviewLoading(null);
+  }
+}
 
+async function runFunctionTest(context: ReviewContext) {
+  const { state } = context;
+  if (!state.reviewJob || !state.selectedReviewFunctionId || !state.reviewTestUrl.trim()) return;
+  beginReviewAction(state, 'test');
+  try {
+    const result = state.reviewDraft ? await testDraftFunction(state) : await testDiscoveryFunction(state);
+    state.setReviewTestResult(result);
+  } catch (error) {
+    state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    state.setReviewLoading(null);
+  }
+}
+
+async function testDraftFunction(state: ReviewState) {
+  let draftId = state.reviewDraft!.draft.draftId;
+  if (state.reviewDraftContent !== state.savedReviewDraftContent) {
+    const saved = await api.saveAdapterDraftContent(draftId, { content: state.reviewDraftContent });
+    applyDraft(state, saved.data);
+    draftId = saved.data.draft.draftId;
+  }
+  const response = await api.testAdapterDraftFunction(draftId, state.selectedReviewFunctionId,
+    { url: state.reviewTestUrl.trim() });
+  return response.data;
+}
+
+async function testDiscoveryFunction(state: ReviewState) {
+  const response = await api.testSelectorDiscoveryFunction(state.reviewJob!.id,
+    state.selectedReviewFunctionId, { url: state.reviewTestUrl.trim() });
+  return response.data;
+}
+
+async function approveReview(context: ReviewContext) {
+  if (!context.state.reviewJob) return;
+  beginReviewAction(context.state, 'approve');
+  try {
+    await api.promoteSelectorDiscovery(context.state.reviewJob.id);
+    await Promise.all([context.options.fetchBuildJobs?.(), context.options.fetchAdapters?.(),
+      context.options.fetchSiteAdapters?.()]);
+    const refreshed = await api.getSelectorDiscovery(context.state.reviewJob.id);
+    context.state.setReviewJob(refreshed.data);
+  } catch (error) {
+    context.state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    context.state.setReviewLoading(null);
+  }
+}
+
+async function rejectReview(context: ReviewContext) {
+  if (!context.state.reviewJob) return;
+  beginReviewAction(context.state, 'reject');
+  try {
+    const response = await api.rejectSelectorDiscovery(context.state.reviewJob.id);
+    await context.options.fetchBuildJobs?.();
+    context.state.setReviewJob(response.data);
+  } catch (error) {
+    context.state.setReviewError(getApiErrorMessage(error));
+  } finally {
+    context.state.setReviewLoading(null);
+  }
+}
+
+function closeReview(state: ReviewState) {
+  state.setReviewJob(null); state.setReviewImplementation(null); state.setReviewCapabilities(null);
+  state.setReviewDraft(null); state.setReviewDraftContent(''); state.setSavedReviewDraftContent('');
+  state.setFunctionRevisionInstruction(''); state.setFunctionRevisionMessage(null);
+  state.setReviewTestResult(null); state.setReviewError(null);
+}
+
+function beginReviewAction(state: ReviewState, loading: ReviewState['reviewLoading'], clearTest = false) {
+  state.setReviewLoading(loading);
+  state.setReviewError(null);
+  if (clearTest) state.setReviewTestResult(null);
+}
+
+function beginRevision(state: ReviewState) {
+  beginReviewAction(state, 'revision');
+  state.setFunctionRevisionMessage(null);
+}
+
+function useRevisionPolling(state: ReviewState) {
+  const { reviewDraft, reviewJob, setReviewDraftContent, setReviewImplementation,
+    setReviewJob, setSavedReviewDraftContent } = state;
   useEffect(() => {
-    if (!reviewJob?.functionRevisionTasks?.some((task) => task.status === 'queued' || task.status === 'running')) {
-      return;
-    }
-    const timer = window.setInterval(async () => {
-      try {
-        const [jobResponse, implementationResponse] = await Promise.all([
-          api.getSelectorDiscovery(reviewJob.id),
-          api.getSelectorDiscoveryImplementation(reviewJob.id),
-        ]);
-        setReviewJob(jobResponse.data);
-        setReviewImplementation(implementationResponse.data);
-        if (!reviewDraft) {
-          setReviewDraftContent('');
-          setSavedReviewDraftContent('');
-        }
-      } catch {
-        // Keep the current review panel visible; explicit actions will surface errors.
-      }
-    }, 3000);
+    const active = reviewJob?.functionRevisionTasks?.some((task) => ['queued', 'running'].includes(task.status));
+    if (!active || !reviewJob) return;
+    const timer = window.setInterval(() => void pollRevision(reviewJob.id, reviewDraft,
+      { setReviewDraftContent, setReviewImplementation, setReviewJob, setSavedReviewDraftContent }), 3000);
     return () => window.clearInterval(timer);
-  }, [reviewDraft, reviewJob]);
+  }, [reviewDraft, reviewJob, setReviewDraftContent, setReviewImplementation, setReviewJob, setSavedReviewDraftContent]);
+}
 
-  return {
-    reviewJob,
-    reviewImplementation,
-    reviewCapabilities,
-    reviewDraft,
-    reviewDraftContent,
-    setReviewDraftContent,
-    savedReviewDraftContent,
-    selectedReviewFunctionId,
-    setSelectedReviewFunctionId,
-    reviewTestUrl,
-    setReviewTestUrl,
-    reviewTestResult,
-    setReviewTestResult,
-    functionRevisionInstruction,
-    setFunctionRevisionInstruction,
-    functionRevisionModelMode,
-    setFunctionRevisionModelMode,
-    functionRevisionMessage,
-    reviewError,
-    reviewLoading,
-    openReviewJob,
-    createEditableReviewDraft,
-    saveEditableReviewDraft,
-    resetEditableReviewDraft,
-    requestFunctionRevision,
-    retryFunctionRevision,
-    runReviewFunctionTest,
-    approveReviewJob,
-    rejectReviewJob,
-    closeReview,
-  };
+type PollSetters = Pick<ReviewState, 'setReviewDraftContent' | 'setReviewImplementation'
+  | 'setReviewJob' | 'setSavedReviewDraftContent'>;
+
+async function pollRevision(id: string, draft: AdapterDraftDetailResponse | null, state: PollSetters) {
+  try {
+    const [job, implementation] = await Promise.all([
+      api.getSelectorDiscovery(id), api.getSelectorDiscoveryImplementation(id)]);
+    state.setReviewJob(job.data);
+    state.setReviewImplementation(implementation.data);
+    if (!draft) { state.setReviewDraftContent(''); state.setSavedReviewDraftContent(''); }
+  } catch {
+    // Keep the review panel visible; explicit actions surface errors.
+  }
 }

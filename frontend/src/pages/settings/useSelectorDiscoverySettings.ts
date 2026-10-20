@@ -3,18 +3,27 @@ import { api } from '../../api/client';
 import type { SelectorDiscoveryAoModelsResponse } from '@comiccrawler/shared';
 import { DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON } from './provider-template';
 
-export type SelectorDiscoverySaveState =
-  | { state: 'idle' }
-  | { state: 'saving' }
-  | { state: 'saved'; at: string }
-  | { state: 'error'; message: string };
-
+export type SelectorDiscoverySaveState = { state: 'idle' } | { state: 'saving' }
+  | { state: 'saved'; at: string } | { state: 'error'; message: string };
 const AUTO_SAVE_DELAY_MS = 1200;
 
-export function useSelectorDiscoverySettings(options: {
-  fetchConfig: () => Promise<void> | void;
-}) {
-  const { fetchConfig } = options;
+export function useSelectorDiscoverySettings(options: { fetchConfig: () => Promise<void> | void }) {
+  const state = useSelectorDiscoveryState();
+  const refs = useSelectorDiscoveryRefs();
+  const refreshSelectorDiscoveryBundleStatus = useBundleStatusRefresh(state);
+  const refreshSelectorDiscoveryBundleEvaluations = useBundleEvaluationsRefresh(state);
+  useInitialSelectorDiscovery(options.fetchConfig, state, refs,
+    refreshSelectorDiscoveryBundleStatus, refreshSelectorDiscoveryBundleEvaluations);
+  useSelectorDiscoveryAutosave(state, refs);
+  const context = { state, refs };
+  return { ...state, refreshSelectorDiscoveryBundleStatus, refreshSelectorDiscoveryBundleEvaluations,
+    handleLoadDefaultSelectorDiscoveryProvider: () => loadDefaultProvider(state),
+    handleSelectorDiscoveryClear: () => clearProvider(state),
+    handleSelectorDiscoveryTest: () => testProvider(state),
+    handleRefreshSelectorDiscoveryAoModels: () => refreshModels(context) };
+}
+
+function useSelectorDiscoveryState() {
   const [selectorDiscoveryConfig, setSelectorDiscoveryConfig] = useState<any | null>(null);
   const [selectorDiscoveryBundleStatus, setSelectorDiscoveryBundleStatus] = useState<any | null>(null);
   const [selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations] = useState<any[]>([]);
@@ -26,175 +35,187 @@ export function useSelectorDiscoverySettings(options: {
   const [selectorDiscoveryMessage, setSelectorDiscoveryMessage] = useState<string | null>(null);
   const [selectorDiscoveryPreflight, setSelectorDiscoveryPreflight] = useState<any | null>(null);
   const [selectorDiscoverySaveState, setSelectorDiscoverySaveState] = useState<SelectorDiscoverySaveState>({ state: 'idle' });
+  return { selectorDiscoveryConfig, setSelectorDiscoveryConfig, selectorDiscoveryBundleStatus,
+    setSelectorDiscoveryBundleStatus, selectorDiscoveryBundleEvaluations, setSelectorDiscoveryBundleEvaluations,
+    selectorDiscoveryAoModels, setSelectorDiscoveryAoModels, selectorDiscoveryAoModelsLoading,
+    setSelectorDiscoveryAoModelsLoading, aoBaseUrl, setAoBaseUrl, model, setModel, providerJson, setProviderJson,
+    selectorDiscoveryMessage, setSelectorDiscoveryMessage, selectorDiscoveryPreflight, setSelectorDiscoveryPreflight,
+    selectorDiscoverySaveState, setSelectorDiscoverySaveState };
+}
+
+function useSelectorDiscoveryRefs() {
   const initialLoadRef = useRef(false);
   const lastSavedSnapshotRef = useRef('');
+  return { initialLoadRef, lastSavedSnapshotRef };
+}
 
-  const refreshSelectorDiscoveryBundleStatus = useCallback(async () => {
+type DiscoveryState = ReturnType<typeof useSelectorDiscoveryState>;
+type DiscoveryRefs = ReturnType<typeof useSelectorDiscoveryRefs>;
+
+function useBundleStatusRefresh(state: DiscoveryState) {
+  const { setSelectorDiscoveryBundleStatus } = state;
+  return useCallback(async () => {
     try {
       const response = await api.getSelectorDiscoveryBundleStatus();
       setSelectorDiscoveryBundleStatus(response.data);
-    } catch (err: any) {
-      setSelectorDiscoveryBundleStatus({
-        verified: false,
-        error: err.response?.data?.error ?? err.message,
-      });
+    } catch (error: any) {
+      setSelectorDiscoveryBundleStatus({ verified: false, error: error.response?.data?.error ?? error.message });
     }
-  }, []);
+  }, [setSelectorDiscoveryBundleStatus]);
+}
 
-  const refreshSelectorDiscoveryBundleEvaluations = useCallback(async () => {
+function useBundleEvaluationsRefresh(state: DiscoveryState) {
+  const { setSelectorDiscoveryBundleEvaluations } = state;
+  return useCallback(async () => {
     try {
       const response = await api.getSelectorDiscoveryBundleEvaluations();
       setSelectorDiscoveryBundleEvaluations(response.data.evaluations ?? []);
     } catch {
       setSelectorDiscoveryBundleEvaluations([]);
     }
-  }, []);
+  }, [setSelectorDiscoveryBundleEvaluations]);
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch populating several states; move to route loader or data-fetching hook */
+function useInitialSelectorDiscovery(fetchConfig: () => Promise<void> | void, state: DiscoveryState,
+  refs: DiscoveryRefs, refreshStatus: () => Promise<void>, refreshEvaluations: () => Promise<void>) {
+  const { setSelectorDiscoveryConfig, setAoBaseUrl, setModel, setProviderJson } = state;
+  const { initialLoadRef, lastSavedSnapshotRef } = refs;
   useEffect(() => {
-    fetchConfig();
-    api.getSelectorDiscoveryConfig().then((response) => {
-      setSelectorDiscoveryConfig(response.data);
-      setAoBaseUrl(response.data.aoBaseUrl ?? '');
-      setModel(response.data.model ?? '');
-      if (response.data.configured) {
-        setProviderJson('');
-      } else {
-        setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-      }
-      lastSavedSnapshotRef.current = snapshotSelectorDiscoveryFields(
-        response.data.aoBaseUrl ?? '',
-        response.data.model ?? '',
-        response.data.configured ? '' : DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON
-      );
-      initialLoadRef.current = true;
-    }).catch(() => undefined);
-    refreshSelectorDiscoveryBundleStatus();
-    refreshSelectorDiscoveryBundleEvaluations();
-  }, [fetchConfig, refreshSelectorDiscoveryBundleStatus, refreshSelectorDiscoveryBundleEvaluations]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+    void fetchConfig();
+    void loadSelectorDiscoveryConfig({ setSelectorDiscoveryConfig, setAoBaseUrl, setModel, setProviderJson },
+      { initialLoadRef, lastSavedSnapshotRef });
+    void refreshStatus();
+    void refreshEvaluations();
+  }, [fetchConfig, initialLoadRef, lastSavedSnapshotRef, refreshEvaluations, refreshStatus,
+    setAoBaseUrl, setModel, setProviderJson, setSelectorDiscoveryConfig]);
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- auto-save state machine: sync status transitions (idle/invalid/saving) are the effect's purpose */
+type InitialSetters = Pick<DiscoveryState, 'setSelectorDiscoveryConfig' | 'setAoBaseUrl' | 'setModel' | 'setProviderJson'>;
+
+async function loadSelectorDiscoveryConfig(state: InitialSetters, refs: DiscoveryRefs) {
+  try {
+    const response = await api.getSelectorDiscoveryConfig();
+    applyLoadedConfig(response.data, state, refs);
+  } catch {
+    // Settings page remains usable when selector discovery is not configured.
+  }
+}
+
+function applyLoadedConfig(config: any, state: InitialSetters, refs: DiscoveryRefs) {
+  const providerJson = config.configured ? '' : DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON;
+  state.setSelectorDiscoveryConfig(config);
+  state.setAoBaseUrl(config.aoBaseUrl ?? '');
+  state.setModel(config.model ?? '');
+  state.setProviderJson(providerJson);
+  refs.lastSavedSnapshotRef.current = snapshotSelectorDiscoveryFields(config.aoBaseUrl ?? '', config.model ?? '', providerJson);
+  refs.initialLoadRef.current = true;
+}
+
+function useSelectorDiscoveryAutosave(state: DiscoveryState, refs: DiscoveryRefs) {
+  const { aoBaseUrl, model, providerJson, selectorDiscoveryConfig } = state;
+  const { setSelectorDiscoveryConfig, setProviderJson, setSelectorDiscoverySaveState } = state;
+  const { initialLoadRef, lastSavedSnapshotRef } = refs;
   useEffect(() => {
     if (!initialLoadRef.current) return;
-    const snapshot = snapshotSelectorDiscoveryFields(aoBaseUrl, model, providerJson);
-    if (snapshot === lastSavedSnapshotRef.current) return;
-    if (!aoBaseUrl.trim() || !model.trim() || (!selectorDiscoveryConfig?.configured && !providerJson.trim())) {
-      setSelectorDiscoverySaveState({ state: 'idle' });
-      return;
-    }
-    const trimmedProviderJson = providerJson.trim();
-    let providerDocument: unknown | undefined;
-    if (trimmedProviderJson) {
-      try {
-        providerDocument = JSON.parse(trimmedProviderJson);
-      } catch {
-        setSelectorDiscoverySaveState({ state: 'error', message: 'Provider JSON is not valid JSON; waiting for fixes before auto-saving.' });
-        return;
-      }
-    }
+    const request = buildAutosaveRequest(aoBaseUrl, model, providerJson, selectorDiscoveryConfig?.configured,
+      lastSavedSnapshotRef.current);
+    if (request.kind === 'same') return;
+    if (request.kind === 'idle') { setSelectorDiscoverySaveState({ state: 'idle' }); return; }
+    if (request.kind === 'error') { setSelectorDiscoverySaveState({ state: 'error', message: request.message }); return; }
     setSelectorDiscoverySaveState({ state: 'saving' });
-    const timer = setTimeout(async () => {
-      try {
-        const response = await api.updateSelectorDiscoveryConfig({
-          aoBaseUrl,
-          model,
-          ...(providerDocument !== undefined ? { providerDocument } : {}),
-        });
-        setSelectorDiscoveryConfig(response.data);
-        lastSavedSnapshotRef.current = snapshotSelectorDiscoveryFields(
-          aoBaseUrl,
-          model,
-          providerDocument !== undefined ? '' : providerJson
-        );
-        if (providerDocument !== undefined) {
-          setProviderJson('');
-        }
-        setSelectorDiscoverySaveState({ state: 'saved', at: new Date().toLocaleTimeString() });
-      } catch (err: any) {
-        setSelectorDiscoverySaveState({ state: 'error', message: err.response?.data?.error ?? err.message });
-      }
-    }, AUTO_SAVE_DELAY_MS);
+    const setters = { setSelectorDiscoveryConfig, setProviderJson, setSelectorDiscoverySaveState };
+    const timer = setTimeout(() => void saveSelectorDiscovery(request, setters, { initialLoadRef, lastSavedSnapshotRef }), AUTO_SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [aoBaseUrl, model, providerJson, selectorDiscoveryConfig?.configured]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [aoBaseUrl, initialLoadRef, lastSavedSnapshotRef, model, providerJson, selectorDiscoveryConfig?.configured,
+    setProviderJson, setSelectorDiscoveryConfig, setSelectorDiscoverySaveState]);
+}
 
-  const handleLoadDefaultSelectorDiscoveryProvider = useCallback(() => {
-    setModel('');
-    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-    setSelectorDiscoveryMessage('Loaded the OpenCode provider template. Pick a model returned by AO; settings save automatically.');
-  }, []);
+type AutosaveRequest = { kind: 'save'; snapshot: string; aoBaseUrl: string; model: string;
+  providerJson: string; providerDocument?: unknown } | { kind: 'same' } | { kind: 'idle' }
+  | { kind: 'error'; message: string };
 
-  const handleSelectorDiscoveryClear = useCallback(async () => {
-    const response = await api.clearSelectorDiscoveryProvider();
-    setSelectorDiscoveryConfig(response.data);
-    setModel('');
-    setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
-    setSelectorDiscoveryMessage('Selector discovery provider cleared.');
-  }, []);
+function buildAutosaveRequest(aoBaseUrl: string, model: string, providerJson: string,
+  configured: boolean | undefined, lastSnapshot: string): AutosaveRequest {
+  const snapshot = snapshotSelectorDiscoveryFields(aoBaseUrl, model, providerJson);
+  if (snapshot === lastSnapshot) return { kind: 'same' };
+  if (!aoBaseUrl.trim() || !model.trim() || (!configured && !providerJson.trim())) return { kind: 'idle' };
+  try {
+    const providerDocument = providerJson.trim() ? JSON.parse(providerJson.trim()) : undefined;
+    return { kind: 'save', snapshot, aoBaseUrl, model, providerJson, providerDocument };
+  } catch {
+    return { kind: 'error', message: 'Provider JSON is not valid JSON; waiting for fixes before auto-saving.' };
+  }
+}
 
-  const handleSelectorDiscoveryTest = useCallback(async () => {
-    setSelectorDiscoveryMessage(null);
-    setSelectorDiscoveryPreflight(null);
-    try {
-      const response = await api.testSelectorDiscoveryConfig();
-      setSelectorDiscoveryPreflight(response.data);
-      setSelectorDiscoveryAoModels({
-        conversationId: response.data.conversationId,
-        bundleHash: response.data.bundleHash,
-        providers: response.data.providers ?? [],
-        models: response.data.models ?? [],
-      });
-      setSelectorDiscoveryMessage(`AO smoke test passed. Bundle ${response.data.bundleHash?.slice(0, 12) ?? '-'} / ${response.data.model}`);
-    } catch (err: any) {
-      setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
-      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
-    }
-  }, []);
+type AutosaveSetters = Pick<DiscoveryState, 'setSelectorDiscoveryConfig' | 'setProviderJson' | 'setSelectorDiscoverySaveState'>;
 
-  const handleRefreshSelectorDiscoveryAoModels = useCallback(async () => {
-    setSelectorDiscoveryMessage(null);
-    setSelectorDiscoveryPreflight(null);
-    setSelectorDiscoveryAoModelsLoading(true);
-    try {
-      const response = await api.getSelectorDiscoveryAoModels(aoBaseUrl);
-      setSelectorDiscoveryAoModels(response.data);
-      const containsSelectedModel = response.data.models.some((item) => item.id === model);
-      setSelectorDiscoveryMessage(
-        `AO returned ${response.data.providers.length} providers and ${response.data.models.length} models.`
-        + (containsSelectedModel ? '' : ` Selected model "${model}" was not found in AO provider list.`)
-      );
-    } catch (err: any) {
-      setSelectorDiscoveryPreflight(err.response?.data?.data ?? null);
-      setSelectorDiscoveryMessage(err.response?.data?.error ?? err.message);
-    } finally {
-      setSelectorDiscoveryAoModelsLoading(false);
-    }
-  }, [aoBaseUrl, model]);
+async function saveSelectorDiscovery(request: Extract<AutosaveRequest, { kind: 'save' }>, state: AutosaveSetters, refs: DiscoveryRefs) {
+  try {
+    const response = await api.updateSelectorDiscoveryConfig({ aoBaseUrl: request.aoBaseUrl,
+      model: request.model, ...(request.providerDocument !== undefined ? { providerDocument: request.providerDocument } : {}) });
+    state.setSelectorDiscoveryConfig(response.data);
+    refs.lastSavedSnapshotRef.current = snapshotSelectorDiscoveryFields(request.aoBaseUrl, request.model,
+      request.providerDocument !== undefined ? '' : request.providerJson);
+    if (request.providerDocument !== undefined) state.setProviderJson('');
+    state.setSelectorDiscoverySaveState({ state: 'saved', at: new Date().toLocaleTimeString() });
+  } catch (error: any) {
+    state.setSelectorDiscoverySaveState({ state: 'error', message: error.response?.data?.error ?? error.message });
+  }
+}
 
-  return {
-    selectorDiscoveryConfig,
-    selectorDiscoveryBundleStatus,
-    setSelectorDiscoveryBundleStatus,
-    selectorDiscoveryBundleEvaluations,
-    selectorDiscoveryAoModels,
-    selectorDiscoveryAoModelsLoading,
-    aoBaseUrl,
-    setAoBaseUrl,
-    model,
-    setModel,
-    providerJson,
-    setProviderJson,
-    selectorDiscoveryMessage,
-    selectorDiscoveryPreflight,
-    selectorDiscoverySaveState,
-    refreshSelectorDiscoveryBundleStatus,
-    refreshSelectorDiscoveryBundleEvaluations,
-    handleLoadDefaultSelectorDiscoveryProvider,
-    handleSelectorDiscoveryClear,
-    handleSelectorDiscoveryTest,
-    handleRefreshSelectorDiscoveryAoModels,
-  };
+function loadDefaultProvider(state: DiscoveryState) {
+  state.setModel('');
+  state.setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
+  state.setSelectorDiscoveryMessage('Loaded the OpenCode provider template. Pick a model returned by AO; settings save automatically.');
+}
+
+async function clearProvider(state: DiscoveryState) {
+  const response = await api.clearSelectorDiscoveryProvider();
+  state.setSelectorDiscoveryConfig(response.data);
+  state.setModel('');
+  state.setProviderJson(DEFAULT_SELECTOR_DISCOVERY_PROVIDER_JSON);
+  state.setSelectorDiscoveryMessage('Selector discovery provider cleared.');
+}
+
+async function testProvider(state: DiscoveryState) {
+  state.setSelectorDiscoveryMessage(null);
+  state.setSelectorDiscoveryPreflight(null);
+  try {
+    const response = await api.testSelectorDiscoveryConfig();
+    applyTestResponse(response.data, state);
+  } catch (error: any) {
+    state.setSelectorDiscoveryPreflight(error.response?.data?.data ?? null);
+    state.setSelectorDiscoveryMessage(error.response?.data?.error ?? error.message);
+  }
+}
+
+function applyTestResponse(data: any, state: DiscoveryState) {
+  state.setSelectorDiscoveryPreflight(data);
+  state.setSelectorDiscoveryAoModels({ conversationId: data.conversationId, bundleHash: data.bundleHash,
+    providers: data.providers ?? [], models: data.models ?? [] });
+  state.setSelectorDiscoveryMessage(`AO smoke test passed. Bundle ${data.bundleHash?.slice(0, 12) ?? '-'} / ${data.model}`);
+}
+
+async function refreshModels(context: { state: DiscoveryState; refs: DiscoveryRefs }) {
+  const { state } = context;
+  state.setSelectorDiscoveryMessage(null);
+  state.setSelectorDiscoveryPreflight(null);
+  state.setSelectorDiscoveryAoModelsLoading(true);
+  try {
+    const response = await api.getSelectorDiscoveryAoModels(state.aoBaseUrl);
+    state.setSelectorDiscoveryAoModels(response.data);
+    state.setSelectorDiscoveryMessage(formatModelsMessage(response.data, state.model));
+  } catch (error: any) {
+    state.setSelectorDiscoveryPreflight(error.response?.data?.data ?? null);
+    state.setSelectorDiscoveryMessage(error.response?.data?.error ?? error.message);
+  } finally {
+    state.setSelectorDiscoveryAoModelsLoading(false);
+  }
+}
+
+function formatModelsMessage(data: SelectorDiscoveryAoModelsResponse, model: string) {
+  const missing = data.models.some((item) => item.id === model) ? '' : ` Selected model "${model}" was not found in AO provider list.`;
+  return `AO returned ${data.providers.length} providers and ${data.models.length} models.${missing}`;
 }
 
 function snapshotSelectorDiscoveryFields(aoBaseUrl: string, model: string, providerJson: string): string {

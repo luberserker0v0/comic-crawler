@@ -1,269 +1,180 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { useTaskStore, type CrawlStage, type TaskDetail } from '../../store';
 import { useWebSocket } from '../../hooks';
 import { mergePreviewFile } from './widgets';
 import { parseChapterListSummary } from '../../utils/chapter-summary';
 
+type RealtimeMessage = { event?: string; data?: Record<string, unknown> };
 export function useSelectedTask(selectedTaskId: string | null) {
-  const applyRealtimeEvent = useTaskStore((state) => state.applyRealtimeEvent);
+  const state = useDetailState();
+  const applyRealtimeEvent = useTaskStore((value) => value.applyRealtimeEvent);
+  useInitialDetail(selectedTaskId, state);
+  const refreshTaskDetail = (id: string) => refreshDetail(id, state);
+  const handleMessage = (message: RealtimeMessage) => {
+    handleRealtimeMessage(message, selectedTaskId, applyRealtimeEvent, state);
+  };
+  const connected = useTaskRealtime(handleMessage);
+  return { detail: state.detail, setDetail: state.setDetail, detailLoading: state.detailLoading,
+    detailError: state.detailError, setDetailError: state.setDetailError, refreshTaskDetail, connected };
+}
+
+function useDetailState() {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  return { detail, setDetail, detailLoading, setDetailLoading, detailError, setDetailError };
+}
 
+type DetailState = ReturnType<typeof useDetailState>;
+
+function useInitialDetail(selectedTaskId: string | null, state: DetailState) {
+  const { setDetail, setDetailError, setDetailLoading } = state;
   useEffect(() => {
-    if (!selectedTaskId) {
-      return;
-    }
-
+    if (!selectedTaskId) return;
     let cancelled = false;
-    const loadDetail = async () => {
-      setDetailLoading(true);
-      setDetailError(null);
-      try {
-        const response = await api.getTask(selectedTaskId);
-        if (!cancelled) {
-          setDetail(response.data);
-        }
-      } catch (loadError: any) {
-        if (!cancelled) {
-          setDetailError(loadError.message);
-        }
-      } finally {
-        if (!cancelled) {
-          setDetailLoading(false);
-        }
-      }
-    };
+    void loadInitialDetail(selectedTaskId, { setDetail, setDetailError, setDetailLoading }, () => cancelled);
+    return () => { cancelled = true; };
+  }, [selectedTaskId, setDetail, setDetailError, setDetailLoading]);
+}
 
-    void loadDetail();
+type DetailSetters = Pick<DetailState, 'setDetail' | 'setDetailError' | 'setDetailLoading'>;
 
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTaskId]);
+async function loadInitialDetail(id: string, state: DetailSetters, cancelled: () => boolean) {
+  state.setDetailLoading(true);
+  state.setDetailError(null);
+  try {
+    const response = await api.getTask(id);
+    if (!cancelled()) state.setDetail(response.data);
+  } catch (error: any) {
+    if (!cancelled()) state.setDetailError(error.message);
+  } finally {
+    if (!cancelled()) state.setDetailLoading(false);
+  }
+}
 
-  const refreshTaskDetail = useCallback(async (id: string) => {
-    setDetailLoading(true);
-    setDetailError(null);
-    try {
-      const response = await api.getTask(id);
-      setDetail(response.data);
-      return response.data as TaskDetail;
-    } catch (loadError: any) {
-      setDetailError(loadError.response?.data?.error ?? loadError.message);
-      return null;
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+async function refreshDetail(id: string, state: DetailSetters): Promise<TaskDetail | null> {
+  state.setDetailLoading(true);
+  state.setDetailError(null);
+  try {
+    const response = await api.getTask(id);
+    state.setDetail(response.data);
+    return response.data as TaskDetail;
+  } catch (error: any) {
+    state.setDetailError(error.response?.data?.error ?? error.message);
+    return null;
+  } finally {
+    state.setDetailLoading(false);
+  }
+}
 
-  const handleRealtimeMessage = useCallback((message: { event?: string; data?: Record<string, unknown> }) => {
-    if (!message.event?.startsWith('task:') && message.event !== 'image:downloaded') {
-      return;
-    }
+function handleRealtimeMessage(message: RealtimeMessage, selectedId: string | null,
+  applyRealtimeEvent: ReturnType<typeof useTaskStore.getState>['applyRealtimeEvent'], state: DetailSetters) {
+  if (!message.event?.startsWith('task:') && message.event !== 'image:downloaded') return;
+  if (message.event.startsWith('task:')) applyRealtimeEvent(message);
+  const taskId = typeof message.data?.taskId === 'string' ? message.data.taskId : null;
+  if (!taskId || taskId !== selectedId) return;
+  applyDetailEvent(message, taskId, state);
+}
 
-    if (message.event.startsWith('task:')) {
-      applyRealtimeEvent(message);
-    }
+function applyDetailEvent(message: RealtimeMessage, taskId: string, state: DetailSetters) {
+  if (message.event === 'image:downloaded') state.setDetail(
+    (current) => mergePreviewFile(current, message.data?.previewFile));
+  else if (message.event === 'task:metadata_extracted') state.setDetail(
+    (current) => updateMetadata(current, message.data));
+  else if (message.event === 'task:chapter_list_extracted') state.setDetail(
+    (current) => updateChapterList(current, message.data));
+  else if (message.event === 'task:progress') state.setDetail(
+    (current) => updateProgress(current, message.data?.progress));
+  else if (statusEvents.includes(message.event ?? '')) state.setDetail(
+    (current) => updateTaskStatus(current, message.event!));
+  else if (terminalEvents.includes(message.event ?? '')) void refreshDetail(taskId, state);
+}
 
-    const eventTaskId = typeof message.data?.taskId === 'string' ? message.data.taskId : null;
-    if (!eventTaskId || eventTaskId !== selectedTaskId) {
-      return;
-    }
+function updateMetadata(current: TaskDetail | null, data?: Record<string, unknown>): TaskDetail | null {
+  if (!current) return current;
+  const metadata = isRecord(data?.metadata) ? data!.metadata as Record<string, unknown> : undefined;
+  const chapterListSummary = parseChapterListSummary(data?.chapterListSummary);
+  return { ...current, result: { taskId: current.result?.taskId ?? current.task.id,
+    status: current.result?.status ?? current.task.status, downloadedImages: current.result?.downloadedImages ?? 0,
+    failedImages: current.result?.failedImages ?? 0, totalImages: current.result?.totalImages ?? 0,
+    ...current.result, ...(metadata ? { metadata } : {}) },
+  progress: createProgress(current, 'metadata', 'metadata extracted', metadata, chapterListSummary) };
+}
 
-    if (message.event === 'image:downloaded') {
-      setDetail((current) => mergePreviewFile(current, message.data?.previewFile));
-      return;
-    }
+function updateChapterList(current: TaskDetail | null, data?: Record<string, unknown>): TaskDetail | null {
+  if (!current) return current;
+  const summary = parseChapterListSummary(data?.chapterListSummary);
+  if (!summary) return current;
+  return { ...current, progress: createProgress(current, 'chapter_list', 'chapter list extracted', undefined, summary) };
+}
 
-    if (message.event === 'task:metadata_extracted') {
-      const metadata = message.data?.metadata && typeof message.data.metadata === 'object'
-        ? message.data.metadata as Record<string, unknown>
-        : undefined;
-      const chapterListSummary = parseChapterListSummary(message.data?.chapterListSummary);
-      setDetail((current) => current ? ({
-        ...current,
-        result: {
-          taskId: current.result?.taskId ?? current.task.id,
-          status: current.result?.status ?? current.task.status,
-          downloadedImages: current.result?.downloadedImages ?? 0,
-          failedImages: current.result?.failedImages ?? 0,
-          totalImages: current.result?.totalImages ?? 0,
-          ...current.result,
-          ...(metadata ? { metadata } : {}),
-        },
-        progress: current.progress ? {
-          ...current.progress,
-          stage: current.progress.stage ?? 'metadata',
-          stageDetail: current.progress.stageDetail ?? 'metadata extracted',
-          ...(metadata ? { metadata } : {}),
-          ...(chapterListSummary ? { chapterListSummary } : {}),
-        } : {
-          totalItems: 0,
-          completedItems: 0,
-          failedItems: 0,
-          percentage: 0,
-          stage: 'metadata',
-          stageDetail: 'metadata extracted',
-          ...(metadata ? { metadata } : {}),
-          ...(chapterListSummary ? { chapterListSummary } : {}),
-        },
-      }) : current);
-      return;
-    }
+function createProgress(current: TaskDetail, stage: CrawlStage, stageDetail: string,
+  metadata?: Record<string, unknown>, chapterListSummary?: ReturnType<typeof parseChapterListSummary>) {
+  return { totalItems: current.progress?.totalItems ?? 0, completedItems: current.progress?.completedItems ?? 0,
+    failedItems: current.progress?.failedItems ?? 0, percentage: current.progress?.percentage ?? 0,
+    ...current.progress, stage: current.progress?.stage ?? stage,
+    stageDetail: current.progress?.stageDetail ?? stageDetail, ...(metadata ? { metadata } : {}),
+    ...(chapterListSummary ? { chapterListSummary } : {}) };
+}
 
-    if (message.event === 'task:chapter_list_extracted') {
-      const chapterListSummary = parseChapterListSummary(message.data?.chapterListSummary);
-      if (!chapterListSummary) {
-        return;
-      }
-      setDetail((current) => current ? ({
-        ...current,
-        progress: current.progress ? {
-          ...current.progress,
-          stage: current.progress.stage ?? 'chapter_list',
-          stageDetail: current.progress.stageDetail ?? 'chapter list extracted',
-          chapterListSummary,
-        } : {
-          totalItems: 0,
-          completedItems: 0,
-          failedItems: 0,
-          percentage: 0,
-          stage: 'chapter_list',
-          stageDetail: 'chapter list extracted',
-          chapterListSummary,
-        },
-      }) : current);
-      return;
-    }
+function updateProgress(current: TaskDetail | null, value: unknown): TaskDetail | null {
+  if (!current || !isRecord(value)) return current;
+  const parsed = parseProgress(value);
+  const now = new Date().toISOString();
+  return { ...current, task: { ...current.task,
+    status: ['pending', 'paused'].includes(current.task.status) ? 'running' : current.task.status },
+  progress: { ...parsed, startedAt: current.progress?.startedAt ?? current.task.startedAt ?? now, updatedAt: now },
+  result: parsed.metadata ? updateResult(current, parsed.metadata, value.outputPath) : current.result };
+}
 
-    if (message.event === 'task:progress') {
-      const progressData = message.data?.progress as Record<string, unknown> | undefined;
-      if (!progressData) {
-        return;
-      }
+function parseProgress(data: Record<string, unknown>) {
+  const totalItems = numberValue(data.totalImages), completedItems = numberValue(data.completedImages);
+  const failedItems = numberValue(data.failedImages);
+  const currentItems = typeof data.currentChapter === 'string' ? data.currentChapter : undefined;
+  const stage = typeof data.stage === 'string' ? data.stage as CrawlStage : undefined;
+  const metadata = isRecord(data.metadata) ? data.metadata as Record<string, unknown> : undefined;
+  const chapterListSummary = parseChapterListSummary(data.chapterListSummary);
+  return { totalItems, completedItems, failedItems, percentage: totalItems > 0 ? Math.round(completedItems / totalItems * 100) : 0,
+    stage, stageDetail: typeof data.stageDetail === 'string' ? data.stageDetail : currentItems, currentItems,
+    ...(metadata ? { metadata } : {}), ...(chapterListSummary ? { chapterListSummary } : {}) };
+}
 
-      const totalItems = typeof progressData.totalImages === 'number' ? progressData.totalImages : 0;
-      const completedItems = typeof progressData.completedImages === 'number' ? progressData.completedImages : 0;
-      const failedItems = typeof progressData.failedImages === 'number' ? progressData.failedImages : 0;
-      const currentItems = typeof progressData.currentChapter === 'string' ? progressData.currentChapter : undefined;
-      const stage = typeof progressData.stage === 'string' ? progressData.stage as CrawlStage : undefined;
-      const stageDetail = typeof progressData.stageDetail === 'string' ? progressData.stageDetail : currentItems;
-      const metadata = progressData.metadata && typeof progressData.metadata === 'object'
-        ? progressData.metadata as Record<string, unknown>
-        : undefined;
-      const chapterListSummary = parseChapterListSummary(progressData.chapterListSummary);
-      const percentage = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
-      const now = new Date().toISOString();
+function updateResult(current: TaskDetail, metadata: Record<string, unknown>, outputPath: unknown) {
+  return { taskId: current.result?.taskId ?? current.task.id, status: current.result?.status ?? current.task.status,
+    downloadedImages: current.result?.downloadedImages ?? 0, failedImages: current.result?.failedImages ?? 0,
+    totalImages: current.result?.totalImages ?? 0, ...current.result, metadata,
+    ...(typeof outputPath === 'string' ? { outputPath } : {}) };
+}
 
-      setDetail((current) => current ? ({
-        ...current,
-        task: {
-          ...current.task,
-          status: current.task.status === 'pending' || current.task.status === 'paused' ? 'running' : current.task.status,
-        },
-        progress: {
-          totalItems,
-          completedItems,
-          failedItems,
-          percentage,
-          stage,
-          stageDetail,
-          currentItems,
-          ...(metadata ? { metadata } : {}),
-          ...(chapterListSummary ? { chapterListSummary } : {}),
-          startedAt: current.progress?.startedAt ?? current.task.startedAt ?? now,
-          updatedAt: now,
-        },
-        result: metadata ? {
-          taskId: current.result?.taskId ?? current.task.id,
-          status: current.result?.status ?? current.task.status,
-          downloadedImages: current.result?.downloadedImages ?? 0,
-          failedImages: current.result?.failedImages ?? 0,
-          totalImages: current.result?.totalImages ?? 0,
-          ...current.result,
-          metadata,
-          ...(typeof progressData.outputPath === 'string' ? { outputPath: progressData.outputPath } : {}),
-        } : current.result,
-      }) : current);
-      return;
-    }
+const statusEvents = ['task:started', 'task:paused', 'task:resumed', 'task:cancelled'];
+const terminalEvents = ['task:completed', 'task:failed', 'task:waiting_verification'];
 
-    if (message.event === 'task:started' || message.event === 'task:paused' || message.event === 'task:resumed' || message.event === 'task:cancelled') {
-      const statusByEvent: Record<string, TaskDetail['task']['status']> = {
-        'task:started': 'running',
-        'task:paused': 'paused',
-        'task:resumed': 'pending',
-        'task:cancelled': 'cancelled',
-      };
+function updateTaskStatus(current: TaskDetail | null, event: string): TaskDetail | null {
+  if (!current) return current;
+  const statuses: Record<string, TaskDetail['task']['status']> = { 'task:started': 'running',
+    'task:paused': 'paused', 'task:resumed': 'pending', 'task:cancelled': 'cancelled' };
+  return { ...current, task: { ...current.task, status: statuses[event] ?? current.task.status,
+    completedAt: event === 'task:cancelled' ? new Date().toISOString() : current.task.completedAt } };
+}
 
-      setDetail((current) => current ? ({
-        ...current,
-        task: {
-          ...current.task,
-          status: statusByEvent[message.event!] ?? current.task.status,
-          completedAt: message.event === 'task:cancelled' ? new Date().toISOString() : current.task.completedAt,
-        },
-      }) : current);
-      return;
-    }
+function numberValue(value: unknown) { return typeof value === 'number' ? value : 0; }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object');
+}
 
-    if (message.event === 'task:completed' || message.event === 'task:failed' || message.event === 'task:waiting_verification') {
-      setDetailLoading(true);
-      setDetailError(null);
-      void api.getTask(eventTaskId)
-        .then((response) => {
-          setDetail(response.data);
-        })
-        .catch((loadError: any) => {
-          setDetailError(loadError.message);
-        })
-        .finally(() => {
-          setDetailLoading(false);
-        });
-    }
-  }, [applyRealtimeEvent, selectedTaskId]);
+const taskEvents = ['task:created', 'task:started', 'task:progress', 'task:metadata_extracted',
+  'task:chapter_list_extracted', 'task:paused', 'task:resumed', 'task:waiting_verification',
+  'task:completed', 'task:failed', 'task:cancelled', 'image:downloaded'];
 
-  const wsUrl = typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
-    : '';
-  const { connected, subscribe, unsubscribe } = useWebSocket(wsUrl, handleRealtimeMessage);
-
+function useTaskRealtime(onMessage: (message: RealtimeMessage) => void) {
+  const wsUrl = typeof window === 'undefined' ? ''
+    : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+  const { connected, subscribe, unsubscribe } = useWebSocket(wsUrl, onMessage);
   useEffect(() => {
-    if (!connected) {
-      return;
-    }
-
-    const events = [
-      'task:created',
-      'task:started',
-      'task:progress',
-      'task:metadata_extracted',
-      'task:chapter_list_extracted',
-      'task:paused',
-      'task:resumed',
-      'task:waiting_verification',
-      'task:completed',
-      'task:failed',
-      'task:cancelled',
-      'image:downloaded',
-    ];
-
-    events.forEach((event) => subscribe(event));
-
-    return () => {
-      events.forEach((event) => unsubscribe(event));
-    };
+    if (!connected) return;
+    taskEvents.forEach((event) => subscribe(event));
+    return () => taskEvents.forEach((event) => unsubscribe(event));
   }, [connected, subscribe, unsubscribe]);
-
-  return {
-    detail,
-    setDetail,
-    detailLoading,
-    detailError,
-    setDetailError,
-    refreshTaskDetail,
-    connected,
-  };
+  return connected;
 }
