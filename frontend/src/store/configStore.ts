@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import { api } from '../api/client';
 
 export interface GlobalConfig {
@@ -50,12 +50,26 @@ interface ConfigState {
   clearError: () => void;
 }
 
-export const useConfigStore = create<ConfigState>((set, get) => ({
+type StoreSet = Parameters<StateCreator<ConfigState>>[0];
+type StoreGet = Parameters<StateCreator<ConfigState>>[1];
+
+export const useConfigStore = create<ConfigState>((set, get) => createConfigState(set, get));
+
+function createConfigState(set: StoreSet, get: StoreGet): ConfigState {
+  return {
   config: null,
   loading: false,
   error: null,
+  fetchConfig: createFetchConfig(set),
+  updateConfig: createUpdateConfig(set, get),
+  updateLanguage: createUpdateLanguage(set, get),
+  resetConfig: createResetConfig(set, get),
+  clearError: () => set({ error: null }),
+  };
+}
 
-  fetchConfig: async () => {
+function createFetchConfig(set: StoreSet) {
+  return async () => {
     set({ loading: true, error: null });
     try {
       const response = await api.getConfig();
@@ -63,9 +77,11 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
-  },
+  };
+}
 
-  updateConfig: async (config: Partial<GlobalConfig>) => {
+function createUpdateConfig(set: StoreSet, get: StoreGet) {
+  return async (config: Partial<GlobalConfig>) => {
     set({ loading: true, error: null });
     try {
       await api.updateConfig(config);
@@ -73,41 +89,31 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
-  },
+  };
+}
 
-  updateLanguage: async (language: string) => {
+function createUpdateLanguage(set: StoreSet, get: StoreGet) {
+  return async (language: string) => {
     const current = get().config;
     const fallback = current?.i18n?.fallback ?? 'en';
-
-    set((state) => ({
-      config: state.config
-        ? {
-            ...state.config,
-            i18n: {
-              ...state.config.i18n,
-              language,
-            },
-          }
-        : state.config,
-      error: null,
-    }));
-
+    set((state) => updateConfigLanguage(state, language));
     try {
-      const response = await api.updateConfig({
-        i18n: {
-          language,
-          fallback,
-        },
-      });
-
+      const response = await api.updateConfig({ i18n: { language, fallback } });
       set({ config: response.data });
     } catch (error: any) {
       set({ error: error.message });
       await get().fetchConfig();
     }
-  },
+  };
+}
 
-  resetConfig: async () => {
+function updateConfigLanguage(state: ConfigState, language: string): Partial<ConfigState> {
+  return { config: state.config ? { ...state.config,
+    i18n: { ...state.config.i18n, language } } : state.config, error: null };
+}
+
+function createResetConfig(set: StoreSet, get: StoreGet) {
+  return async () => {
     set({ loading: true, error: null });
     try {
       await api.resetConfig();
@@ -115,7 +121,5 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     } catch (error: any) {
       set({ error: error.message, loading: false });
     }
-  },
-
-  clearError: () => set({ error: null }),
-}));
+  };
+}

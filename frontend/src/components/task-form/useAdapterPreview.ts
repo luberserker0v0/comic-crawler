@@ -3,11 +3,28 @@ import { api, getApiErrorMessage } from '../../api/client';
 import type { AdapterResolutionPreview, TaskMode } from './widgets';
 
 export function useAdapterPreview(mode: TaskMode | null, mangaUrl: string, firstChapterUrl: string) {
+  const state = useAdapterPreviewState();
+  usePreviewRequest(mode, mangaUrl, firstChapterUrl, state);
+  const { setAdapterPreview, setAdapterPreviewError } = state;
+  const resetAdapterPreview = React.useCallback(() => {
+    setAdapterPreview(null);
+    setAdapterPreviewError(null);
+  }, [setAdapterPreview, setAdapterPreviewError]);
+  return { adapterPreview: state.adapterPreview, adapterPreviewError: state.adapterPreviewError,
+    adapterPreviewLoading: state.adapterPreviewLoading, resetAdapterPreview };
+}
+
+function useAdapterPreviewState() {
   const [adapterPreview, setAdapterPreview] = React.useState<AdapterResolutionPreview | null>(null);
   const [adapterPreviewError, setAdapterPreviewError] = React.useState<string | null>(null);
   const [adapterPreviewLoading, setAdapterPreviewLoading] = React.useState(false);
+  return { adapterPreview, setAdapterPreview, adapterPreviewError, setAdapterPreviewError,
+    adapterPreviewLoading, setAdapterPreviewLoading };
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): debounced live-preview fetch with sync reset; remodel to render-time derivation */
+function usePreviewRequest(mode: TaskMode | null, mangaUrl: string, firstChapterUrl: string,
+  state: ReturnType<typeof useAdapterPreviewState>) {
+  const { setAdapterPreview, setAdapterPreviewError, setAdapterPreviewLoading } = state;
   React.useEffect(() => {
     const previewUrl = mode === 'all' ? mangaUrl.trim() : firstChapterUrl;
     if (!mode || !previewUrl) {
@@ -15,42 +32,32 @@ export function useAdapterPreview(mode: TaskMode | null, mangaUrl: string, first
       setAdapterPreviewError(null);
       return;
     }
+    return schedulePreviewRequest(previewUrl, mode,
+      { setAdapterPreview, setAdapterPreviewError, setAdapterPreviewLoading });
+  }, [mode, mangaUrl, firstChapterUrl, setAdapterPreview, setAdapterPreviewError, setAdapterPreviewLoading]);
+}
 
-    let cancelled = false;
-    setAdapterPreviewLoading(true);
-    const timer = window.setTimeout(() => {
-      api.resolveAdapter({ url: previewUrl, mode })
-        .then((response) => {
-          if (cancelled) return;
-          setAdapterPreview(response.data);
-          setAdapterPreviewError(null);
-        })
-        .catch((err: any) => {
-          if (cancelled) return;
-          setAdapterPreview(null);
-          setAdapterPreviewError(getApiErrorMessage(err));
-        })
-        .finally(() => {
-          if (!cancelled) setAdapterPreviewLoading(false);
-        });
-    }, 350);
+type PreviewSetters = Pick<ReturnType<typeof useAdapterPreviewState>,
+  'setAdapterPreview' | 'setAdapterPreviewError' | 'setAdapterPreviewLoading'>;
 
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [mode, mangaUrl, firstChapterUrl]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+function schedulePreviewRequest(url: string, mode: TaskMode, state: PreviewSetters) {
+  let cancelled = false;
+  state.setAdapterPreviewLoading(true);
+  const timer = window.setTimeout(() => void resolvePreview(url, mode, state, () => cancelled), 350);
+  return () => { cancelled = true; window.clearTimeout(timer); };
+}
 
-  const resetAdapterPreview = React.useCallback(() => {
-    setAdapterPreview(null);
-    setAdapterPreviewError(null);
-  }, []);
-
-  return {
-    adapterPreview,
-    adapterPreviewError,
-    adapterPreviewLoading,
-    resetAdapterPreview,
-  };
+async function resolvePreview(url: string, mode: TaskMode, state: PreviewSetters, cancelled: () => boolean) {
+  try {
+    const response = await api.resolveAdapter({ url, mode });
+    if (cancelled()) return;
+    state.setAdapterPreview(response.data);
+    state.setAdapterPreviewError(null);
+  } catch (error) {
+    if (cancelled()) return;
+    state.setAdapterPreview(null);
+    state.setAdapterPreviewError(getApiErrorMessage(error));
+  } finally {
+    if (!cancelled()) state.setAdapterPreviewLoading(false);
+  }
 }

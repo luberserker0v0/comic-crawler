@@ -76,28 +76,23 @@ export function buildFlowNodes(detail: TaskDetail): FlowNode[] {
   const failed = detail.task.status === 'failed' || currentStage === 'failed';
   const blocked = detail.task.status === 'waiting_verification';
 
-  return order.map((key, index) => {
-    let state: FlowNodeState = currentIndex >= 0 && index < currentIndex ? 'done' : 'pending';
-    if (key === currentStage || (currentStage === 'failed' && index === Math.max(currentIndex, 0))) {
-      state = failed ? 'failed' : blocked && key === 'verification' ? 'blocked' : 'active';
-    }
-    return { key, label: FLOW_LABELS[key], state };
-  });
+  return order.map((key, index) => ({ key, label: FLOW_LABELS[key],
+    state: getFlowNodeState(key, index, currentStage, currentIndex, failed, blocked) }));
+}
+
+function getFlowNodeState(key: CrawlStage, index: number, currentStage: CrawlStage,
+  currentIndex: number, failed: boolean, blocked: boolean): FlowNodeState {
+  let state: FlowNodeState = currentIndex >= 0 && index < currentIndex ? 'done' : 'pending';
+  if (key === currentStage || (currentStage === 'failed' && index === Math.max(currentIndex, 0))) {
+    state = failed ? 'failed' : blocked && key === 'verification' ? 'blocked' : 'active';
+  }
+  return state;
 }
 
 export function mergePreviewFile(current: TaskDetail | null, previewFile: unknown): TaskDetail | null {
   if (!current || !previewFile || typeof previewFile !== 'object') return current;
-  const raw = previewFile as Record<string, unknown>;
-  const relativePath = typeof raw.relativePath === 'string' ? raw.relativePath : '';
-  if (!relativePath) return current;
-  const file = {
-    name: typeof raw.name === 'string' ? raw.name : relativePath,
-    relativePath,
-    size: typeof raw.size === 'number' ? raw.size : 0,
-    modifiedAt: typeof raw.modifiedAt === 'string' ? raw.modifiedAt : new Date().toISOString(),
-    isImage: typeof raw.isImage === 'boolean' ? raw.isImage : undefined,
-    url: typeof raw.url === 'string' ? raw.url : undefined,
-  };
+  const file = parsePreviewFile(previewFile as Record<string, unknown>);
+  if (!file) return current;
   const existing = current.preview?.files ?? [];
   const alreadyExists = existing.some((item) => item.relativePath === file.relativePath);
   const nextFiles = [file, ...existing.filter((item) => item.relativePath !== file.relativePath)].slice(0, 24);
@@ -109,6 +104,16 @@ export function mergePreviewFile(current: TaskDetail | null, previewFile: unknow
       files: nextFiles,
     },
   };
+}
+
+function parsePreviewFile(raw: Record<string, unknown>) {
+  const relativePath = typeof raw.relativePath === 'string' ? raw.relativePath : '';
+  if (!relativePath) return null;
+  return { name: typeof raw.name === 'string' ? raw.name : relativePath, relativePath,
+    size: typeof raw.size === 'number' ? raw.size : 0,
+    modifiedAt: typeof raw.modifiedAt === 'string' ? raw.modifiedAt : new Date().toISOString(),
+    isImage: typeof raw.isImage === 'boolean' ? raw.isImage : undefined,
+    url: typeof raw.url === 'string' ? raw.url : undefined };
 }
 
 const nodeStateClass: Record<FlowNodeState, string> = {
@@ -132,7 +137,20 @@ const nodeDotClass: Record<FlowNodeState, string> = {
 export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
   const { text } = useI18n();
   const nodes = buildFlowNodes(detail);
-  const flowLabels: Record<CrawlStage, string> = {
+  const flowLabels = createFlowLabels(text);
+  const stageDetail = detail.progress?.stageDetail ?? detail.progress?.currentItems ?? detail.task.error ?? '-';
+  return <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4" data-testid="task-flow-chart">
+    <FlowHeader detail={detail} text={text} />
+    <FlowNodes nodes={nodes} labels={flowLabels} />
+    <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+      <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.currentStage}</div>
+      <div className="mt-1 font-medium text-slate-900">{stageDetail}</div>
+    </div>
+  </div>;
+}
+
+function createFlowLabels(text: TasksText): Record<CrawlStage, string> {
+  return {
     adapter: text.dashboard.adapter,
     verification: text.taskManager.verification,
     metadata: text.taskManager.metadata,
@@ -142,41 +160,28 @@ export function TaskFlowChart({ detail }: { detail: TaskDetail }) {
     completed: text.taskManager.done,
     failed: text.taskManager.failedStage,
   };
-  const stageDetail = detail.progress?.stageDetail ?? detail.progress?.currentItems ?? detail.task.error ?? '-';
+}
 
-  return (
-    <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4" data-testid="task-flow-chart">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.crawlerFlow}</div>
-          <div className="mt-1 text-sm text-slate-600">{text.taskManager.crawlerFlowDescription}</div>
-        </div>
-        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
-          {getDetailMode(detail) === 'chapters' ? text.taskManager.specificChapters : text.taskManager.allChapters}
-        </div>
-      </div>
-      <div className="mt-4 grid gap-2 md:grid-cols-7">
-        {nodes.map((node, index) => (
-          <div key={node.key} className="flex items-center gap-2 md:block">
-            <div className={`rounded-xl border px-3 py-3 text-sm font-medium ${nodeStateClass[node.state]}`}>
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${nodeDotClass[node.state]}`} />
-                <span>{flowLabels[node.key]}</span>
-              </div>
-              <div className="mt-1 text-xs capitalize opacity-75">{node.state.replace('_', ' ')}</div>
-            </div>
-            {index < nodes.length - 1 && (
-              <div className="h-px flex-1 bg-slate-200 md:mx-auto md:mt-2 md:h-6 md:w-px" aria-hidden="true" />
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.currentStage}</div>
-        <div className="mt-1 font-medium text-slate-900">{stageDetail}</div>
-      </div>
-    </div>
-  );
+type TasksText = ReturnType<typeof useI18n>['text'];
+
+function FlowHeader({ detail, text }: { detail: TaskDetail; text: TasksText }) {
+  return <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div>
+    <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.crawlerFlow}</div>
+    <div className="mt-1 text-sm text-slate-600">{text.taskManager.crawlerFlowDescription}</div></div>
+    <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+      {getDetailMode(detail) === 'chapters' ? text.taskManager.specificChapters : text.taskManager.allChapters}</div>
+  </div>;
+}
+
+function FlowNodes({ nodes, labels }: { nodes: FlowNode[]; labels: Record<CrawlStage, string> }) {
+  return <div className="mt-4 grid gap-2 md:grid-cols-7">{nodes.map((node, index) =>
+    <div key={node.key} className="flex items-center gap-2 md:block">
+      <div className={`rounded-xl border px-3 py-3 text-sm font-medium ${nodeStateClass[node.state]}`}>
+        <div className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${nodeDotClass[node.state]}`} />
+          <span>{labels[node.key]}</span></div>
+        <div className="mt-1 text-xs capitalize opacity-75">{node.state.replace('_', ' ')}</div></div>
+      {index < nodes.length - 1 && <div className="h-px flex-1 bg-slate-200 md:mx-auto md:mt-2 md:h-6 md:w-px" aria-hidden="true" />}
+    </div>)}</div>;
 }
 
 export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
@@ -188,48 +193,42 @@ export function MetadataAndChapterPanel({ detail }: { detail: TaskDetail }) {
   const coverUrl = typeof metadata?.coverUrl === 'string' ? metadata.coverUrl : undefined;
   const chapters = chapterListSummary?.chapters ?? [];
 
-  return (
-    <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" data-testid="task-live-extraction-panel">
-      <div className="rounded-xl border border-slate-200 p-4">
-        <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.metadata}</div>
-        <div className="mt-3 flex gap-3">
-          {coverUrl && (
-            <img src={coverUrl} alt={title} className="h-20 w-14 rounded border border-slate-200 object-cover" loading="lazy" />
-          )}
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
-            <div className="mt-1 break-all text-xs text-slate-500">{sourceUrl}</div>
-            <div className="mt-2 text-xs text-slate-500">
-              {text.taskManager.chapters}: {chapterListSummary?.totalChapters ?? (Array.isArray((metadata as any)?.chapters) ? (metadata as any).chapters.length : 0)}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="rounded-xl border border-slate-200 p-4">
-        <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.chapterList}</div>
-          <div className="text-xs text-slate-500">{formatText(text.taskManager.chaptersCount, { count: chapterListSummary?.totalChapters ?? 0 })}</div>
-        </div>
-        {chapters.length > 0 ? (
-          <div className="mt-3 max-h-52 overflow-auto divide-y divide-slate-100 rounded-lg border border-slate-100">
-            {chapters.slice(0, 20).map((chapter) => (
-              <div key={`${chapter.id}-${chapter.url}`} className="px-3 py-2 text-sm">
-                <div className="font-medium text-slate-800">{chapter.title || chapter.id}</div>
-                <div className="mt-1 break-all text-xs text-slate-500">{chapter.url}</div>
-              </div>
-            ))}
-            {chapterListSummary && chapterListSummary.totalChapters > chapters.slice(0, 20).length && (
-              <div className="px-3 py-2 text-xs text-slate-500">
-                {formatText(text.taskManager.showingChapters, { shown: chapters.slice(0, 20).length, total: chapterListSummary.totalChapters })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="mt-3 rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-            {text.taskManager.chapterListPending}
-          </div>
-        )}
-      </div>
+  const metadataProps = { title, sourceUrl, coverUrl, metadata, chapterListSummary, text };
+  return <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" data-testid="task-live-extraction-panel">
+    <MetadataCard {...metadataProps} />
+    <ChapterListCard chapters={chapters} summary={chapterListSummary} text={text} />
+  </div>;
+}
+
+function MetadataCard(props: { title: string; sourceUrl: string; coverUrl?: string; metadata: any;
+  chapterListSummary: NonNullable<TaskDetail['progress']>['chapterListSummary']; text: TasksText }) {
+  const count = props.chapterListSummary?.totalChapters
+    ?? (Array.isArray(props.metadata?.chapters) ? props.metadata.chapters.length : 0);
+  return <div className="rounded-xl border border-slate-200 p-4">
+    <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{props.text.taskManager.metadata}</div>
+    <div className="mt-3 flex gap-3">{props.coverUrl && <img src={props.coverUrl} alt={props.title}
+      className="h-20 w-14 rounded border border-slate-200 object-cover" loading="lazy" />}
+      <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900">{props.title}</div>
+        <div className="mt-1 break-all text-xs text-slate-500">{props.sourceUrl}</div>
+        <div className="mt-2 text-xs text-slate-500">{props.text.taskManager.chapters}: {count}</div></div>
     </div>
-  );
+  </div>;
+}
+
+function ChapterListCard({ chapters, summary, text }: { chapters: any[]; summary: any; text: TasksText }) {
+  const shown = chapters.slice(0, 20);
+  return <div className="rounded-xl border border-slate-200 p-4">
+    <div className="flex items-center justify-between"><div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.taskManager.chapterList}</div>
+      <div className="text-xs text-slate-500">{formatText(text.taskManager.chaptersCount, { count: summary?.totalChapters ?? 0 })}</div></div>
+    {chapters.length > 0 ? <div className="mt-3 max-h-52 overflow-auto divide-y divide-slate-100 rounded-lg border border-slate-100">
+      {shown.map((chapter) => <ChapterRow key={`${chapter.id}-${chapter.url}`} chapter={chapter} />)}
+      {summary && summary.totalChapters > shown.length && <div className="px-3 py-2 text-xs text-slate-500">
+        {formatText(text.taskManager.showingChapters, { shown: shown.length, total: summary.totalChapters })}</div>}
+    </div> : <div className="mt-3 rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-500">{text.taskManager.chapterListPending}</div>}
+  </div>;
+}
+
+function ChapterRow({ chapter }: { chapter: { id: string; title: string; url: string } }) {
+  return <div className="px-3 py-2 text-sm"><div className="font-medium text-slate-800">{chapter.title || chapter.id}</div>
+    <div className="mt-1 break-all text-xs text-slate-500">{chapter.url}</div></div>;
 }

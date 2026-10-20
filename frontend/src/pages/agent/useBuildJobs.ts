@@ -4,12 +4,26 @@ import { api, getApiErrorMessage } from '../../api/client';
 import { isActiveBuildJob } from './widgets';
 
 export function useBuildJobs() {
+  const state = useBuildJobState();
+  const fetchBuildJobs = useFetchBuildJobs(state);
+  const retryBuildJob = useRetryBuildJob(state, fetchBuildJobs);
+  useInitialBuildJobFetch(fetchBuildJobs);
+  useBuildJobPolling(state.buildJobs, fetchBuildJobs);
+  return { ...state, fetchBuildJobs, retryBuildJob };
+}
+
+function useBuildJobState() {
   const [buildJobs, setBuildJobs] = useState<SelectorDiscoveryJobSummary[]>([]);
   const [buildJobsLoading, setBuildJobsLoading] = useState(false);
   const [buildJobsError, setBuildJobsError] = useState<string | null>(null);
   const [retryingBuildJobId, setRetryingBuildJobId] = useState<string | null>(null);
+  return { buildJobs, setBuildJobs, buildJobsLoading, setBuildJobsLoading,
+    buildJobsError, setBuildJobsError, retryingBuildJobId, setRetryingBuildJobId };
+}
 
-  const fetchBuildJobs = useCallback(async () => {
+function useFetchBuildJobs(state: ReturnType<typeof useBuildJobState>) {
+  const { setBuildJobs, setBuildJobsError, setBuildJobsLoading } = state;
+  return useCallback(async () => {
     setBuildJobsLoading(true);
     try {
       const response = await api.listSelectorDiscoveries();
@@ -23,9 +37,12 @@ export function useBuildJobs() {
     } finally {
       setBuildJobsLoading(false);
     }
-  }, []);
+  }, [setBuildJobs, setBuildJobsError, setBuildJobsLoading]);
+}
 
-  const retryBuildJob = useCallback(async (id: string) => {
+function useRetryBuildJob(state: ReturnType<typeof useBuildJobState>, fetchBuildJobs: () => Promise<void>) {
+  const { setBuildJobsError, setRetryingBuildJobId } = state;
+  return useCallback(async (id: string) => {
     setRetryingBuildJobId(id);
     try {
       await api.retrySelectorDiscovery(id);
@@ -35,14 +52,16 @@ export function useBuildJobs() {
     } finally {
       setRetryingBuildJobId(null);
     }
-  }, [fetchBuildJobs]);
+  }, [fetchBuildJobs, setBuildJobsError, setRetryingBuildJobId]);
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch via store actions; move to route loader or data-fetching hook */
+function useInitialBuildJobFetch(fetchBuildJobs: () => Promise<void>) {
   useEffect(() => {
     void fetchBuildJobs();
   }, [fetchBuildJobs]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+}
 
+function useBuildJobPolling(buildJobs: SelectorDiscoveryJobSummary[], fetchBuildJobs: () => Promise<void>) {
   useEffect(() => {
     if (!buildJobs.some(isActiveBuildJob)) {
       return;
@@ -52,13 +71,4 @@ export function useBuildJobs() {
     }, 3000);
     return () => window.clearInterval(timer);
   }, [buildJobs, fetchBuildJobs]);
-
-  return {
-    buildJobs,
-    buildJobsLoading,
-    buildJobsError,
-    retryingBuildJobId,
-    fetchBuildJobs,
-    retryBuildJob,
-  };
 }

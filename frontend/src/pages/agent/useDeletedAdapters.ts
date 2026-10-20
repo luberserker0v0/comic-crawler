@@ -6,13 +6,25 @@ export function useDeletedAdapters(options?: {
   fetchSiteAdapters?: () => Promise<void>;
   fetchAdapters?: () => Promise<void>;
 }) {
+  const state = useDeletedAdapterState();
+  const fetchDeletedAdapters = useFetchDeletedAdapters(state);
+  useInitialDeletedAdapterFetch(fetchDeletedAdapters);
+  const restoreDeletedAdapter = useRestoreDeletedAdapter(state, fetchDeletedAdapters, options);
+  return { ...state, fetchDeletedAdapters, restoreDeletedAdapter };
+}
+
+function useDeletedAdapterState() {
   const [deletedAdapters, setDeletedAdapters] = useState<DeletedAdapterListItem[]>([]);
   const [deletedAdaptersLoading, setDeletedAdaptersLoading] = useState(false);
   const [deletedAdaptersError, setDeletedAdaptersError] = useState<string | null>(null);
   const [restoringAdapterId, setRestoringAdapterId] = useState<string | null>(null);
-  const { fetchSiteAdapters, fetchAdapters } = options ?? {};
+  return { deletedAdapters, setDeletedAdapters, deletedAdaptersLoading, setDeletedAdaptersLoading,
+    deletedAdaptersError, setDeletedAdaptersError, restoringAdapterId, setRestoringAdapterId };
+}
 
-  const fetchDeletedAdapters = useCallback(async () => {
+function useFetchDeletedAdapters(state: ReturnType<typeof useDeletedAdapterState>) {
+  const { setDeletedAdapters, setDeletedAdaptersError, setDeletedAdaptersLoading } = state;
+  return useCallback(async () => {
     setDeletedAdaptersLoading(true);
     try {
       const response = await api.getDeletedAdapters();
@@ -26,37 +38,32 @@ export function useDeletedAdapters(options?: {
     } finally {
       setDeletedAdaptersLoading(false);
     }
-  }, []);
+  }, [setDeletedAdapters, setDeletedAdaptersError, setDeletedAdaptersLoading]);
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): mount fetch via store actions; move to route loader or data-fetching hook */
+function useInitialDeletedAdapterFetch(fetchDeletedAdapters: () => Promise<void>) {
   useEffect(() => {
     void fetchDeletedAdapters();
   }, [fetchDeletedAdapters]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+}
 
-  const restoreDeletedAdapter = useCallback(async (adapterId: string) => {
+function useRestoreDeletedAdapter(
+  state: ReturnType<typeof useDeletedAdapterState>,
+  fetchDeletedAdapters: () => Promise<void>,
+  options?: { fetchSiteAdapters?: () => Promise<void>; fetchAdapters?: () => Promise<void> }
+) {
+  const { fetchSiteAdapters, fetchAdapters } = options ?? {};
+  const { setDeletedAdaptersError, setRestoringAdapterId } = state;
+  return useCallback(async (adapterId: string) => {
     setRestoringAdapterId(adapterId);
     setDeletedAdaptersError(null);
     try {
       await api.restoreAdapter(adapterId);
-      await Promise.all([
-        fetchDeletedAdapters(),
-        fetchSiteAdapters?.(),
-        fetchAdapters?.(),
-      ]);
+      await Promise.all([fetchDeletedAdapters(), fetchSiteAdapters?.(), fetchAdapters?.()]);
     } catch (error) {
       setDeletedAdaptersError(getApiErrorMessage(error));
     } finally {
       setRestoringAdapterId(null);
     }
-  }, [fetchDeletedAdapters, fetchSiteAdapters, fetchAdapters]);
-
-  return {
-    deletedAdapters,
-    deletedAdaptersLoading,
-    deletedAdaptersError,
-    restoringAdapterId,
-    fetchDeletedAdapters,
-    restoreDeletedAdapter,
-  };
+  }, [fetchAdapters, fetchDeletedAdapters, fetchSiteAdapters, setDeletedAdaptersError, setRestoringAdapterId]);
 }

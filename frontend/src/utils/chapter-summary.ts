@@ -6,20 +6,21 @@ export function parseChapterListSummary(value: unknown): ChapterListSummary | un
   }
   const raw = value as Record<string, unknown>;
   const chapters = Array.isArray(raw.chapters)
-    ? raw.chapters
-        .map((chapter) => {
-          if (!chapter || typeof chapter !== 'object') return null;
-          const item = chapter as Record<string, unknown>;
-          return {
-            id: typeof item.id === 'string' ? item.id : '',
-            title: typeof item.title === 'string' ? item.title : '',
-            url: typeof item.url === 'string' ? item.url : '',
-          };
-        })
+    ? raw.chapters.map(parseChapter)
         .filter((chapter): chapter is { id: string; title: string; url: string } => Boolean(chapter && chapter.url))
     : [];
   return {
     totalChapters: typeof raw.totalChapters === 'number' ? raw.totalChapters : chapters.length,
     chapters,
+  };
+}
+
+function parseChapter(chapter: unknown): { id: string; title: string; url: string } | null {
+  if (!chapter || typeof chapter !== 'object') return null;
+  const item = chapter as Record<string, unknown>;
+  return {
+    id: typeof item.id === 'string' ? item.id : '',
+    title: typeof item.title === 'string' ? item.title : '',
+    url: typeof item.url === 'string' ? item.url : '',
   };
 }

@@ -1,82 +1,80 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 
 export function useChallengeFlow(challengeDiscoveryId: string | undefined) {
+  const state = useChallengeState();
+  const setters = useChallengeSetters(state);
+  useChallengeJob(challengeDiscoveryId, setters);
+  const refreshChallengeJob = useCallback((id: string) => refreshChallenge(id, setters), [setters]);
+  const openVerificationBrowser = useCallback(
+    () => openChallengeBrowser(challengeDiscoveryId, setters), [challengeDiscoveryId, setters]);
+  const shouldReopenVerificationBrowser = Boolean(state.challengeJob?.status === 'challenge_required');
+  const isVerificationBrowserOpening = state.challengeAction === 'open-verification-browser';
+  const isChallengeJobUnavailable = Boolean(state.challengeError
+    && /challenge discovery job .*not found|challenge discovery job not found|expired|removed/i.test(state.challengeError));
+  return { challengeJob: state.challengeJob, challengeAction: state.challengeAction,
+    challengeError: state.challengeError, shouldReopenVerificationBrowser, isVerificationBrowserOpening,
+    isChallengeJobUnavailable, refreshChallengeJob, openVerificationBrowser };
+}
+
+function useChallengeSetters(state: ReturnType<typeof useChallengeState>) {
+  return useMemo(() => ({ setChallengeJob: state.setChallengeJob,
+    setChallengeAction: state.setChallengeAction, setChallengeError: state.setChallengeError }),
+  [state.setChallengeJob, state.setChallengeAction, state.setChallengeError]);
+}
+
+function useChallengeState() {
   const [challengeJob, setChallengeJob] = useState<any | null>(null);
   const [challengeAction, setChallengeAction] = useState<string | null>(null);
   const [challengeError, setChallengeError] = useState<string | null>(null);
+  return { challengeJob, setChallengeJob, challengeAction, setChallengeAction, challengeError, setChallengeError };
+}
 
-  /* eslint-disable react-hooks/set-state-in-effect -- TODO(frontend-effect-cleanup): challenge-status fetch with sync reset; remodel to render-time derivation */
+type ChallengeSetters = ReturnType<typeof useChallengeSetters>;
+
+function useChallengeJob(challengeDiscoveryId: string | undefined, state: ChallengeSetters) {
   useEffect(() => {
     if (!challengeDiscoveryId) {
-      setChallengeJob(null);
-      setChallengeError(null);
+      state.setChallengeJob(null);
+      state.setChallengeError(null);
       return;
     }
-
     let cancelled = false;
-    api.getChallengeDiscovery(challengeDiscoveryId)
-      .then((response) => {
-        if (!cancelled) {
-          setChallengeJob(response.data);
-          setChallengeError(null);
-        }
-      })
-      .catch((loadError: any) => {
-        if (!cancelled) {
-          setChallengeJob(null);
-          setChallengeError(loadError.response?.data?.error ?? loadError.message);
-        }
-      });
+    void loadChallenge(challengeDiscoveryId, state, () => cancelled);
+    return () => { cancelled = true; };
+  }, [challengeDiscoveryId, state]);
+}
 
-    return () => {
-      cancelled = true;
-    };
-  }, [challengeDiscoveryId]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+async function loadChallenge(id: string, state: ChallengeSetters, cancelled: () => boolean) {
+  try {
+    const response = await api.getChallengeDiscovery(id);
+    if (!cancelled()) { state.setChallengeJob(response.data); state.setChallengeError(null); }
+  } catch (error: any) {
+    if (!cancelled()) { state.setChallengeJob(null); state.setChallengeError(error.response?.data?.error ?? error.message); }
+  }
+}
 
-  const refreshChallengeJob = useCallback(async (id: string) => {
+async function refreshChallenge(id: string, state: ChallengeSetters) {
     try {
       const response = await api.getChallengeDiscovery(id);
-      setChallengeJob(response.data);
-      setChallengeError(null);
+      state.setChallengeJob(response.data);
+      state.setChallengeError(null);
     } catch (loadError: any) {
-      setChallengeJob(null);
-      setChallengeError(loadError.response?.data?.error ?? loadError.message);
+      state.setChallengeJob(null);
+      state.setChallengeError(loadError.response?.data?.error ?? loadError.message);
     }
-  }, []);
+}
 
-  const openVerificationBrowser = useCallback(async () => {
+async function openChallengeBrowser(challengeDiscoveryId: string | undefined, state: ChallengeSetters) {
     if (!challengeDiscoveryId) return;
     try {
-      setChallengeAction('open-verification-browser');
+      state.setChallengeAction('open-verification-browser');
       const response = await api.openChallengeDiscoveryBrowser(challengeDiscoveryId);
-      if (response.data?.status) {
-        setChallengeJob(response.data);
-      }
-      setChallengeError(response.data?.error ?? null);
+      if (response.data?.status) state.setChallengeJob(response.data);
+      state.setChallengeError(response.data?.error ?? null);
     } catch (actionError: any) {
-      setChallengeError(actionError.response?.data?.error ?? actionError.message);
+      state.setChallengeError(actionError.response?.data?.error ?? actionError.message);
     } finally {
-      setChallengeAction(null);
+      state.setChallengeAction(null);
     }
-  }, [challengeDiscoveryId]);
-
-  const shouldReopenVerificationBrowser = Boolean(challengeJob?.status === 'challenge_required');
-  const isVerificationBrowserOpening =
-    challengeAction === 'open-verification-browser';
-  const isChallengeJobUnavailable = Boolean(
-    challengeError && /challenge discovery job .*not found|challenge discovery job not found|expired|removed/i.test(challengeError)
-  );
-
-  return {
-    challengeJob,
-    challengeAction,
-    challengeError,
-    shouldReopenVerificationBrowser,
-    isVerificationBrowserOpening,
-    isChallengeJobUnavailable,
-    refreshChallengeJob,
-    openVerificationBrowser,
-  };
 }

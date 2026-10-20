@@ -87,64 +87,45 @@ export const AdapterFunctionResultSummary: React.FC<{ summary: Record<string, un
   const { text } = useI18n();
   const chapters = getChapterSummaryItems(summary);
   const imageUrls = getImageUrls(summary);
-  if (chapters.length > 0) {
-    const chapterCount = typeof summary.chapterCount === 'number' ? summary.chapterCount : chapters.length;
-    return (
-      <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-sm font-semibold text-gray-900">{text.lab.extractedChapters}</div>
-            <div className="text-gray-600">{formatText(text.lab.chaptersReturned, { count: chapterCount })}</div>
-          </div>
-        </div>
-        <ol className="mt-3 space-y-2">{renderChapterRows(chapters.slice(0, 5))}</ol>
-        {chapters.length > 5 && (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-blue-700">
-              {formatText(text.lab.showAllChapters, { count: chapters.length })}
-            </summary>
-            <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
-              {renderChapterRows(chapters)}
-            </ol>
-          </details>
-        )}
-        <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">{text.lab.rawResult}</summary>
-          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
-      </div>
-    );
-  }
-
-  if (imageUrls.length > 0) {
-    const imageUrlCount = typeof summary.imageUrlCount === 'number' ? summary.imageUrlCount : imageUrls.length;
-    return (
-      <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
-        <div className="text-sm font-semibold text-gray-900">{text.lab.extractedImageUrls}</div>
-        <div className="text-gray-600">{formatText(text.lab.imageUrlsReturned, { count: imageUrlCount })}</div>
-        <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">
-          {imageUrls.map((url, index) => (
-            <li key={`${url}-${index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">#{index + 1}</div>
-              <div className="mt-1 break-all text-xs text-gray-700">{url}</div>
-            </li>
-          ))}
-        </ol>
-        <details className="mt-3">
-          <summary className="cursor-pointer text-gray-600">{text.lab.rawResult}</summary>
-          <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">
-            {JSON.stringify(summary, null, 2)}
-          </pre>
-        </details>
-      </div>
-    );
-  }
-
-  return (
-    <pre className="mt-3 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-white p-3 text-xs text-gray-800">
-      {JSON.stringify(summary, null, 2)}
-    </pre>
-  );
+  if (chapters.length > 0) return <ChapterSummary summary={summary} chapters={chapters} text={text} />;
+  if (imageUrls.length > 0) return <ImageSummary summary={summary} imageUrls={imageUrls} text={text} />;
+  return <RawSummary summary={summary} />;
 };
+
+type LabText = ReturnType<typeof useI18n>['text'];
+
+function ChapterSummary({ summary, chapters, text }: { summary: Record<string, unknown>; chapters: ChapterSummaryItem[]; text: LabText }) {
+  const count = typeof summary.chapterCount === 'number' ? summary.chapterCount : chapters.length;
+  return <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
+    <div className="text-sm font-semibold text-gray-900">{text.lab.extractedChapters}</div>
+    <div className="text-gray-600">{formatText(text.lab.chaptersReturned, { count })}</div>
+    <ol className="mt-3 space-y-2">{renderChapterRows(chapters.slice(0, 5))}</ol>
+    {chapters.length > 5 && <details className="mt-3"><summary className="cursor-pointer text-blue-700">
+      {formatText(text.lab.showAllChapters, { count: chapters.length })}</summary>
+      <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">{renderChapterRows(chapters)}</ol></details>}
+    <RawDetails summary={summary} text={text} />
+  </div>;
+}
+
+function ImageSummary({ summary, imageUrls, text }: { summary: Record<string, unknown>; imageUrls: string[]; text: LabText }) {
+  const count = typeof summary.imageUrlCount === 'number' ? summary.imageUrlCount : imageUrls.length;
+  return <div className="mt-3 rounded bg-white p-3 text-xs text-gray-800">
+    <div className="text-sm font-semibold text-gray-900">{text.lab.extractedImageUrls}</div>
+    <div className="text-gray-600">{formatText(text.lab.imageUrlsReturned, { count })}</div>
+    <ol className="mt-3 max-h-96 space-y-2 overflow-auto pr-1">{imageUrls.map((url, index) =>
+      <li key={`${url}-${index}`} className="rounded border border-gray-200 bg-white px-3 py-2">
+        <div className="text-[11px] uppercase tracking-wide text-gray-500">#{index + 1}</div>
+        <div className="mt-1 break-all text-xs text-gray-700">{url}</div></li>)}</ol>
+    <RawDetails summary={summary} text={text} />
+  </div>;
+}
+
+function RawDetails({ summary, text }: { summary: Record<string, unknown>; text: LabText }) {
+  return <details className="mt-3"><summary className="cursor-pointer text-gray-600">{text.lab.rawResult}</summary>
+    <pre className="mt-2 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-3 text-xs text-gray-800">{JSON.stringify(summary, null, 2)}</pre>
+  </details>;
+}
+
+function RawSummary({ summary }: { summary: Record<string, unknown> }) {
+  return <pre className="mt-3 max-w-full overflow-auto whitespace-pre-wrap break-words rounded bg-white p-3 text-xs text-gray-800">{JSON.stringify(summary, null, 2)}</pre>;
+}
