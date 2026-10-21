@@ -27,79 +27,68 @@ class MemoryStorage implements IStorage {
 }
 
 describe('SelectorDiscoverySettingsStore', () => {
-  it('updates AO URL and model while reusing the saved provider document', async () => {
-    const storage = new MemoryStorage();
-    const store = new SelectorDiscoverySettingsStore(storage);
-    const providerDocument = {
-      provider: {
-        opencode: {
-          models: {
-            'big-pickle': { name: 'big-pickle' },
-            'mimo-v2.5-free': { name: 'mimo-v2.5-free' },
-          },
-        },
-      },
-    };
-
-    await store.save({
-      aoBaseUrl: 'http://localhost:32768',
-      model: 'opencode/mimo-v2.5-free',
-      providerDocument,
-    });
-    const updated = await store.save({
-      aoBaseUrl: 'http://localhost:32768/',
-      model: 'opencode/big-pickle',
-    });
-
-    expect(updated).toMatchObject({
-      configured: true,
-      aoBaseUrl: 'http://localhost:32768',
-      model: 'opencode/big-pickle',
-      modelIds: ['opencode/big-pickle', 'opencode/mimo-v2.5-free'],
-    });
-    await expect(store.getRequired()).resolves.toMatchObject({
-      providerDocument,
-    });
-  });
-
-  it('requires a provider document when no saved provider exists', async () => {
-    const store = new SelectorDiscoverySettingsStore(new MemoryStorage());
-
-    await expect(store.save({
-      aoBaseUrl: 'http://localhost:32768',
-      model: 'opencode/big-pickle',
-    })).rejects.toThrow('Provider document is required.');
-  });
-
-  it('allows selecting AO built-in OpenCode models that are not in the custom provider document', async () => {
-    const storage = new MemoryStorage();
-    const store = new SelectorDiscoverySettingsStore(storage);
-    const providerDocument = {
-      provider: {
-        my_local_lmstudio: {
-          npm: '@ai-sdk/openai-compatible',
-          options: { baseURL: 'http://host.docker.internal:25555/v1', apiKey: 'nopassword' },
-          models: {
-            'gemma-local': { name: 'gemma-local' },
-          },
-        },
-      },
-    };
-
-    await store.save({
-      aoBaseUrl: 'http://localhost:32768',
-      model: 'my_local_lmstudio/gemma-local',
-      providerDocument,
-    });
-    const updated = await store.save({
-      aoBaseUrl: 'http://localhost:32768',
-      model: 'opencode/big-pickle',
-    });
-
-    expect(updated).toMatchObject({
-      model: 'opencode/big-pickle',
-      providerIds: expect.arrayContaining(['my_local_lmstudio', 'opencode']),
-      modelIds: expect.arrayContaining(['my_local_lmstudio/gemma-local', 'opencode/big-pickle']),
-    });
-  });
+  SelectorDiscoverySettingsStoreTestGroup1();
 });
+
+function SelectorDiscoverySettingsStoreTestGroup1(): void {
+  it('updates AO URL and model while reusing the saved provider document', SelectorDiscoverySettingsStoreTestUpdatesAOURLAndModelWhileReusingTheSavedProviderDocument);
+  it('requires a provider document when no saved provider exists', SelectorDiscoverySettingsStoreTestRequiresAProviderDocumentWhenNoSavedProviderExists);
+  it('allows selecting AO built-in OpenCode models that are not in the custom provider document', SelectorDiscoverySettingsStoreTestAllowsSelectingAOBuiltInOpenCodeModelsThatAreNotInTheCustomProviderDocument);
+}
+
+async function SelectorDiscoverySettingsStoreTestUpdatesAOURLAndModelWhileReusingTheSavedProviderDocument() {
+    const storage = new MemoryStorage();
+    const store = new SelectorDiscoverySettingsStore(storage);
+    const providerDocument = OPENCODE_PROVIDER_DOCUMENT;
+    await store.save({ aoBaseUrl: 'http://localhost:32768',
+        model: 'opencode/mimo-v2.5-free', providerDocument });
+    const updated = await store.save({
+        aoBaseUrl: 'http://localhost:32768/',
+        model: 'opencode/big-pickle',
+    });
+    expect(updated).toMatchObject({
+        configured: true,
+        aoBaseUrl: 'http://localhost:32768',
+        model: 'opencode/big-pickle',
+        modelIds: ['opencode/big-pickle', 'opencode/mimo-v2.5-free'],
+    });
+    await expect(store.getRequired()).resolves.toMatchObject({ providerDocument });
+}
+
+async function SelectorDiscoverySettingsStoreTestRequiresAProviderDocumentWhenNoSavedProviderExists() {
+    const store = new SelectorDiscoverySettingsStore(new MemoryStorage());
+    await expect(store.save({
+        aoBaseUrl: 'http://localhost:32768',
+        model: 'opencode/big-pickle',
+    })).rejects.toThrow('Provider document is required.');
+}
+
+async function SelectorDiscoverySettingsStoreTestAllowsSelectingAOBuiltInOpenCodeModelsThatAreNotInTheCustomProviderDocument() {
+    const storage = new MemoryStorage();
+    const store = new SelectorDiscoverySettingsStore(storage);
+    const providerDocument = LOCAL_PROVIDER_DOCUMENT;
+    await store.save({
+        aoBaseUrl: 'http://localhost:32768',
+        model: 'my_local_lmstudio/gemma-local',
+        providerDocument,
+    });
+    const updated = await store.save({
+        aoBaseUrl: 'http://localhost:32768',
+        model: 'opencode/big-pickle',
+    });
+    expect(updated).toMatchObject({
+        model: 'opencode/big-pickle',
+        providerIds: expect.arrayContaining(['my_local_lmstudio', 'opencode']),
+        modelIds: expect.arrayContaining(['my_local_lmstudio/gemma-local', 'opencode/big-pickle']),
+    });
+}
+
+const OPENCODE_PROVIDER_DOCUMENT = { provider: { opencode: { models: {
+  'big-pickle': { name: 'big-pickle' }, 'mimo-v2.5-free': { name: 'mimo-v2.5-free' },
+} } } };
+
+const LOCAL_PROVIDER_DOCUMENT = { provider: { my_local_lmstudio: {
+  npm: '@ai-sdk/openai-compatible',
+  options: { baseURL: 'http://host.docker.internal:25555/v1', apiKey: 'nopassword' },
+  models: { 'gemma-local': { name: 'gemma-local' } },
+} } };

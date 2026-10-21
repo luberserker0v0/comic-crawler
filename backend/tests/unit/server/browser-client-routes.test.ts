@@ -14,76 +14,78 @@ const capabilities: BrowserCapabilities = {
   responsiveViewport: true,
 };
 
-describe('browser client routes', () => {
-  let app: FastifyInstance;
-  let gateway: BrowserSessionGateway;
+let app: FastifyInstance;
 
-  beforeEach(() => {
+let gateway: BrowserSessionGateway;
+
+describe('browser client routes', () => {
+  browserClientRoutesTestGroup1();
+});
+
+function browserClientRoutesTestGroup1(): void {
+  beforeEach(browserClientRoutesTestScenario1);
+  afterEach(browserClientRoutesTestScenario2);
+  it('discovers, enrolls, lists, rotates, and revokes a Browser Client', browserClientRoutesTestDiscoversEnrollsListsRotatesAndRevokesABrowserClient);
+  it('rejects enrollment without capabilities', browserClientRoutesTestRejectsEnrollmentWithoutCapabilities);
+}
+
+function browserClientRoutesTestScenario1() {
     const security = ApiSecurityService.fromSecretDocument({ mode: 'public', defaultEffect: 'deny', rules: [] });
     const registry = new BrowserClientRegistry();
     gateway = new BrowserSessionGateway(registry);
     app = fastify();
     setupApiSecurity(app, security);
     setupBrowserClientRoutes(app, registry, gateway, security);
-  });
+}
 
-  afterEach(async () => {
+async function browserClientRoutesTestScenario2() {
     gateway.dispose();
     await app.close();
-  });
+}
 
-  it('discovers, enrolls, lists, rotates, and revokes a Browser Client', async () => {
-    const discovery = await app.inject({
-      method: 'GET',
-      url: '/.well-known/comiccrawler-browser-client',
-    });
+async function browserClientRoutesTestDiscoversEnrollsListsRotatesAndRevokesABrowserClient() {
+    const discovery = await app.inject({ method: 'GET', url: '/.well-known/comiccrawler-browser-client' });
     expect(discovery.statusCode).toBe(200);
-    expect(discovery.json().data).toEqual({
-      protocolVersion: 2,
-      apiSecurityMode: 'public',
-      endpoints: {
-        enroll: '/api/browser-clients/enroll',
-        controlWebSocket: '/api/browser-clients/connect',
-      },
-    });
-
-    const enrolled = await app.inject({
-      method: 'POST',
-      url: '/api/browser-clients/enroll',
-      payload: { name: 'Alice Chrome', capabilities },
-    });
-    expect(enrolled.statusCode).toBe(201);
-    expect(enrolled.json().data).toMatchObject({
-      clientId: expect.stringMatching(/^bc_/),
-      credentialId: expect.stringMatching(/^bcc_/),
-      credential: expect.stringMatching(/^ccbc_/),
-    });
+    expectDiscovery(discovery.json().data);
+    const enrolled = await enrollClient();
     const clientId = enrolled.json().data.clientId as string;
-
-    const listed = await app.inject({ method: 'GET', url: '/api/browser-clients' });
-    expect(listed.json().data.clients).toEqual([
-      expect.objectContaining({ clientId, name: 'Alice Chrome', ownerUserId: 'public' }),
-    ]);
+    await expectClientListed(clientId);
     expect((await app.inject({ method: 'GET', url: '/api/browser-workers' })).json().data.workers).toEqual([]);
-
-    const rotated = await app.inject({
-      method: 'POST',
-      url: `/api/browser-clients/${clientId}/credentials/rotate`,
-    });
+    const rotated = await app.inject({ method: 'POST', url: `/api/browser-clients/${clientId}/credentials/rotate` });
     expect(rotated.statusCode).toBe(200);
     expect(rotated.json().data.credential).not.toBe(enrolled.json().data.credential);
-
     const revoked = await app.inject({ method: 'DELETE', url: `/api/browser-clients/${clientId}` });
     expect(revoked.statusCode).toBe(204);
-  });
+}
 
-  it('rejects enrollment without capabilities', async () => {
+function expectDiscovery(data: unknown): void {
+  expect(data).toEqual({ protocolVersion: 2, apiSecurityMode: 'public', endpoints: {
+    enroll: '/api/browser-clients/enroll', controlWebSocket: '/api/browser-clients/connect',
+  } });
+}
+
+async function enrollClient() {
+  const response = await app.inject({ method: 'POST', url: '/api/browser-clients/enroll',
+    payload: { name: 'Alice Chrome', capabilities } });
+  expect(response.statusCode).toBe(201);
+  expect(response.json().data).toMatchObject({ clientId: expect.stringMatching(/^bc_/),
+    credentialId: expect.stringMatching(/^bcc_/), credential: expect.stringMatching(/^ccbc_/) });
+  return response;
+}
+
+async function expectClientListed(clientId: string): Promise<void> {
+  const listed = await app.inject({ method: 'GET', url: '/api/browser-clients' });
+  expect(listed.json().data.clients).toEqual([
+    expect.objectContaining({ clientId, name: 'Alice Chrome', ownerUserId: 'public' }),
+  ]);
+}
+
+async function browserClientRoutesTestRejectsEnrollmentWithoutCapabilities() {
     const response = await app.inject({
-      method: 'POST',
-      url: '/api/browser-clients/enroll',
-      payload: {},
+        method: 'POST',
+        url: '/api/browser-clients/enroll',
+        payload: {},
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toContain('capabilities are required');
-  });
-});
+}

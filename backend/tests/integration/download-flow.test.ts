@@ -4,13 +4,6 @@ import { join } from 'node:path';
 import { EventBus } from '../../src/events/bus';
 import { JsonFileStore } from '../../src/storage/json-store';
 import { AdapterRegistry } from '../../src/adapter/registry';
-import { UrlResolver } from '../../src/adapter/url-resolver';
-import { HtmlParser } from '../../src/crawler/html-parser';
-import { ChapterFetcher } from '../../src/crawler/chapter-fetcher';
-import { ImageDownloader } from '../../src/crawler/image-downloader';
-import { DedupChecker } from '../../src/image/dedup';
-import { TaskScheduler } from '../../src/scheduler';
-import { ProgressTracker } from '../../src/task/progress';
 import { AdapterBase } from '../../src/adapter/base';
 import type { ComicMetadata } from '../../../shared/types';
 
@@ -56,44 +49,38 @@ class MockAdapter extends AdapterBase {
   }
 }
 
+let eventBus: EventBus;
+
+let storage: JsonFileStore;
+
+let registry: AdapterRegistry;
+
 describe('Integration: Download Flow', () => {
-  let eventBus: EventBus;
-  let storage: JsonFileStore;
-  let registry: AdapterRegistry;
-  let urlResolver: UrlResolver;
-  let parser: HtmlParser;
-  let dedup: DedupChecker;
-  let progress: ProgressTracker;
-  let taskScheduler: TaskScheduler<{ url: string }>;
+  IntegrationDownloadFlowTestGroup1();
+});
 
-  beforeEach(async () => {
+function IntegrationDownloadFlowTestGroup1(): void {
+  beforeEach(IntegrationDownloadFlowTestScenario1);
+  afterEach(IntegrationDownloadFlowTestScenario2);
+  it('should register adapter and find by URL', IntegrationDownloadFlowTestShouldRegisterAdapterAndFindByURL);
+}
+
+async function IntegrationDownloadFlowTestScenario1() {
     await fs.mkdir(TEST_DIR, { recursive: true });
-
     eventBus = new EventBus();
     storage = new JsonFileStore({ basePath: TEST_DIR, flushInterval: 50 });
     await storage.initialize();
-
     registry = new AdapterRegistry(eventBus);
-    urlResolver = new UrlResolver();
-    parser = new HtmlParser();
-    dedup = new DedupChecker();
-    progress = new ProgressTracker(eventBus);
-    taskScheduler = new TaskScheduler<{ url: string }>(
-      async () => {},
-      { concurrency: 2, autoStart: true }
-    );
-
     registry.register(new MockAdapter());
-  });
+}
 
-  afterEach(async () => {
+async function IntegrationDownloadFlowTestScenario2() {
     await storage.dispose();
     await fs.rm(TEST_DIR, { recursive: true, force: true });
-  });
+}
 
-  it('should register adapter and find by URL', () => {
+function IntegrationDownloadFlowTestShouldRegisterAdapterAndFindByURL() {
     const adapter = registry.findByUrl('https://mock.example.com/comic/1');
     expect(adapter).toBeDefined();
     expect(adapter?.id).toBe('mock');
-  });
-});
+}

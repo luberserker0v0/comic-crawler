@@ -9,32 +9,41 @@ const chapters = [
 ];
 
 describe('selectChapters', () => {
-  it('returns all chapters when no selectors are provided', () => {
+  selectChaptersTestGroup1();
+});
+
+function selectChaptersTestGroup1(): void {
+  it('returns all chapters when no selectors are provided', selectChaptersTestReturnsAllChaptersWhenNoSelectorsAreProvided);
+  it('matches by chapter id, title, and URL fragments', selectChaptersTestMatchesByChapterIdTitleAndURLFragments);
+  it('supports explicit one-based list indexes with #N', selectChaptersTestSupportsExplicitOneBasedListIndexesWithN);
+  it('falls back pure numbers to one-based indexes only when text matching fails', selectChaptersTestFallsBackPureNumbersToOneBasedIndexesOnlyWhenTextMatchingFails);
+  it('deduplicates matches and reports unmatched selectors', selectChaptersTestDeduplicatesMatchesAndReportsUnmatchedSelectors);
+}
+
+function selectChaptersTestReturnsAllChaptersWhenNoSelectorsAreProvided() {
     expect(selectChapters(chapters).chapters).toEqual(chapters);
     expect(selectChapters(chapters, []).chapters).toEqual(chapters);
-  });
+}
 
-  it('matches by chapter id, title, and URL fragments', () => {
+function selectChaptersTestMatchesByChapterIdTitleAndURLFragments() {
     expect(selectChapters(chapters, ['chapter-0']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-0']);
     expect(selectChapters(chapters, ['預告']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-0']);
     expect(selectChapters(chapters, ['chapter-10']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-10']);
-  });
+}
 
-  it('supports explicit one-based list indexes with #N', () => {
+function selectChaptersTestSupportsExplicitOneBasedListIndexesWithN() {
     expect(selectChapters(chapters, ['#1']).chapters.map((chapter) => chapter.id)).toEqual(['intro']);
     expect(selectChapters(chapters, ['#3']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-1']);
-  });
+}
 
-  it('falls back pure numbers to one-based indexes only when text matching fails', () => {
+function selectChaptersTestFallsBackPureNumbersToOneBasedIndexesOnlyWhenTextMatchingFails() {
     expect(selectChapters(chapters, ['0']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-0']);
     expect(selectChapters(chapters, ['1']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-1']);
     expect(selectChapters(chapters, ['2']).chapters.map((chapter) => chapter.id)).toEqual(['chapter-0']);
-  });
+}
 
-  it('deduplicates matches and reports unmatched selectors', () => {
+function selectChaptersTestDeduplicatesMatchesAndReportsUnmatchedSelectors() {
     const result = selectChapters(chapters, ['chapter-1', '出發', 'missing']);
-
     expect(result.chapters.map((chapter) => chapter.id)).toEqual(['chapter-1']);
     expect(result.unmatched).toEqual(['missing']);
-  });
-});
+}

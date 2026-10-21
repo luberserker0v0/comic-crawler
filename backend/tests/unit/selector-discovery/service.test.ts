@@ -60,8 +60,7 @@ class OracleAdapter extends AdapterBase {
   }
 }
 
-function createImplementationDraftSource(adapterId = 'generated-adapter', domain = 'generated.test'): string {
-  return `
+const IMPLEMENTATION_DRAFT_TEMPLATE = `
 import type { ChapterInfo } from '@comiccrawler/shared';
 import {
   AdapterBase,
@@ -72,9 +71,9 @@ import {
 } from '../../base';
 
 export class GeneratedAdapter extends AdapterBase {
-  readonly id = '${adapterId}';
+  readonly id = '__ADAPTER_ID__';
   readonly name = 'Generated Adapter';
-  readonly domains = ['${domain}'];
+  readonly domains = ['__DOMAIN__'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: true, chapterImages: true };
   readonly common = new GeneratedCommonCapability(this);
@@ -85,7 +84,7 @@ export class GeneratedAdapter extends AdapterBase {
 
 class GeneratedCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
-    return new URL(url).hostname === '${domain}';
+    return new URL(url).hostname === '__DOMAIN__';
   }
 }
 
@@ -112,393 +111,302 @@ class GeneratedChapterImagesCapability extends ChapterImagesCapability {
   }
 }
 `;
+
+function createImplementationDraftSource(adapterId = 'generated-adapter', domain = 'generated.test'): string {
+  return IMPLEMENTATION_DRAFT_TEMPLATE
+    .split('__ADAPTER_ID__').join(adapterId)
+    .split('__DOMAIN__').join(domain);
+}
+
+function reviewJob(id: string, overrides: Partial<SelectorDiscoveryJob> = {}): SelectorDiscoveryJob {
+  return {
+    id, url: 'https://generated.test/manga/title', normalizedUrl: 'https://generated.test/manga/title',
+    hostname: 'generated.test', status: 'awaiting_review', target: 'full', promotionMode: 'create',
+    createdAt: '2026-06-25T00:00:00.000Z', updatedAt: '2026-06-25T00:00:00.000Z',
+    adapterImplementationTs: createImplementationDraftSource(),
+    implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
+    ...overrides,
+  };
+}
+
+async function persistJob(storage: IStorage, job: SelectorDiscoveryJob): Promise<void> {
+  await storage.write(`selector-discovery-job-${job.id}`, job);
+  await storage.write('selector-discovery-index', [job.id]);
 }
 
 describe('SelectorDiscoveryService adapter strategies', () => {
+  SelectorDiscoveryServiceAdapterStrategiesTestGroup1();
+  SelectorDiscoveryServiceAdapterStrategiesTestGroup2();
+});
 
-  it('persists the stable browser worker target on an adapter discovery job', async () => {
+function SelectorDiscoveryServiceAdapterStrategiesTestGroup1(): void {
+  it('persists the stable browser worker target on an adapter discovery job', SelectorDiscoveryServiceAdapterStrategiesTestPersistsTheStableBrowserWorkerTargetOnAnAdapterDiscoveryJob);
+  it('creates augment jobs for full discovery when only a same-domain chapter-only adapter exists', SelectorDiscoveryServiceAdapterStrategiesTestCreatesAugmentJobsForFullDiscoveryWhenOnlyASameDomainChapterOnlyAdapterExists);
+  it('prunes active dynamic manifests that are superseded by an existing same-domain adapter', SelectorDiscoveryServiceAdapterStrategiesTestPrunesActiveDynamicManifestsThatAreSupersededByAnExistingSameDomainAdapter);
+  it('returns known_adapter for a matching adapter unless discovery is forced', SelectorDiscoveryServiceAdapterStrategiesTestReturnsKnownAdapterForAMatchingAdapterUnlessDiscoveryIsForced);
+  it('preserves the discovery target when retrying a job', SelectorDiscoveryServiceAdapterStrategiesTestPreservesTheDiscoveryTargetWhenRetryingAJob);
+  it('replaces the stub job when retrying a configuration_required job', SelectorDiscoveryServiceAdapterStrategiesTestReplacesTheStubJobWhenRetryingAConfigurationRequiredJob);
+  it('promotes an awaiting_review TypeScript implementation draft', SelectorDiscoveryServiceAdapterStrategiesTestPromotesAnAwaitingReviewTypeScriptImplementationDraft);
+  it('captures a golden fixture before registering an approved adapter', SelectorDiscoveryServiceAdapterStrategiesTestCapturesAGoldenFixtureBeforeRegisteringAnApprovedAdapter);
+  it('does not register an adapter when golden fixture capture fails', SelectorDiscoveryServiceAdapterStrategiesTestDoesNotRegisterAnAdapterWhenGoldenFixtureCaptureFails);
+  it('rejects invalid TypeScript implementation draft promotion', SelectorDiscoveryServiceAdapterStrategiesTestRejectsInvalidTypeScriptImplementationDraftPromotion);
+}
+
+function SelectorDiscoveryServiceAdapterStrategiesTestGroup2(): void {
+  it('rejects TypeScript implementation draft adapter id collisions', SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImplementationDraftAdapterIdCollisions);
+  it('rejects TypeScript implementation draft domain conflicts', SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImplementationDraftDomainConflicts);
+  it('loads promoted TypeScript implementation adapters on startup', SelectorDiscoveryServiceAdapterStrategiesTestLoadsPromotedTypeScriptImplementationAdaptersOnStartup);
+  it('records a function revision subtask under an awaiting review implementation draft', SelectorDiscoveryServiceAdapterStrategiesTestRecordsAFunctionRevisionSubtaskUnderAnAwaitingReviewImplementationDraft);
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestPersistsTheStableBrowserWorkerTargetOnAnAdapterDiscoveryJob() {
     const storage = new MemoryStorage();
     const service = new SelectorDiscoveryService(storage, new AdapterRegistry());
-
     const job = await service.create({
-      url: 'https://affinity.example/manga/demo',
-      ownerUserId: 'alice',
-      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
+        url: 'https://affinity.example/manga/demo',
+        ownerUserId: 'alice',
+        browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
     });
-
     expect(job).toMatchObject({
-      ownerUserId: 'alice',
-      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
-      status: 'configuration_required',
+        ownerUserId: 'alice',
+        browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
+        status: 'configuration_required',
     });
     expect(await service.get(job.id)).toMatchObject({
-      ownerUserId: 'alice',
-      browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
+        ownerUserId: 'alice',
+        browserTarget: { mode: 'managed-profile', workerId: 'worker-alice' },
     });
-  });
+}
 
-  it('creates augment jobs for full discovery when only a same-domain chapter-only adapter exists', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestCreatesAugmentJobsForFullDiscoveryWhenOnlyASameDomainChapterOnlyAdapterExists() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     registry.register(new DynamicSiteAdapter({
-      adapterId: 'example-dynamic',
-      name: 'Example Dynamic',
-      domains: ['example.com'],
-      urlPatterns: ['https://example.com/mangaread/*/*'],
-      capabilities: { verification: true, metadata: false, chapterImages: true },
-      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-      sourceDiscoveryId: 'disc-chapter-only',
-      promotedAt: '2026-06-25T00:00:00.000Z',
+        adapterId: 'example-dynamic',
+        name: 'Example Dynamic',
+        domains: ['example.com'],
+        urlPatterns: ['https://example.com/mangaread/*/*'],
+        capabilities: { verification: true, metadata: false, chapterImages: true },
+        selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+        sourceDiscoveryId: 'disc-chapter-only',
+        promotedAt: '2026-06-25T00:00:00.000Z',
     }));
     const service = new SelectorDiscoveryService(storage, registry);
-
     const job = await service.create({ url: 'https://example.com/manga/demo', target: 'full', forceDiscovery: true });
-
     expect(job.status).toBe('configuration_required');
     expect(job.promotionMode).toBe('augment');
     expect(job.baseAdapterId).toBe('example-dynamic');
-  });
+}
 
-  it('prunes active dynamic manifests that are superseded by an existing same-domain adapter', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestPrunesActiveDynamicManifestsThatAreSupersededByAnExistingSameDomainAdapter() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
-    const staleManifest: DynamicSiteAdapterManifest = {
-      adapterId: 'example-chapter-only-fixture-replay',
-      name: 'Example Chapter-only Fixture Replay Candidate',
-      domains: ['example.com'],
-      urlPatterns: ['https://example.com/mangaread/*/*'],
-      capabilities: { verification: true, metadata: false, chapterImages: true },
-      selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-      sourceDiscoveryId: 'fixture-replay-example',
-      promotedAt: '2026-06-25T00:00:00.000Z',
-    };
+    const staleManifest = staleDynamicManifest();
     registry.register(new OracleAdapter());
     await storage.write('selector-discovery-active-adapters', [staleManifest]);
     const service = new SelectorDiscoveryService(storage, registry);
-
     await service.loadActiveDynamicAdapters();
-
     const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
     expect(active).toEqual([]);
     expect(registry.get('oracle')).toBeDefined();
     expect(registry.get('example-chapter-only-fixture-replay')).toBeUndefined();
-  });
+}
 
-  it('returns known_adapter for a matching adapter unless discovery is forced', async () => {
+function staleDynamicManifest(): DynamicSiteAdapterManifest {
+  return { adapterId: 'example-chapter-only-fixture-replay',
+    name: 'Example Chapter-only Fixture Replay Candidate', domains: ['example.com'],
+    urlPatterns: ['https://example.com/mangaread/*/*'],
+    capabilities: { verification: true, metadata: false, chapterImages: true },
+    selectors: { images: { item: '.reader img', srcAttr: 'src' } },
+    sourceDiscoveryId: 'fixture-replay-example', promotedAt: '2026-06-25T00:00:00.000Z' };
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestReturnsKnownAdapterForAMatchingAdapterUnlessDiscoveryIsForced() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     registry.register(new OracleAdapter());
     const service = new SelectorDiscoveryService(storage, registry);
-
     const known = await service.create({ url: 'https://example.com/manga/demo' });
     expect(known.status).toBe('known_adapter');
     expect(known.adapterId).toBe('oracle');
-
     const forced = await service.create({
-      url: 'https://example.com/manga/demo/chapter-1',
-      target: 'chapter-only',
-      forceDiscovery: true,
+        url: 'https://example.com/manga/demo/chapter-1',
+        target: 'chapter-only',
+        forceDiscovery: true,
     });
     expect(forced.status).toBe('configuration_required');
     expect(forced.target).toBe('chapter-only');
     expect(forced.adapterId).toBeUndefined();
     expect(forced.error).toContain('Selector discovery is not configured');
-  });
+}
 
-  it('preserves the discovery target when retrying a job', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestPreservesTheDiscoveryTargetWhenRetryingAJob() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-retry',
-      url: 'https://example.net/manga/demo/chapter-1',
-      normalizedUrl: 'https://example.net/manga/demo/chapter-1',
-      hostname: 'example.net',
-      status: 'failed',
-      target: 'chapter-only',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-    };
-    await storage.write('selector-discovery-job-disc-retry', job);
-    await storage.write('selector-discovery-index', ['disc-retry']);
-
+    const job = retryJob('disc-retry', 'failed');
+    await persistJob(storage, job);
     const retried = await service.retry('disc-retry');
-
     expect(retried.status).toBe('configuration_required');
     expect(retried.target).toBe('chapter-only');
     expect(retried.retriedFromId).toBe('disc-retry');
-  });
+}
 
-  it('replaces the stub job when retrying a configuration_required job', async () => {
+function retryJob(id: string, status: SelectorDiscoveryJob['status']): SelectorDiscoveryJob {
+  const url = 'https://example.net/manga/demo/chapter-1';
+  return { id, url, normalizedUrl: url, hostname: 'example.net', status,
+    target: 'chapter-only', createdAt: '2026-06-25T00:00:00.000Z',
+    updatedAt: '2026-06-25T00:00:00.000Z' };
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestReplacesTheStubJobWhenRetryingAConfigurationRequiredJob() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-stub',
-      url: 'https://example.net/manga/demo/chapter-1',
-      normalizedUrl: 'https://example.net/manga/demo/chapter-1',
-      hostname: 'example.net',
-      status: 'configuration_required',
-      target: 'chapter-only',
-      error: 'Selector discovery is not configured.',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-    };
-    await storage.write('selector-discovery-job-disc-stub', job);
-    await storage.write('selector-discovery-index', ['disc-stub']);
-
+    const job = retryJob('disc-stub', 'configuration_required');
+    job.error = 'Selector discovery is not configured.';
+    await persistJob(storage, job);
     const retried = await service.retry('disc-stub');
-
     expect(retried.id).not.toBe('disc-stub');
     expect(retried.status).toBe('configuration_required');
     expect(retried.normalizedUrl).toBe('https://example.net/manga/demo/chapter-1');
     expect(retried.retriedFromId).toBe('disc-stub');
     expect(await service.get('disc-stub')).toBeNull();
     expect((await service.list()).map((entry) => entry.id)).toEqual([retried.id]);
-  });
+}
 
-  it('promotes an awaiting_review TypeScript implementation draft', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestPromotesAnAwaitingReviewTypeScriptImplementationDraft() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-ts',
-      url: 'https://generated.test/manga/title',
-      normalizedUrl: 'https://generated.test/manga/title',
-      hostname: 'generated.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource(),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-ts', job);
-    await storage.write('selector-discovery-index', ['disc-ts']);
-
+    await persistJob(storage, reviewJob('disc-ts'));
     const promoted = await service.promote('disc-ts');
     const active = await storage.read<Array<{ adapterId: string; adapterImplementationTs: string }>>(
-      'selector-discovery-active-implementation-adapters'
-    );
-
+      'selector-discovery-active-implementation-adapters');
     expect(promoted.adapterId).toBe('generated-adapter');
     expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
     expect(active).toHaveLength(1);
     expect(active?.[0]?.adapterImplementationTs).toContain('GeneratedAdapter');
     await expect(storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-ts')).resolves.toMatchObject({
-      status: 'promoted',
-      phase: 'complete',
-      adapterId: 'generated-adapter',
-      adapterName: 'Generated Adapter',
+        status: 'promoted',
+        phase: 'complete',
+        adapterId: 'generated-adapter',
+        adapterName: 'Generated Adapter',
     });
-  });
+}
 
-  it('captures a golden fixture before registering an approved adapter', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestCapturesAGoldenFixtureBeforeRegisteringAnApprovedAdapter() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const captureOrder: string[] = [];
     const service = new SelectorDiscoveryService(storage, registry, {
-      captureApprovalFixture: async ({ adapter }) => {
-        captureOrder.push(`capture:${registry.has(adapter.id)}`);
-        return {
-          id: 'fixture-1',
-          domain: 'generated.test',
-          url: 'https://generated.test/manga/title',
-          title: '',
-          htmlLength: 10,
-          capturedAt: '2026-06-25T00:00:00.000Z',
-          path: '/fixtures/page.html',
-          expectedPath: '/fixtures/expected.json',
-          readiness: {
-            status: 'ready',
-            target: 'metadata',
-            confidence: 1,
-            reasons: [],
-            recommendedAction: 'continue',
-          },
-        };
-      },
+        captureApprovalFixture: fixtureCapture(registry, captureOrder),
     });
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-fixture',
-      url: 'https://generated.test/manga/title',
-      normalizedUrl: 'https://generated.test/manga/title',
-      hostname: 'generated.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource(),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-fixture', job);
-    await storage.write('selector-discovery-index', ['disc-fixture']);
-
+    await persistJob(storage, reviewJob('disc-fixture'));
     const promoted = await service.promote('disc-fixture');
-
     expect(captureOrder).toEqual(['capture:false']);
     expect(promoted.approvalFixture?.id).toBe('fixture-1');
     expect(registry.has('generated-adapter')).toBe(true);
-  });
+}
 
-  it('does not register an adapter when golden fixture capture fails', async () => {
+function fixtureCapture(registry: AdapterRegistry, captureOrder: string[]) {
+  return async ({ adapter }: { adapter: { id: string } }) => {
+    captureOrder.push(`capture:${registry.has(adapter.id)}`);
+    return { id: 'fixture-1', domain: 'generated.test',
+      url: 'https://generated.test/manga/title', title: '', htmlLength: 10,
+      capturedAt: '2026-06-25T00:00:00.000Z', path: '/fixtures/page.html',
+      expectedPath: '/fixtures/expected.json', readiness: { status: 'ready' as const,
+        target: 'metadata' as const, confidence: 1, reasons: [], recommendedAction: 'continue' as const } };
+  };
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestDoesNotRegisterAnAdapterWhenGoldenFixtureCaptureFails() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry, {
-      captureApprovalFixture: async () => {
-        throw new Error('fixture capture failed');
-      },
+        captureApprovalFixture: async () => {
+            throw new Error('fixture capture failed');
+        },
     });
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-fixture-failed',
-      url: 'https://generated.test/manga/title',
-      normalizedUrl: 'https://generated.test/manga/title',
-      hostname: 'generated.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource(),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-fixture-failed', job);
-    await storage.write('selector-discovery-index', ['disc-fixture-failed']);
-
+    await persistJob(storage, reviewJob('disc-fixture-failed'));
     await expect(service.promote('disc-fixture-failed')).rejects.toThrow('fixture capture failed');
     expect(registry.has('generated-adapter')).toBe(false);
     await expect(service.get('disc-fixture-failed')).resolves.toMatchObject({ status: 'awaiting_review' });
-  });
+}
 
-  it('rejects invalid TypeScript implementation draft promotion', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestRejectsInvalidTypeScriptImplementationDraftPromotion() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-invalid-ts',
-      url: 'https://generated.test/manga/title',
-      normalizedUrl: 'https://generated.test/manga/title',
-      hostname: 'generated.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource(),
-      implementationValidation: { valid: false, syntaxValid: true, errors: ['missing metadata capability'], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-invalid-ts', job);
-    await storage.write('selector-discovery-index', ['disc-invalid-ts']);
-
+    const validation = { valid: false, syntaxValid: true,
+      errors: ['missing metadata capability'], warnings: [] };
+    await persistJob(storage, reviewJob('disc-invalid-ts', { implementationValidation: validation }));
     await expect(service.promote('disc-invalid-ts')).rejects.toThrow('Adapter implementation draft is invalid');
     expect(registry.size).toBe(0);
-  });
+}
 
-  it('rejects TypeScript implementation draft adapter id collisions', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImplementationDraftAdapterIdCollisions() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     registry.register(new OracleAdapter());
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-id-collision-ts',
-      url: 'https://other.test/manga/title',
-      normalizedUrl: 'https://other.test/manga/title',
-      hostname: 'other.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource('oracle', 'other.test'),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-id-collision-ts', job);
-    await storage.write('selector-discovery-index', ['disc-id-collision-ts']);
-
+    const source = createImplementationDraftSource('oracle', 'other.test');
+    const url = 'https://other.test/manga/title';
+    await persistJob(storage, reviewJob('disc-id-collision-ts', {
+      url, normalizedUrl: url, hostname: 'other.test', adapterImplementationTs: source,
+    }));
     await expect(service.promote('disc-id-collision-ts')).rejects.toThrow('Adapter "oracle" is already registered');
-  });
+}
 
-  it('rejects TypeScript implementation draft domain conflicts', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImplementationDraftDomainConflicts() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     registry.register(new OracleAdapter());
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-domain-collision-ts',
-      url: 'https://example.com/manga/title',
-      normalizedUrl: 'https://example.com/manga/title',
-      hostname: 'example.com',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource('other-generated', 'example.com'),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-domain-collision-ts', job);
-    await storage.write('selector-discovery-index', ['disc-domain-collision-ts']);
-
+    const url = 'https://example.com/manga/title';
+    const source = createImplementationDraftSource('other-generated', 'example.com');
+    await persistJob(storage, reviewJob('disc-domain-collision-ts', {
+      url, normalizedUrl: url, hostname: 'example.com', adapterImplementationTs: source,
+    }));
     await expect(service.promote('disc-domain-collision-ts')).rejects.toThrow('Domain conflict detected for example.com');
-  });
+}
 
-  it('loads promoted TypeScript implementation adapters on startup', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestLoadsPromotedTypeScriptImplementationAdaptersOnStartup() {
     const storage = new MemoryStorage();
     await storage.write('selector-discovery-active-implementation-adapters', [
-      {
-        adapterId: 'generated-adapter',
-        name: 'Generated Adapter',
-        domains: ['generated.test'],
-        urlPatterns: ['https://generated.test/*'],
-        parseMode: 'playwright',
-        capabilities: { verification: true, metadata: true, chapterImages: true },
-        sourceDiscoveryId: 'disc-ts',
-        adapterImplementationTs: createImplementationDraftSource(),
-        promotedAt: '2026-06-25T00:00:00.000Z',
-      },
+        {
+            adapterId: 'generated-adapter',
+            name: 'Generated Adapter',
+            domains: ['generated.test'],
+            urlPatterns: ['https://generated.test/*'],
+            parseMode: 'playwright',
+            capabilities: { verification: true, metadata: true, chapterImages: true },
+            sourceDiscoveryId: 'disc-ts',
+            adapterImplementationTs: createImplementationDraftSource(),
+            promotedAt: '2026-06-25T00:00:00.000Z',
+        },
     ]);
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-
     await service.loadActiveDynamicAdapters();
-
     expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
-  });
+}
 
-  it('records a function revision subtask under an awaiting review implementation draft', async () => {
+async function SelectorDiscoveryServiceAdapterStrategiesTestRecordsAFunctionRevisionSubtaskUnderAnAwaitingReviewImplementationDraft() {
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    const job: SelectorDiscoveryJob = {
-      id: 'disc-revision',
-      url: 'https://generated.test/manga/title',
-      normalizedUrl: 'https://generated.test/manga/title',
-      hostname: 'generated.test',
-      status: 'awaiting_review',
-      target: 'full',
-      promotionMode: 'create',
-      createdAt: '2026-06-25T00:00:00.000Z',
-      updatedAt: '2026-06-25T00:00:00.000Z',
-      adapterImplementationTs: createImplementationDraftSource(),
-      implementationValidation: { valid: true, syntaxValid: true, errors: [], warnings: [] },
-    };
-    await storage.write('selector-discovery-job-disc-revision', job);
-    await storage.write('selector-discovery-index', ['disc-revision']);
-
+    await persistJob(storage, reviewJob('disc-revision'));
     const updated = await service.requestFunctionRevision({
-      id: 'disc-revision',
-      functionId: 'extractTitle',
-      instruction: 'Only read the primary catalog title.',
+        id: 'disc-revision',
+        functionId: 'extractTitle',
+        instruction: 'Only read the primary catalog title.',
     });
-
     expect(updated.functionRevisionTasks).toHaveLength(1);
     expect(updated.functionRevisionTasks?.[0]).toMatchObject({
-      parentDiscoveryId: 'disc-revision',
-      functionId: 'extractTitle',
-      instruction: 'Only read the primary catalog title.',
-      status: 'queued',
+        parentDiscoveryId: 'disc-revision',
+        functionId: 'extractTitle',
+        instruction: 'Only read the primary catalog title.',
+        status: 'queued',
     });
-  });
-});
+}

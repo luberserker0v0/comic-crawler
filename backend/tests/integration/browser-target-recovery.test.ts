@@ -30,108 +30,23 @@ const capabilities: BrowserCapabilities = {
   responsiveViewport: true,
 };
 
-describe('Browser Target recovery integration', () => {
-  let server: Server;
-  let webSocketServer: WebSocketServer;
-  let gateway: BrowserSessionGateway;
-  let coordinator: BrowserWorkerLeaseCoordinator;
-  let firstClient: BrowserClient | undefined;
-  let secondClient: BrowserClient | undefined;
-  let taskManager: TaskManager;
-  let releaseExecutor: (() => void) | undefined;
+let server: Server;
 
-  afterEach(async () => {
-    releaseExecutor?.();
-    await Promise.all([
-      firstClient?.close().catch(() => undefined),
-      secondClient?.close().catch(() => undefined),
-    ]);
-    await taskManager?.dispose().catch(() => undefined);
-    await coordinator?.dispose().catch(() => undefined);
-    gateway?.dispose();
-    webSocketServer?.close();
-    if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
+let webSocketServer: WebSocketServer;
 
-  it('rebinds the original task after the same Client credential starts a new process', async () => {
-    const registry = new BrowserClientRegistry();
-    const enrollment = await registry.enroll(principal(), { name: 'Extension', capabilities });
-    gateway = new BrowserSessionGateway(registry);
-    coordinator = new BrowserWorkerLeaseCoordinator(gateway);
-    const serverUrl = await startGatewayServer();
-    const state = enrollmentState(serverUrl, enrollment);
+let gateway: BrowserSessionGateway;
 
-    firstClient = createClient(serverUrl, state, 'extension-process-a');
-    const firstConnection = await firstClient.connect();
-    const firstResource = await firstClient.registerResource({ kind: 'tab', url: chapterUrl });
+let coordinator: BrowserWorkerLeaseCoordinator;
 
-    let executionCount = 0;
-    const blocked = new Promise<void>((resolve) => { releaseExecutor = resolve; });
-    taskManager = new TaskManager(async () => {
-      executionCount += 1;
-      if (executionCount > 1) await blocked;
-    }, { eventBus: new EventBus(), storage: new MemoryStorage() });
-    await taskManager.initialize();
-    await taskManager.createTask({
-      id: 'task-restart-recovery',
-      url: chapterUrl,
-      adapterId: 'fixture',
-      mode: 'chapters',
-      chapterUrls: [chapterUrl],
-      ownerUserId: 'alice',
-      browserTarget: {
-        mode: 'existing-tab',
-        workerId: firstConnection.workerId,
-        resourceId: firstResource.resourceId,
-      },
-    });
-    await waitFor(() => taskManager.getTask('task-restart-recovery')?.status === 'completed');
-    const record = (taskManager as any).records.get('task-restart-recovery');
-    record.task.status = 'interrupted';
-    record.task.error = 'Browser Worker disconnected after the extension process restarted.';
-    record.result.status = 'interrupted';
-    record.result.error = record.task.error;
+let firstClient: BrowserClient | undefined;
 
-    await firstClient.disconnect();
-    await waitFor(() => gateway.getWorker(firstConnection.workerId)?.online === false);
+let secondClient: BrowserClient | undefined;
 
-    secondClient = createClient(serverUrl, state, 'extension-process-b');
-    const secondConnection = await secondClient.connect();
-    const secondResource = await secondClient.registerResource({ kind: 'tab', url: chapterUrl });
-    expect(secondConnection.workerId).not.toBe(firstConnection.workerId);
+let taskManager: TaskManager;
 
-    const recovery = new BrowserTargetRecoveryService(taskManager, coordinator);
-    const result = await recovery.recover({
-      taskId: 'task-restart-recovery',
-      ownerUserId: 'alice',
-      expectedBrowserTarget: {
-        mode: 'existing-tab',
-        workerId: firstConnection.workerId,
-        resourceId: firstResource.resourceId,
-      },
-      browserTarget: {
-        mode: 'existing-tab',
-        workerId: secondConnection.workerId,
-        resourceId: secondResource.resourceId,
-      },
-    });
+let releaseExecutor: (() => void) | undefined;
 
-    expect(result.idempotent).toBe(false);
-    expect(taskManager.getTask('task-restart-recovery')?.data.browserTarget).toEqual({
-      mode: 'existing-tab',
-      workerId: secondConnection.workerId,
-      resourceId: secondResource.resourceId,
-    });
-    expect(taskManager.getEvents('task-restart-recovery')).toEqual([
-      expect.objectContaining({
-        type: 'task:browser_target_rebound',
-        previousBrowserTarget: expect.objectContaining({ workerId: firstConnection.workerId }),
-        browserTarget: expect.objectContaining({ workerId: secondConnection.workerId }),
-      }),
-    ]);
-  });
-
-  async function startGatewayServer(): Promise<string> {
+async function startGatewayServer(): Promise<string> {
     server = createServer();
     webSocketServer = new WebSocketServer({ noServer: true });
     server.on('upgrade', (request, socket, head) => {
@@ -144,6 +59,9 @@ describe('Browser Target recovery integration', () => {
     if (!address || typeof address === 'string') throw new Error('Test server has no address.');
     return `http://127.0.0.1:${address.port}`;
   }
+
+describe('Browser Target recovery integration', () => {
+  BrowserTargetRecoveryIntegrationTestGroup1();
 });
 
 function createClient(serverUrl: string, state: BrowserClientState, processInstanceId: string): BrowserClient {
@@ -236,4 +154,113 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     if (Date.now() > deadline) throw new Error('Timed out while waiting for test condition.');
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+function BrowserTargetRecoveryIntegrationTestGroup1(): void {
+  afterEach(BrowserTargetRecoveryIntegrationTestScenario1);
+  it('rebinds the original task after the same Client credential starts a new process', BrowserTargetRecoveryIntegrationTestRebindsTheOriginalTaskAfterTheSameClientCredentialStartsANewProcess);
+}
+
+async function BrowserTargetRecoveryIntegrationTestScenario1() {
+    releaseExecutor?.();
+    await Promise.all([
+        firstClient?.close().catch(() => undefined),
+        secondClient?.close().catch(() => undefined),
+    ]);
+    await taskManager?.dispose().catch(() => undefined);
+    await coordinator?.dispose().catch(() => undefined);
+    gateway?.dispose();
+    webSocketServer?.close();
+    if (server?.listening)
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function BrowserTargetRecoveryIntegrationTestRebindsTheOriginalTaskAfterTheSameClientCredentialStartsANewProcess() {
+    const original = await setupOriginalBrowserTarget();
+    await createRecoverableTask(original.connection.workerId, original.resource.resourceId);
+    interruptRecoveryTask();
+    await firstClient!.disconnect();
+    await waitFor(() => gateway.getWorker(original.connection.workerId)?.online === false);
+    const replacement = await connectReplacement(original.serverUrl, original.state);
+    const result = await recoverBrowserTarget(original, replacement);
+    expectRecoveryResult(result, original.connection.workerId, replacement.connection.workerId,
+      replacement.resource.resourceId);
+}
+
+async function setupOriginalBrowserTarget() {
+    const registry = new BrowserClientRegistry();
+    const enrollment = await registry.enroll(principal(), { name: 'Extension', capabilities });
+    gateway = new BrowserSessionGateway(registry);
+    coordinator = new BrowserWorkerLeaseCoordinator(gateway);
+    const serverUrl = await startGatewayServer();
+    const state = enrollmentState(serverUrl, enrollment);
+    firstClient = createClient(serverUrl, state, 'extension-process-a');
+    const firstConnection = await firstClient.connect();
+    const firstResource = await firstClient.registerResource({ kind: 'tab', url: chapterUrl });
+    return { serverUrl, state, connection: firstConnection, resource: firstResource };
+}
+
+async function createRecoverableTask(workerId: string, resourceId: string): Promise<void> {
+    let executionCount = 0;
+    const blocked = new Promise<void>((resolve) => { releaseExecutor = resolve; });
+    taskManager = new TaskManager(async () => {
+        executionCount += 1;
+        if (executionCount > 1)
+            await blocked;
+    }, { eventBus: new EventBus(), storage: new MemoryStorage() });
+    await taskManager.initialize();
+    await taskManager.createTask({ id: 'task-restart-recovery', url: chapterUrl,
+      adapterId: 'fixture', mode: 'chapters', chapterUrls: [chapterUrl], ownerUserId: 'alice',
+      browserTarget: { mode: 'existing-tab', workerId, resourceId } });
+    await waitFor(() => taskManager.getTask('task-restart-recovery')?.status === 'completed');
+}
+
+function interruptRecoveryTask(): void {
+    const record = (taskManager as any).records.get('task-restart-recovery');
+    record.task.status = 'interrupted';
+    record.task.error = 'Browser Worker disconnected after the extension process restarted.';
+    record.result.status = 'interrupted';
+    record.result.error = record.task.error;
+}
+
+async function connectReplacement(serverUrl: string, state: BrowserClientState) {
+    secondClient = createClient(serverUrl, state, 'extension-process-b');
+    const secondConnection = await secondClient.connect();
+    const secondResource = await secondClient.registerResource({ kind: 'tab', url: chapterUrl });
+    return { connection: secondConnection, resource: secondResource };
+}
+
+async function recoverBrowserTarget(original: Awaited<ReturnType<typeof setupOriginalBrowserTarget>>,
+  replacement: Awaited<ReturnType<typeof connectReplacement>>) {
+    const recovery = new BrowserTargetRecoveryService(taskManager, coordinator);
+    return recovery.recover({
+        taskId: 'task-restart-recovery',
+        ownerUserId: 'alice',
+        expectedBrowserTarget: {
+            mode: 'existing-tab',
+            workerId: original.connection.workerId,
+            resourceId: original.resource.resourceId,
+        },
+        browserTarget: {
+            mode: 'existing-tab',
+            workerId: replacement.connection.workerId,
+            resourceId: replacement.resource.resourceId,
+        },
+    });
+}
+
+function expectRecoveryResult(result: { idempotent: boolean }, previousWorkerId: string,
+  workerId: string, resourceId: string): void {
+    expect(result.idempotent).toBe(false);
+    expect(taskManager.getTask('task-restart-recovery')?.data.browserTarget).toEqual({
+        mode: 'existing-tab',
+        workerId, resourceId,
+    });
+    expect(taskManager.getEvents('task-restart-recovery')).toEqual([
+        expect.objectContaining({
+            type: 'task:browser_target_rebound',
+            previousBrowserTarget: expect.objectContaining({ workerId: previousWorkerId }),
+            browserTarget: expect.objectContaining({ workerId }),
+        }),
+    ]);
 }
