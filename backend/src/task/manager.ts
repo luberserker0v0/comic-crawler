@@ -2,6 +2,7 @@ import type { TaskStatus, TaskItem } from './types';
 import type { TaskProgress } from './progress';
 import type { CrawlCheckpoint } from './checkpoint';
 import type { EventBus } from '../events/bus';
+import type { EventMap } from '../events/types';
 import type { IStorage } from '../storage/types';
 import { TaskDeferredError, TaskScheduler } from '../scheduler';
 import { ProgressTracker } from './progress';
@@ -83,6 +84,21 @@ export interface RebindBrowserTargetResult {
   idempotent: boolean;
 }
 
+interface RebindBrowserTargetInput {
+  taskId: string;
+  ownerUserId: string;
+  expectedBrowserTarget: ExistingTabBrowserTarget;
+  browserTarget: ExistingTabBrowserTarget;
+  browserTargetUrl: string;
+}
+
+interface TaskRecordUpdates {
+  task?: Partial<TaskItem<TaskDefinition>>;
+  result?: Partial<TaskResult>;
+  progress?: TaskProgress;
+  checkpoint?: CrawlCheckpoint;
+}
+
 export class TaskManager {
   private scheduler: TaskScheduler<TaskDefinition>;
   private progress: ProgressTracker;
@@ -101,83 +117,44 @@ export class TaskManager {
     this.storage = options?.storage;
     this.progress = new ProgressTracker(options?.eventBus);
     this.scheduler = new TaskScheduler<TaskDefinition>(
-      async (task) => {
-        try {
-          await this.taskExecutor(task);
-          await this.markTaskCompleted(task.id);
-        } catch (error) {
-          if (error instanceof TaskDeferredError) throw error;
-          if (await this.markTaskWaitingVerification(task.id, error)) {
-            return;
-          }
-          await this.markTaskFailed(task.id, error);
-          this.eventBus?.emit('task:failed', {
-            taskId: task.id,
-            error: error instanceof Error ? error : new Error(String(error)),
-          });
-          throw error;
-        }
-      },
-      { concurrency: options?.concurrency ?? 3 }
-    );
+      (task) => this.executeScheduledTask(task), { concurrency: options?.concurrency ?? 3 });
     this.registerEventHandlers();
+  }
+
+  private async executeScheduledTask(task: TaskItem<TaskDefinition>): Promise<void> {
+    try {
+      await this.taskExecutor(task);
+      await this.markTaskCompleted(task.id);
+    } catch (error) {
+      if (error instanceof TaskDeferredError) throw error;
+      if (await this.markTaskWaitingVerification(task.id, error)) return;
+      await this.markTaskFailed(task.id, error);
+      this.eventBus?.emit('task:failed', { taskId: task.id,
+        error: error instanceof Error ? error : new Error(String(error)) });
+      throw error;
+    }
   }
 
   async initialize(): Promise<void> {
     if (!this.storage) return;
-
     const taskIds = (await this.storage.read<string[]>(TASK_INDEX_KEY)) ?? [];
     this.priorityOrder = (await this.storage.read<string[]>(TASK_PRIORITY_ORDER_KEY)) ?? [];
     this.scheduler.setPriorityOrder(this.priorityOrder);
     for (const taskId of taskIds) {
       const record = await this.storage.read<PersistedTaskRecord>(this.getTaskKey(taskId));
-      if (!record) {
-        continue;
-      }
-
-      let changed = false;
-      let shouldRequeue = false;
-      if (record.task.status === 'pending' || record.task.status === 'running' || record.task.status === 'paused'
-        || record.task.status === 'waiting_for_browser_worker') {
-        if (record.checkpoint?.resumable) {
-          record.task.status = 'pending';
-          record.task.completedAt = undefined;
-          record.task.error = undefined;
-          record.result.status = 'pending';
-          record.result.completedAt = undefined;
-          record.result.error = undefined;
-          record.result.downloadedImages = record.checkpoint.completedImages;
-          record.result.failedImages = record.checkpoint.failedImages;
-          record.result.totalImages = record.checkpoint.totalImages;
-          if (record.checkpoint.metadata) {
-            record.result.metadata = record.checkpoint.metadata as unknown as Record<string, unknown>;
-          }
-          if (record.checkpoint.outputPath) {
-            record.result.outputPath = record.checkpoint.outputPath;
-          }
-          shouldRequeue = true;
-        } else {
-          record.task.status = 'interrupted';
-          record.task.completedAt = record.task.completedAt ?? new Date();
-          record.result.status = 'interrupted';
-          record.result.completedAt = record.result.completedAt ?? new Date();
-          record.result.error = record.result.error ?? 'Task interrupted by server restart';
-        }
-        changed = true;
-      }
-
-      this.records.set(taskId, record);
-      if (record.progress) {
-        this.progress.hydrate(record.progress);
-      }
-
-      if (changed) {
-        await this.persistRecord(record);
-      }
-      if (shouldRequeue) {
-        await this.scheduler.add(record.task);
-      }
+      if (record) await this.restoreRecord(taskId, record);
     }
+  }
+
+  private async restoreRecord(taskId: string, record: PersistedTaskRecord): Promise<void> {
+    const recoverable = isStartupActiveStatus(record.task.status);
+    const shouldRequeue = recoverable && record.checkpoint?.resumable === true;
+    if (shouldRequeue) resetRecordForResume(record);
+    else if (recoverable) interruptRecord(record);
+    this.records.set(taskId, record);
+    if (record.progress) this.progress.hydrate(record.progress);
+    if (recoverable) await this.persistRecord(record);
+    if (shouldRequeue) await this.scheduler.add(record.task);
   }
 
   async dispose(): Promise<void> {
@@ -186,31 +163,11 @@ export class TaskManager {
   }
 
   async createTask(definition: TaskDefinition): Promise<string> {
-    const now = new Date();
-    const taskItem: TaskItem<TaskDefinition> = {
-      id: definition.id,
-      data: definition,
-      status: 'pending',
-      priority: definition.priority ?? 0,
-      createdAt: now,
-    };
-
-    const record: PersistedTaskRecord = {
-      task: taskItem,
-      result: {
-        taskId: definition.id,
-        status: 'pending',
-        downloadedImages: 0,
-        failedImages: 0,
-        totalImages: 0,
-      },
-    };
-
+    const record = createTaskRecord(definition);
     this.records.set(definition.id, record);
     await this.persistRecord(record);
-    await this.scheduler.add(taskItem);
+    await this.scheduler.add(record.task);
     this.eventBus?.emit('task:created', { taskId: definition.id, url: definition.url });
-
     return definition.id;
   }
 
@@ -239,33 +196,9 @@ export class TaskManager {
   async resumeTask(taskId: string): Promise<boolean> {
     const task = this.scheduler.get(taskId) ?? this.records.get(taskId)?.task;
     const checkpoint = this.records.get(taskId)?.checkpoint;
-    const canResumeCompletedTask = task?.status === 'completed' && checkpoint?.resumable === true;
-    if (!task || (
-      task.status !== 'paused' &&
-      task.status !== 'interrupted' &&
-      task.status !== 'waiting_verification' &&
-      task.status !== 'failed' &&
-      !canResumeCompletedTask
-    )) return false;
-
+    if (!task || !canResumeTask(task.status, checkpoint)) return false;
     task.status = 'pending';
-    await this.updateTaskRecord(taskId, {
-      task: {
-        status: 'pending',
-        completedAt: undefined,
-        error: undefined,
-      },
-      result: {
-        status: 'pending',
-        completedAt: undefined,
-        error: undefined,
-        downloadedImages: checkpoint?.completedImages ?? 0,
-        failedImages: checkpoint?.failedImages ?? 0,
-        totalImages: checkpoint?.totalImages ?? 0,
-        ...(checkpoint?.metadata ? { metadata: checkpoint.metadata as unknown as Record<string, unknown> } : {}),
-        ...(checkpoint?.outputPath ? { outputPath: checkpoint.outputPath } : {}),
-      },
-    });
+    await this.updateTaskRecord(taskId, createResumeUpdates(checkpoint));
     await this.scheduler.add(task);
     this.eventBus?.emit('task:resumed', { taskId });
     return true;
@@ -274,22 +207,12 @@ export class TaskManager {
   async cancelTask(taskId: string): Promise<boolean> {
     let cancelled = this.scheduler.cancel(taskId);
     const record = this.records.get(taskId);
-    if (!cancelled && record?.task.status === 'waiting_verification') {
-      cancelled = true;
-    }
-    if (cancelled) {
-      await this.updateTaskRecord(taskId, {
-        task: {
-          status: 'cancelled',
-          completedAt: new Date(),
-        },
-        result: {
-          status: 'cancelled',
-          completedAt: new Date(),
-        },
-      });
-      this.eventBus?.emit('task:cancelled', { taskId });
-    }
+    if (!cancelled && record?.task.status === 'waiting_verification') cancelled = true;
+    if (!cancelled) return false;
+    const completedAt = new Date();
+    await this.updateTaskRecord(taskId, { task: { status: 'cancelled', completedAt },
+      result: { status: 'cancelled', completedAt } });
+    this.eventBus?.emit('task:cancelled', { taskId });
     return cancelled;
   }
 
@@ -300,39 +223,27 @@ export class TaskManager {
 
   async deleteTaskWithFiles(taskId: string, options?: DeleteTaskOptions): Promise<DeleteTaskResult> {
     const record = this.records.get(taskId);
-    if (!record) {
-      return { deleted: false, filesDeleted: false };
-    }
-
+    if (!record) return { deleted: false, filesDeleted: false };
     const activeStatuses: TaskStatus[] = ['pending', 'running', 'paused', 'waiting_for_browser_worker'];
-    if (activeStatuses.includes(record.task.status)) {
-      return { deleted: false, filesDeleted: false };
-    }
-
-    let filesDeleted = false;
-    let filesSkipped: string | undefined;
-    if (options?.deleteFiles && record.result.outputPath) {
-      const outcome = await deleteTaskOutputDir(record.result.outputPath, options.downloadDir);
-      filesDeleted = outcome.deleted;
-      filesSkipped = outcome.skipped;
-    }
-
+    if (activeStatuses.includes(record.task.status)) return { deleted: false, filesDeleted: false };
+    const files = await deleteRecordFiles(record, options);
     this.scheduler.remove(taskId);
     this.records.delete(taskId);
     this.progress.remove(taskId);
+    await this.deletePersistedRecord(taskId);
+    return { deleted: true, filesDeleted: files.deleted,
+      ...(files.skipped ? { filesSkipped: files.skipped } : {}) };
+  }
 
-    if (this.storage) {
-      const currentIndex = (await this.storage.read<string[]>(TASK_INDEX_KEY)) ?? [];
-      const nextIndex = currentIndex.filter((id) => id !== taskId);
-      const nextPriorityOrder = this.priorityOrder.filter((id) => id !== taskId);
-      this.priorityOrder = nextPriorityOrder;
-      this.scheduler.setPriorityOrder(nextPriorityOrder);
-      await this.storage.write(TASK_INDEX_KEY, nextIndex);
-      await this.storage.write(TASK_PRIORITY_ORDER_KEY, nextPriorityOrder);
-      await this.storage.delete(this.getTaskKey(taskId));
-    }
-
-    return { deleted: true, filesDeleted, ...(filesSkipped ? { filesSkipped } : {}) };
+  private async deletePersistedRecord(taskId: string): Promise<void> {
+    if (!this.storage) return;
+    const currentIndex = (await this.storage.read<string[]>(TASK_INDEX_KEY)) ?? [];
+    const nextOrder = this.priorityOrder.filter((id) => id !== taskId);
+    this.priorityOrder = nextOrder;
+    this.scheduler.setPriorityOrder(nextOrder);
+    await this.storage.write(TASK_INDEX_KEY, currentIndex.filter((id) => id !== taskId));
+    await this.storage.write(TASK_PRIORITY_ORDER_KEY, nextOrder);
+    await this.storage.delete(this.getTaskKey(taskId));
   }
 
   getTask(taskId: string): TaskItem<TaskDefinition> | undefined {
@@ -359,78 +270,17 @@ export class TaskManager {
     return [...(this.records.get(taskId)?.events ?? [])];
   }
 
-  async rebindBrowserTarget(input: {
-    taskId: string;
-    ownerUserId: string;
-    expectedBrowserTarget: ExistingTabBrowserTarget;
-    browserTarget: ExistingTabBrowserTarget;
-    browserTargetUrl: string;
-  }): Promise<RebindBrowserTargetResult> {
-    const record = this.records.get(input.taskId);
-    if (!record) {
-      throw new BrowserTargetRebindError(`Task "${input.taskId}" was not found.`, 'NOT_FOUND');
-    }
-    if ((record.task.data.ownerUserId ?? 'public') !== input.ownerUserId) {
-      throw new BrowserTargetRebindError('The authenticated user does not own this task.', 'FORBIDDEN');
-    }
-    if (sameBrowserTarget(input.expectedBrowserTarget, input.browserTarget)) {
-      throw new BrowserTargetRebindError('The replacement Browser Target must differ from the expected target.', 'INVALID_TARGET');
-    }
-
-    const currentTarget = record.task.data.browserTarget;
-    const previousEvent = [...(record.events ?? [])].reverse().find((event) =>
-      sameBrowserTarget(event.previousBrowserTarget, input.expectedBrowserTarget)
-      && sameBrowserTarget(event.browserTarget, input.browserTarget));
-    if (currentTarget?.mode === 'existing-tab'
-      && sameBrowserTarget(currentTarget, input.browserTarget)
-      && previousEvent) {
-      return { task: record.task, event: previousEvent, idempotent: true };
-    }
-    if (currentTarget?.mode !== 'existing-tab') {
-      throw new BrowserTargetRebindError('Only existing-tab tasks can rebind their Browser Target.', 'INVALID_TARGET');
-    }
-    if (!sameBrowserTarget(currentTarget, input.expectedBrowserTarget)) {
-      throw new BrowserTargetRebindError('The task Browser Target changed after it was inspected.', 'STALE_TARGET');
-    }
-    if (!isRecoverableBrowserTargetState(record.task.status, record.task.error ?? record.result.error)) {
-      throw new BrowserTargetRebindError(
-        `Task status "${record.task.status}" does not allow Browser Target recovery.`,
-        'INVALID_STATE'
-      );
-    }
-
+  async rebindBrowserTarget(input: RebindBrowserTargetInput): Promise<RebindBrowserTargetResult> {
+    const record = requireRebindRecord(this.records, input);
+    const idempotent = findIdempotentRebind(record, input);
+    if (idempotent) return { task: record.task, event: idempotent, idempotent: true };
+    const currentTarget = validateCurrentRebindTarget(record, input);
     const previousStatus = record.task.status;
-    const reboundAt = new Date().toISOString();
-    const event: TaskBrowserTargetReboundEvent = {
-      type: 'task:browser_target_rebound',
-      occurredAt: reboundAt,
-      previousBrowserTarget: { ...currentTarget },
-      browserTarget: { ...input.browserTarget },
-      previousStatus,
-      ...(record.task.error ? { previousTaskError: record.task.error } : {}),
-      ...(record.result.error ? { previousResultError: record.result.error } : {}),
-      recovery: {
-        reason: 'browser_client_process_restarted',
-        reboundAt,
-      },
-    };
-    record.task.data.browserTarget = { ...input.browserTarget };
-    record.task.data.browserTargetUrl = input.browserTargetUrl;
-    delete record.task.data.browserWaitStartedAt;
-    record.events = [...(record.events ?? []), event];
-
-    if (previousStatus !== 'waiting_verification') {
-      record.task.status = 'pending';
-      record.task.completedAt = undefined;
-      record.task.error = undefined;
-      record.result.status = 'pending';
-      record.result.completedAt = undefined;
-      record.result.error = undefined;
-    }
+    const event = createRebindEvent(record, currentTarget, input.browserTarget);
+    applyRebind(record, input, event);
     await this.persistRecord(record);
-    if (previousStatus === 'interrupted' || previousStatus === 'failed') {
+    if (previousStatus === 'interrupted' || previousStatus === 'failed')
       await this.scheduler.add(record.task);
-    }
     this.eventBus?.emit('task:browser_target_rebound', { taskId: input.taskId, event });
     return { task: record.task, event, idempotent: false };
   }
@@ -517,105 +367,41 @@ export class TaskManager {
 
   private registerEventHandlers(): void {
     if (!this.eventBus) return;
+    this.eventBus.on('task:started', ({ taskId }) => this.handleTaskStarted(taskId));
+    this.eventBus.on('task:progress', (event) => this.handleTaskProgress(event));
+    this.eventBus.on('task:completed', ({ taskId, result }) =>
+      this.markTaskCompleted(taskId, result as Partial<TaskResult> | undefined));
+    this.eventBus.on('task:failed', ({ taskId, error }) => this.markTaskFailed(taskId, error));
+  }
 
-    this.eventBus.on('task:started', async ({ taskId }) => {
-      await this.updateTaskRecord(taskId, {
-        task: {
-          status: 'running',
-          startedAt: new Date(),
-          completedAt: undefined,
-        },
-        result: {
-          status: 'running',
-          startedAt: new Date(),
-          completedAt: undefined,
-        },
-      });
+  private async handleTaskStarted(taskId: string): Promise<void> {
+    const startedAt = new Date();
+    await this.updateTaskRecord(taskId, {
+      task: { status: 'running', startedAt, completedAt: undefined },
+      result: { status: 'running', startedAt, completedAt: undefined },
     });
+  }
 
-    this.eventBus.on('task:progress', async ({ taskId, progress }) => {
-      const existingProgress = this.progress.get(taskId);
-      const now = new Date();
-      const snapshot: TaskProgress = {
-        taskId,
-        totalItems: progress.totalImages,
-        completedItems: progress.completedImages,
-        failedItems: progress.failedImages,
-        currentItems: progress.currentChapter,
-        stage: progress.stage,
-        stageDetail: progress.stageDetail,
-        metadata: progress.metadata,
-        chapterListSummary: progress.chapterListSummary,
-        percentage: progress.totalImages > 0 ? Math.round((progress.completedImages / progress.totalImages) * 100) : 0,
-        startedAt: existingProgress?.startedAt ?? now,
-        updatedAt: now,
-        estimatedRemaining: existingProgress?.estimatedRemaining,
-      };
-
-      this.progress.hydrate(snapshot);
-      await this.updateTaskRecord(taskId, {
-        progress: snapshot,
-        result: {
-          ...(progress.metadata ? { metadata: progress.metadata as Record<string, unknown> } : {}),
-          ...(progress.outputPath ? { outputPath: progress.outputPath } : {}),
-        },
-      });
-    });
-
-    this.eventBus.on('task:completed', async ({ taskId, result }) => {
-      await this.markTaskCompleted(taskId, result as Partial<TaskResult> | undefined);
-    });
-
-    this.eventBus.on('task:failed', async ({ taskId, error }) => {
-      await this.markTaskFailed(taskId, error);
-    });
+  private async handleTaskProgress({ taskId, progress }: EventMap['task:progress']): Promise<void> {
+    const snapshot = createProgressSnapshot(taskId, progress, this.progress.get(taskId));
+    this.progress.hydrate(snapshot);
+    await this.updateTaskRecord(taskId, { progress: snapshot, result: {
+      ...(progress.metadata ? { metadata: progress.metadata as Record<string, unknown> } : {}),
+      ...(progress.outputPath ? { outputPath: progress.outputPath } : {}) } });
   }
 
   private async markTaskWaitingVerification(taskId: string, error: unknown): Promise<boolean> {
     const existing = this.records.get(taskId);
     const message = errorToLogObject(error).message as string;
-    const existingChallengeDiscoveryId = typeof existing?.result.challengeDiscoveryId === 'string'
-      ? existing.result.challengeDiscoveryId
-      : undefined;
-    const challengeDiscoveryId = error instanceof ComicError && typeof error.context.challengeDiscoveryId === 'string'
-      ? error.context.challengeDiscoveryId
-      : existingChallengeDiscoveryId;
-    if (!challengeDiscoveryId) {
-      return false;
-    }
-
-    const shouldWait = error instanceof ComicError
-      ? hasWaitingVerificationContext(error.context) || /human verification|challenge|cloudflare|anti-bot/i.test(message)
-      : /human verification|challenge|cloudflare|anti-bot/i.test(message);
-    if (!shouldWait) {
-      return false;
-    }
-
-    const challengeStatus = error instanceof ComicError && typeof error.context.challengeStatus === 'string'
-      ? error.context.challengeStatus
-      : typeof existing?.result.challengeStatus === 'string'
-        ? existing.result.challengeStatus
-        : undefined;
+    const challengeDiscoveryId = challengeContextValue(error, existing, 'challengeDiscoveryId');
+    if (!challengeDiscoveryId || !shouldWaitForVerification(error, message)) return false;
+    const challengeStatus = challengeContextValue(error, existing, 'challengeStatus');
     await this.updateTaskRecord(taskId, {
-      task: {
-        status: 'waiting_verification',
-        completedAt: undefined,
-        error: message,
-      },
-      result: {
-        status: 'waiting_verification',
-        completedAt: undefined,
-        error: message,
-        challengeDiscoveryId,
-        challengeStatus,
-      },
+      task: { status: 'waiting_verification', completedAt: undefined, error: message },
+      result: { status: 'waiting_verification', completedAt: undefined, error: message,
+        challengeDiscoveryId, challengeStatus },
     });
-    this.eventBus?.emit('task:waiting_verification', {
-      taskId,
-      challengeDiscoveryId,
-      challengeStatus,
-      message,
-    });
+    this.eventBus?.emit('task:waiting_verification', { taskId, challengeDiscoveryId, challengeStatus, message });
     return true;
   }
 
@@ -635,56 +421,23 @@ export class TaskManager {
 
   private async markTaskFailed(taskId: string, error: unknown): Promise<void> {
     const message = errorToLogObject(error).message as string;
-    const challengeDiscoveryId = error instanceof ComicError && typeof error.context.challengeDiscoveryId === 'string'
-      ? error.context.challengeDiscoveryId
-      : undefined;
-    const challengeStatus = error instanceof ComicError && typeof error.context.challengeStatus === 'string'
-      ? error.context.challengeStatus
-      : undefined;
+    const context = error instanceof ComicError ? error.context : {};
+    const challengeDiscoveryId = stringValue(context.challengeDiscoveryId);
+    const challengeStatus = stringValue(context.challengeStatus);
+    const completedAt = new Date();
     await this.updateTaskRecord(taskId, {
-      task: {
-        status: 'failed',
-        completedAt: new Date(),
-        error: message,
-      },
-      result: {
-        status: 'failed',
-        completedAt: new Date(),
-        error: message,
-        challengeDiscoveryId,
-        challengeStatus,
-      },
+      task: { status: 'failed', completedAt, error: message },
+      result: { status: 'failed', completedAt, error: message, challengeDiscoveryId, challengeStatus },
     });
   }
 
   private async updateTaskRecord(
     taskId: string,
-    updates: {
-      task?: Partial<TaskItem<TaskDefinition>>;
-      result?: Partial<TaskResult>;
-      progress?: TaskProgress;
-      checkpoint?: CrawlCheckpoint;
-    }
+    updates: TaskRecordUpdates
   ): Promise<void> {
     const record = this.records.get(taskId);
     if (!record) return;
-
-    if (updates.task) {
-      Object.assign(record.task, updates.task);
-    }
-
-    if (updates.result) {
-      Object.assign(record.result, updates.result);
-    }
-
-    if (updates.progress) {
-      record.progress = updates.progress;
-    }
-
-    if (updates.checkpoint) {
-      record.checkpoint = updates.checkpoint;
-    }
-
+    applyRecordUpdates(record, updates);
     await this.persistRecord(record);
   }
 
@@ -703,6 +456,148 @@ export class TaskManager {
   private getTaskKey(taskId: string): string {
     return `tasks/${taskId}`;
   }
+}
+
+function createTaskRecord(definition: TaskDefinition): PersistedTaskRecord {
+  const task: TaskItem<TaskDefinition> = { id: definition.id, data: definition,
+    status: 'pending', priority: definition.priority ?? 0, createdAt: new Date() };
+  return { task, result: { taskId: definition.id, status: 'pending',
+    downloadedImages: 0, failedImages: 0, totalImages: 0 } };
+}
+
+function isStartupActiveStatus(status: TaskStatus): boolean {
+  return ['pending', 'running', 'paused', 'waiting_for_browser_worker'].includes(status);
+}
+
+function resetRecordForResume(record: PersistedTaskRecord): void {
+  const checkpoint = record.checkpoint!;
+  Object.assign(record.task, { status: 'pending', completedAt: undefined, error: undefined });
+  Object.assign(record.result, { status: 'pending', completedAt: undefined, error: undefined,
+    downloadedImages: checkpoint.completedImages, failedImages: checkpoint.failedImages,
+    totalImages: checkpoint.totalImages,
+    ...(checkpoint.metadata ? { metadata: checkpoint.metadata as unknown as Record<string, unknown> } : {}),
+    ...(checkpoint.outputPath ? { outputPath: checkpoint.outputPath } : {}) });
+}
+
+function interruptRecord(record: PersistedTaskRecord): void {
+  const completedAt = record.task.completedAt ?? new Date();
+  Object.assign(record.task, { status: 'interrupted', completedAt });
+  Object.assign(record.result, { status: 'interrupted',
+    completedAt: record.result.completedAt ?? completedAt,
+    error: record.result.error ?? 'Task interrupted by server restart' });
+}
+
+function canResumeTask(status: TaskStatus, checkpoint?: CrawlCheckpoint): boolean {
+  return ['paused', 'interrupted', 'waiting_verification', 'failed'].includes(status)
+    || status === 'completed' && checkpoint?.resumable === true;
+}
+
+function createResumeUpdates(checkpoint?: CrawlCheckpoint): TaskRecordUpdates {
+  return { task: { status: 'pending', completedAt: undefined, error: undefined }, result: {
+    status: 'pending', completedAt: undefined, error: undefined,
+    downloadedImages: checkpoint?.completedImages ?? 0, failedImages: checkpoint?.failedImages ?? 0,
+    totalImages: checkpoint?.totalImages ?? 0,
+    ...(checkpoint?.metadata ? { metadata: checkpoint.metadata as unknown as Record<string, unknown> } : {}),
+    ...(checkpoint?.outputPath ? { outputPath: checkpoint.outputPath } : {}) } };
+}
+
+async function deleteRecordFiles(record: PersistedTaskRecord, options?: DeleteTaskOptions) {
+  if (!options?.deleteFiles || !record.result.outputPath) return { deleted: false, skipped: undefined };
+  return deleteTaskOutputDir(record.result.outputPath, options.downloadDir);
+}
+
+function requireRebindRecord(
+  records: Map<string, PersistedTaskRecord>, input: RebindBrowserTargetInput
+): PersistedTaskRecord {
+  const record = records.get(input.taskId);
+  if (!record) throw new BrowserTargetRebindError(`Task "${input.taskId}" was not found.`, 'NOT_FOUND');
+  if ((record.task.data.ownerUserId ?? 'public') !== input.ownerUserId)
+    throw new BrowserTargetRebindError('The authenticated user does not own this task.', 'FORBIDDEN');
+  if (sameBrowserTarget(input.expectedBrowserTarget, input.browserTarget))
+    throw new BrowserTargetRebindError('The replacement Browser Target must differ from the expected target.', 'INVALID_TARGET');
+  return record;
+}
+
+function findIdempotentRebind(record: PersistedTaskRecord, input: RebindBrowserTargetInput) {
+  if (record.task.data.browserTarget?.mode !== 'existing-tab'
+    || !sameBrowserTarget(record.task.data.browserTarget, input.browserTarget)) return undefined;
+  return [...(record.events ?? [])].reverse().find((event) =>
+    sameBrowserTarget(event.previousBrowserTarget, input.expectedBrowserTarget)
+    && sameBrowserTarget(event.browserTarget, input.browserTarget));
+}
+
+function validateCurrentRebindTarget(
+  record: PersistedTaskRecord, input: RebindBrowserTargetInput
+): ExistingTabBrowserTarget {
+  const target = record.task.data.browserTarget;
+  if (target?.mode !== 'existing-tab')
+    throw new BrowserTargetRebindError('Only existing-tab tasks can rebind their Browser Target.', 'INVALID_TARGET');
+  if (!sameBrowserTarget(target, input.expectedBrowserTarget))
+    throw new BrowserTargetRebindError('The task Browser Target changed after it was inspected.', 'STALE_TARGET');
+  if (!isRecoverableBrowserTargetState(record.task.status, record.task.error ?? record.result.error))
+    throw new BrowserTargetRebindError(
+      `Task status "${record.task.status}" does not allow Browser Target recovery.`, 'INVALID_STATE');
+  return target;
+}
+
+function createRebindEvent(
+  record: PersistedTaskRecord, previous: ExistingTabBrowserTarget, target: ExistingTabBrowserTarget
+): TaskBrowserTargetReboundEvent {
+  const reboundAt = new Date().toISOString();
+  return { type: 'task:browser_target_rebound', occurredAt: reboundAt,
+    previousBrowserTarget: { ...previous }, browserTarget: { ...target }, previousStatus: record.task.status,
+    ...(record.task.error ? { previousTaskError: record.task.error } : {}),
+    ...(record.result.error ? { previousResultError: record.result.error } : {}),
+    recovery: { reason: 'browser_client_process_restarted', reboundAt } };
+}
+
+function applyRebind(
+  record: PersistedTaskRecord, input: RebindBrowserTargetInput, event: TaskBrowserTargetReboundEvent
+): void {
+  record.task.data.browserTarget = { ...input.browserTarget };
+  record.task.data.browserTargetUrl = input.browserTargetUrl;
+  delete record.task.data.browserWaitStartedAt;
+  record.events = [...(record.events ?? []), event];
+  if (record.task.status === 'waiting_verification') return;
+  Object.assign(record.task, { status: 'pending', completedAt: undefined, error: undefined });
+  Object.assign(record.result, { status: 'pending', completedAt: undefined, error: undefined });
+}
+
+function createProgressSnapshot(
+  taskId: string, progress: EventMap['task:progress']['progress'], existing?: TaskProgress
+): TaskProgress {
+  const now = new Date();
+  return { taskId, totalItems: progress.totalImages, completedItems: progress.completedImages,
+    failedItems: progress.failedImages, currentItems: progress.currentChapter, stage: progress.stage,
+    stageDetail: progress.stageDetail, metadata: progress.metadata,
+    chapterListSummary: progress.chapterListSummary,
+    percentage: progress.totalImages > 0 ? Math.round(progress.completedImages / progress.totalImages * 100) : 0,
+    startedAt: existing?.startedAt ?? now, updatedAt: now,
+    estimatedRemaining: existing?.estimatedRemaining };
+}
+
+function challengeContextValue(
+  error: unknown, record: PersistedTaskRecord | undefined,
+  key: 'challengeDiscoveryId' | 'challengeStatus'
+): string | undefined {
+  const errorValue = error instanceof ComicError ? stringValue(error.context[key]) : undefined;
+  return errorValue ?? stringValue(record?.result[key]);
+}
+
+function shouldWaitForVerification(error: unknown, message: string): boolean {
+  const matches = /human verification|challenge|cloudflare|anti-bot/i.test(message);
+  return error instanceof ComicError ? hasWaitingVerificationContext(error.context) || matches : matches;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function applyRecordUpdates(record: PersistedTaskRecord, updates: TaskRecordUpdates): void {
+  if (updates.task) Object.assign(record.task, updates.task);
+  if (updates.result) Object.assign(record.result, updates.result);
+  if (updates.progress) record.progress = updates.progress;
+  if (updates.checkpoint) record.checkpoint = updates.checkpoint;
 }
 
 function sameBrowserTarget(left: ExistingTabBrowserTarget, right: ExistingTabBrowserTarget): boolean {

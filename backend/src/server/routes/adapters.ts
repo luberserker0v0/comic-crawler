@@ -63,360 +63,269 @@ interface AdapterRouteOptions {
 }
 
 export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegistry, options: AdapterRouteOptions = {}): void {
-  app.get('/api/adapters', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const adapters = await describeAdapterList(registry, options.storage);
-    reply.send({ data: adapters });
-  });
+  const context = { registry, options };
+  registerAdapterCollectionRoutes(app, context);
+  registerAdapterItemRoutes(app, context);
+  registerAdapterExecutionRoutes(app, context);
+}
 
-  app.get('/api/adapters/deleted', async (_request: FastifyRequest, reply: FastifyReply) => {
-    if (!options.storage) {
-      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
-      return;
-    }
+interface AdapterRouteContext { registry: AdapterRegistry; options: AdapterRouteOptions }
+type RegisteredAdapter = NonNullable<ReturnType<AdapterRegistry['get']>>;
 
-    const data: DeletedAdapterListResponse = {
-      adapters: (await readDeletedAdapterRecords(options.storage)).map((record) => {
-        const sourceExists = record.sourcePath ? projectAdapterSourceExists(record.adapterId) : undefined;
-        const hasRuntimeBackup = Boolean(record.activeManifest || record.activeImplementationRecord);
-        const restorable = hasRuntimeBackup || Boolean(record.sourcePath && sourceExists);
-        return {
-          adapterId: record.adapterId,
-          deletedAt: record.deletedAt,
-          implementationKind: record.implementationKind,
-          sourcePath: record.sourcePath,
-          sourceDirectory: record.sourceDirectory,
-          sourceDeleted: record.sourceDeleted,
-          sourceExists,
-          restorable,
-          restoreReason: restorable
-            ? 'Adapter can be restored from saved runtime data or existing project source.'
-            : record.sourcePath
-              ? 'Project TypeScript source is missing. Restore it with git before restoring this adapter.'
-              : 'No restorable runtime data is available.',
-        };
-      }),
-    };
-    reply.send({ data });
-  });
+function registerAdapterCollectionRoutes(app: FastifyInstance, ctx: AdapterRouteContext): void {
+  app.get('/api/adapters', (_request, reply) => listAdapters(ctx, reply));
+  app.get('/api/adapters/deleted', (_request, reply) => listDeletedAdapters(ctx, reply));
+  app.post('/api/adapters/resolve', (request, reply) => resolveAdapter(ctx, request, reply));
+  app.post('/api/adapters/chapter-images', (request, reply) => extractChapterImages(ctx, request, reply));
+}
 
-  app.delete('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!options.storage) {
-      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
-      return;
-    }
-    const { id } = request.params as { id: string };
-    if (!registry.has(id)) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
+function registerAdapterItemRoutes(app: FastifyInstance, ctx: AdapterRouteContext): void {
+  app.delete('/api/adapters/:id', (request, reply) => deleteAdapter(ctx, request, reply));
+  app.post('/api/adapters/:id/restore', (request, reply) => restoreAdapter(ctx, request, reply));
+  app.get('/api/adapters/:id', (request, reply) => getAdapterDetails(ctx, request, reply));
+  app.get('/api/adapters/:id/capabilities', (request, reply) => getAdapterCapabilityDetails(ctx, request, reply));
+  app.get('/api/adapters/:id/implementation', (request, reply) => getImplementation(ctx, request, reply));
+}
 
-    const manifests = (await options.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    const implementationRecords = (await options.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    const activeManifest = manifests.find((item) => item.adapterId === id);
-    const activeImplementationRecord = implementationRecords.find((item) => item.adapterId === id);
-    const implementationKind: AdapterImplementationKind = activeImplementationRecord
-      ? 'ts-implementation'
-      : activeManifest
-        ? 'selector-manifest'
-        : PROJECT_ADAPTER_SOURCE[id]
-          ? 'project-source'
-          : 'summary';
-    await options.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, manifests.filter((item) => item.adapterId !== id));
-    await options.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, implementationRecords.filter((item) => item.adapterId !== id));
-    const sourceDeletion = PROJECT_ADAPTER_SOURCE[id]
-      ? await deleteProjectAdapterSource(id)
-      : { deleted: false };
-    const deletedRecord = await markAdapterDeleted(options.storage, id, {
-      implementationKind,
-      sourcePath: PROJECT_ADAPTER_SOURCE[id],
-      sourceDirectory: sourceDeletion.sourceDir,
-      sourceDeleted: sourceDeletion.deleted,
-      activeManifest,
-      activeImplementationRecord,
-    });
-    registry.unregister(id);
+function registerAdapterExecutionRoutes(app: FastifyInstance, ctx: AdapterRouteContext): void {
+  app.post('/api/adapters/:id/functions/:functionId/test',
+    (request, reply) => testAdapterRouteFunction(ctx, request, reply));
+}
 
-    const data: DeleteAdapterResponse = {
-      adapterId: id,
-      message: sourceDeletion.deleted
-        ? 'Adapter deleted and source files removed'
-        : 'Adapter deleted',
-      implementationKind,
-      registryRemoved: !registry.has(id),
-      deletedMarkerWritten: Boolean(deletedRecord),
-      sourcePath: PROJECT_ADAPTER_SOURCE[id],
-      sourceDirectory: sourceDeletion.sourceDir,
-      sourceDeleted: sourceDeletion.deleted,
-      runtimeRecordsRemoved: {
-        selectorManifest: Boolean(activeManifest),
-        tsImplementation: Boolean(activeImplementationRecord),
-      },
-    };
-    reply.send({ data });
-  });
+async function listAdapters(ctx: AdapterRouteContext, reply: FastifyReply): Promise<void> {
+  reply.send({ data: await describeAdapterList(ctx.registry, ctx.options.storage) });
+}
 
-  app.post('/api/adapters/:id/restore', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!options.storage) {
-      reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
-      return;
-    }
-    const { id } = request.params as { id: string };
-    if (registry.has(id)) {
-      await removeDeletedAdapterRecord(options.storage, id);
-      const data: RestoreAdapterResponse = {
-        adapterId: id,
-        message: 'Adapter is already active; stale deletion marker was removed.',
-        restored: true,
-        sourcePath: PROJECT_ADAPTER_SOURCE[id],
-        sourceDirectory: resolveProjectAdapterSourceDir(id),
-      };
-      reply.send({ data });
-      return;
-    }
+async function listDeletedAdapters(ctx: AdapterRouteContext, reply: FastifyReply): Promise<void> {
+  const storage = requireAdapterStorage(ctx, reply);
+  if (!storage) return;
+  const records = await readDeletedAdapterRecords(storage);
+  const data: DeletedAdapterListResponse = { adapters: records.map(describeDeletedAdapter) };
+  reply.send({ data });
+}
 
-    const result = await restoreDeletedAdapter(options.storage, id, (adapter) => registry.register(adapter));
-    if (!result.restored) {
-      reply.code(result.record ? 409 : 404).send({ error: result.reason ?? 'Adapter could not be restored.' });
-      return;
-    }
+function describeDeletedAdapter(record: Awaited<ReturnType<typeof readDeletedAdapterRecords>>[number]) {
+  const sourceExists = record.sourcePath ? projectAdapterSourceExists(record.adapterId) : undefined;
+  const restorable = Boolean(record.activeManifest || record.activeImplementationRecord
+    || record.sourcePath && sourceExists);
+  const restoreReason = restorable
+    ? 'Adapter can be restored from saved runtime data or existing project source.'
+    : record.sourcePath ? 'Project TypeScript source is missing. Restore it with git before restoring this adapter.'
+      : 'No restorable runtime data is available.';
+  return { adapterId: record.adapterId, deletedAt: record.deletedAt,
+    implementationKind: record.implementationKind, sourcePath: record.sourcePath,
+    sourceDirectory: record.sourceDirectory, sourceDeleted: record.sourceDeleted,
+    sourceExists, restorable, restoreReason };
+}
 
-    const data: RestoreAdapterResponse = {
-      adapterId: id,
-      message: 'Adapter restored',
-      implementationKind: result.record?.implementationKind,
-      restored: true,
-      sourcePath: result.record?.sourcePath,
-      sourceDirectory: result.record?.sourceDirectory,
-    };
-    reply.send({ data });
-  });
+function requireAdapterStorage(ctx: AdapterRouteContext, reply: FastifyReply): IStorage | undefined {
+  if (ctx.options.storage) return ctx.options.storage;
+  reply.code(500).send({ error: 'Adapter runtime storage is not available.' });
+  return undefined;
+}
 
-  app.post('/api/adapters/resolve', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const body = request.body as { url?: string; mode?: 'all' | 'chapters' };
-      if (!body.url) {
-        reply.code(400).send({ error: 'URL is required' });
-        return;
-      }
-      const mode = body.mode ?? 'all';
-      if (mode !== 'all' && mode !== 'chapters') {
-        reply.code(400).send({ error: 'Mode must be "all" or "chapters"' });
-        return;
-      }
+async function deleteAdapter(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const storage = requireAdapterStorage(ctx, reply);
+  if (!storage) return;
+  const { id } = request.params as { id: string };
+  if (!ctx.registry.has(id)) return void reply.code(404).send({ error: 'Adapter not found' });
+  const state = await loadAdapterRuntimeState(storage, id);
+  await removeAdapterRuntimeState(storage, id, state);
+  const sourceDeletion = PROJECT_ADAPTER_SOURCE[id] ? await deleteProjectAdapterSource(id) : { deleted: false };
+  const record = await markAdapterDeleted(storage, id, createDeletionRecord(id, state, sourceDeletion));
+  ctx.registry.unregister(id);
+  reply.send({ data: createDeleteAdapterResponse(ctx, id, state, sourceDeletion, Boolean(record)) });
+}
 
-      const parsed = new URL(body.url);
-      const requiredCapabilities = mode === 'chapters'
-        ? { chapterImages: true }
-        : { metadata: true, chapterImages: true };
-      const matchedAdapter = registry.findByUrlWithCapabilities(parsed.href, requiredCapabilities);
-      const anyMatchedAdapter = registry.findByUrl(parsed.href);
+async function loadAdapterRuntimeState(storage: IStorage, id: string) {
+  const manifests = (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
+  const records = (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
+  return { manifests, records, activeManifest: manifests.find((item) => item.adapterId === id),
+    activeImplementationRecord: records.find((item) => item.adapterId === id) };
+}
 
-      reply.send({
-        data: {
-          url: parsed.href,
-          hostname: parsed.hostname,
-          mode,
-          requiredCapabilities,
-          status: matchedAdapter
-            ? 'matched'
-            : anyMatchedAdapter
-              ? 'capability_mismatch'
-              : 'not_found',
-          adapter: matchedAdapter ? describeAdapter(matchedAdapter) : undefined,
-          matchedAdapter: anyMatchedAdapter ? describeAdapter(anyMatchedAdapter) : undefined,
-          discoveryTarget: mode === 'chapters' ? 'chapter-only' : 'full',
-        },
-      });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function removeAdapterRuntimeState(
+  storage: IStorage, id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>
+): Promise<void> {
+  await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, state.manifests.filter((item) => item.adapterId !== id));
+  await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, state.records.filter((item) => item.adapterId !== id));
+}
 
-  app.post('/api/adapters/chapter-images', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = (request.body ?? {}) as Partial<ChapterImagesRequest>;
-    if (!body.url) {
-      reply.code(400).send({ error: 'URL is required' });
-      return;
-    }
+function adapterImplementationKind(id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>): AdapterImplementationKind {
+  return state.activeImplementationRecord ? 'ts-implementation'
+    : state.activeManifest ? 'selector-manifest' : PROJECT_ADAPTER_SOURCE[id] ? 'project-source' : 'summary';
+}
 
-    let chapterUrl: string;
-    try {
-      chapterUrl = new URL(body.url).href;
-    } catch {
-      reply.code(400).send({ error: 'URL must be a valid absolute URL' });
-      return;
-    }
+function createDeletionRecord(
+  id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>,
+  source: Awaited<ReturnType<typeof deleteProjectAdapterSource>> | { deleted: boolean }
+) {
+  return { implementationKind: adapterImplementationKind(id, state), sourcePath: PROJECT_ADAPTER_SOURCE[id],
+    sourceDirectory: 'sourceDir' in source ? source.sourceDir : undefined, sourceDeleted: source.deleted,
+    activeManifest: state.activeManifest, activeImplementationRecord: state.activeImplementationRecord };
+}
 
-    const adapter = body.adapterId
-      ? registry.get(body.adapterId)
-      : registry.findByUrlWithCapabilities(chapterUrl, { chapterImages: true });
-    if (!adapter) {
-      reply.code(404).send({
-        error: body.adapterId
-          ? `Adapter "${body.adapterId}" was not found.`
-          : 'No registered adapter with chapterImages capability matches this URL.',
-      });
-      return;
-    }
+function createDeleteAdapterResponse(
+  ctx: AdapterRouteContext, id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>,
+  source: Awaited<ReturnType<typeof deleteProjectAdapterSource>> | { deleted: boolean }, marked: boolean
+): DeleteAdapterResponse {
+  return { adapterId: id, message: source.deleted ? 'Adapter deleted and source files removed' : 'Adapter deleted',
+    implementationKind: adapterImplementationKind(id, state), registryRemoved: !ctx.registry.has(id),
+    deletedMarkerWritten: marked, sourcePath: PROJECT_ADAPTER_SOURCE[id],
+    sourceDirectory: 'sourceDir' in source ? source.sourceDir : undefined, sourceDeleted: source.deleted,
+    runtimeRecordsRemoved: { selectorManifest: Boolean(state.activeManifest),
+      tsImplementation: Boolean(state.activeImplementationRecord) } };
+}
 
-    if (!adapter.matchUrl(chapterUrl)) {
-      reply.code(422).send({ error: `Adapter "${adapter.id}" does not match this chapter URL.` });
-      return;
-    }
-    if (!getAdapterCapabilities(adapter).chapterImages) {
-      reply.code(422).send({ error: `Adapter "${adapter.id}" does not support chapterImages capability.` });
-      return;
-    }
+async function restoreAdapter(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const storage = requireAdapterStorage(ctx, reply);
+  if (!storage) return;
+  const { id } = request.params as { id: string };
+  if (ctx.registry.has(id)) return restoreActiveAdapter(ctx, storage, id, reply);
+  const result = await restoreDeletedAdapter(storage, id, (adapter) => ctx.registry.register(adapter));
+  if (!result.restored) return void reply.code(result.record ? 409 : 404)
+    .send({ error: result.reason ?? 'Adapter could not be restored.' });
+  const data: RestoreAdapterResponse = { adapterId: id, message: 'Adapter restored',
+    implementationKind: result.record?.implementationKind, restored: true,
+    sourcePath: result.record?.sourcePath, sourceDirectory: result.record?.sourceDirectory };
+  reply.send({ data });
+}
 
-    const renderContext = parseRenderContext(body.renderContext);
-    if (renderContext instanceof Error) {
-      reply.code(400).send({ error: renderContext.message });
-      return;
-    }
+async function restoreActiveAdapter(
+  ctx: AdapterRouteContext, storage: IStorage, id: string, reply: FastifyReply
+): Promise<void> {
+  await removeDeletedAdapterRecord(storage, id);
+  const data: RestoreAdapterResponse = { adapterId: id,
+    message: 'Adapter is already active; stale deletion marker was removed.', restored: true,
+    sourcePath: PROJECT_ADAPTER_SOURCE[id], sourceDirectory: resolveProjectAdapterSourceDir(id) };
+  reply.send({ data });
+}
 
-    const network = await options.getNetworkConfig?.();
-    if (options.htmlRenderer) {
-      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        renderContext,
-        htmlRenderer: options.htmlRenderer,
-      });
-      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
-    }
-    if (body.challengeDiscoveryId) {
-      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        renderContext,
-      });
-      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
-    }
-    if (!options.withBrowserSession || !options.browserRenderService) {
-      const extraction = await testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        renderContext,
-      });
-      return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
-    }
-    const ownerUserId = options.apiSecurity
-      ? requestPrincipal(request, options.apiSecurity).userId
-      : 'public';
-    const extraction = await options.withBrowserSession(request, body.browserTarget, chapterUrl, renderContext, (sessionId) =>
-      testAdapterFunction(adapter, 'extractChapterImageUrls', chapterUrl, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        renderContext,
-        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
-        verificationHandoff: {
-          ownerUserId,
-          browserTarget: body.browserTarget,
-        },
-      }));
-    return sendChapterImagesResponse(reply, adapter, chapterUrl, extraction, renderContext);
-  });
+function resolveAdapter(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): void {
+  try {
+    const body = request.body as { url?: string; mode?: 'all' | 'chapters' };
+    if (!body.url) return void reply.code(400).send({ error: 'URL is required' });
+    const mode = body.mode ?? 'all';
+    if (mode !== 'all' && mode !== 'chapters')
+      return void reply.code(400).send({ error: 'Mode must be "all" or "chapters"' });
+    reply.send({ data: createAdapterResolution(ctx.registry, new URL(body.url), mode) });
+  } catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
+}
 
-  app.get('/api/adapters/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-    const adapter = registry.get(id);
+function createAdapterResolution(registry: AdapterRegistry, url: URL, mode: 'all' | 'chapters') {
+  const requiredCapabilities = mode === 'chapters' ? { chapterImages: true } : { metadata: true, chapterImages: true };
+  const matched = registry.findByUrlWithCapabilities(url.href, requiredCapabilities);
+  const anyMatched = registry.findByUrl(url.href);
+  return { url: url.href, hostname: url.hostname, mode, requiredCapabilities,
+    status: matched ? 'matched' : anyMatched ? 'capability_mismatch' : 'not_found',
+    adapter: matched ? describeAdapter(matched) : undefined,
+    matchedAdapter: anyMatched ? describeAdapter(anyMatched) : undefined,
+    discoveryTarget: mode === 'chapters' ? 'chapter-only' : 'full' };
+}
 
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
+async function extractChapterImages(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const prepared = prepareChapterImageRequest(ctx, (request.body ?? {}) as Partial<ChapterImagesRequest>);
+  if ('error' in prepared) return void reply.code(prepared.status).send({ error: prepared.error });
+  const network = await ctx.options.getNetworkConfig?.();
+  const extraction = await runChapterImageExtraction(ctx, request, prepared, network);
+  sendChapterImagesResponse(reply, prepared.adapter, prepared.chapterUrl, extraction, prepared.renderContext);
+}
 
-    const details = (await describeAdapterList(registry, options.storage)).find((item) => item.id === adapter.id);
-    reply.send({ data: details ?? describeAdapter(adapter) });
-  });
+type ChapterPreparation = { status: 400 | 404 | 422; error: string } | {
+  body: Partial<ChapterImagesRequest>; chapterUrl: string; adapter: RegisteredAdapter;
+  renderContext: EffectiveRenderContext;
+};
 
-  app.get('/api/adapters/:id/capabilities', async (request: FastifyRequest, reply: FastifyReply) => {
-    const adapter = getAdapterFromRequest(request, registry);
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
+function prepareChapterImageRequest(
+  ctx: AdapterRouteContext, body: Partial<ChapterImagesRequest>
+): ChapterPreparation {
+  if (!body.url) return { status: 400, error: 'URL is required' } as const;
+  let chapterUrl: string;
+  try { chapterUrl = new URL(body.url).href; }
+  catch { return { status: 400, error: 'URL must be a valid absolute URL' } as const; }
+  const adapter = body.adapterId ? ctx.registry.get(body.adapterId)
+    : ctx.registry.findByUrlWithCapabilities(chapterUrl, { chapterImages: true });
+  if (!adapter) return { status: 404, error: body.adapterId ? `Adapter "${body.adapterId}" was not found.`
+    : 'No registered adapter with chapterImages capability matches this URL.' } as const;
+  if (!adapter.matchUrl(chapterUrl)) return { status: 422,
+    error: `Adapter "${adapter.id}" does not match this chapter URL.` } as const;
+  if (!getAdapterCapabilities(adapter).chapterImages) return { status: 422,
+    error: `Adapter "${adapter.id}" does not support chapterImages capability.` } as const;
+  const renderContext = parseRenderContext(body.renderContext);
+  if (renderContext instanceof Error) return { status: 400, error: renderContext.message } as const;
+  return { body, chapterUrl, adapter, renderContext };
+}
 
-    const data: AdapterCapabilityDetailResponse = {
-      adapter: describeAdapter(adapter),
-      functions: describeAdapterFunctions(adapter),
-    };
-    reply.send({ data });
-  });
+type PreparedChapterRequest = Extract<ChapterPreparation, { adapter: RegisteredAdapter }>;
 
-  app.get('/api/adapters/:id/implementation', async (request: FastifyRequest, reply: FastifyReply) => {
-    const adapter = getAdapterFromRequest(request, registry);
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
+async function runChapterImageExtraction(
+  ctx: AdapterRouteContext, request: FastifyRequest, input: PreparedChapterRequest, network?: NetworkConfig
+) {
+  const base = { challengeDiscoveryId: input.body.challengeDiscoveryId,
+    challengeDiscoveryService: ctx.options.challengeDiscoveryService, network, renderContext: input.renderContext };
+  if (ctx.options.htmlRenderer) return testAdapterFunction(input.adapter, 'extractChapterImageUrls',
+    input.chapterUrl, { ...base, htmlRenderer: ctx.options.htmlRenderer });
+  if (input.body.challengeDiscoveryId || !ctx.options.withBrowserSession || !ctx.options.browserRenderService)
+    return testAdapterFunction(input.adapter, 'extractChapterImageUrls', input.chapterUrl, base);
+  const ownerUserId = ctx.options.apiSecurity
+    ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
+  return ctx.options.withBrowserSession(request, input.body.browserTarget, input.chapterUrl,
+    input.renderContext, (sessionId) => testAdapterFunction(input.adapter, 'extractChapterImageUrls',
+      input.chapterUrl, { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId),
+        verificationHandoff: { ownerUserId, browserTarget: input.body.browserTarget } }));
+}
 
-    const data = await getAdapterImplementation(adapter);
-    reply.send({ data });
-  });
+async function getAdapterDetails(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const adapter = getAdapterFromRequest(request, ctx.registry);
+  if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
+  const details = (await describeAdapterList(ctx.registry, ctx.options.storage)).find((item) => item.id === adapter.id);
+  reply.send({ data: details ?? describeAdapter(adapter) });
+}
 
-  app.post('/api/adapters/:id/functions/:functionId/test', async (request: FastifyRequest, reply: FastifyReply) => {
-    const adapter = getAdapterFromRequest(request, registry);
-    if (!adapter) {
-      reply.code(404).send({ error: 'Adapter not found' });
-      return;
-    }
+function getAdapterCapabilityDetails(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): void {
+  const adapter = getAdapterFromRequest(request, ctx.registry);
+  if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
+  const data: AdapterCapabilityDetailResponse = { adapter: describeAdapter(adapter),
+    functions: describeAdapterFunctions(adapter) };
+  reply.send({ data });
+}
 
-    const { functionId } = request.params as { functionId: AdapterFunctionId };
-    if (!isKnownAdapterFunction(functionId)) {
-      reply.code(400).send({ error: 'Unknown adapter function.' });
-      return;
-    }
+async function getImplementation(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const adapter = getAdapterFromRequest(request, ctx.registry);
+  if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
+  reply.send({ data: await getAdapterImplementation(adapter) });
+}
 
-    const body = request.body as AdapterFunctionTestRequest;
-    if (!body.url) {
-      reply.code(400).send({ error: 'URL is required' });
-      return;
-    }
+async function testAdapterRouteFunction(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const adapter = getAdapterFromRequest(request, ctx.registry);
+  if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
+  const { functionId } = request.params as { functionId: AdapterFunctionId };
+  if (!isKnownAdapterFunction(functionId))
+    return void reply.code(400).send({ error: 'Unknown adapter function.' });
+  const body = request.body as AdapterFunctionTestRequest;
+  if (!body.url) return void reply.code(400).send({ error: 'URL is required' });
+  const result = await runAdapterRouteFunction(ctx, request, adapter, functionId, body);
+  reply.send({ data: result });
+}
 
-    const network = await options.getNetworkConfig?.();
-    if (options.htmlRenderer) {
-      const result = await testAdapterFunction(adapter, functionId, body.url, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        htmlRenderer: options.htmlRenderer,
-      });
-      reply.send({ data: result });
-      return;
-    }
-    if (body.challengeDiscoveryId) {
-      const result = await testAdapterFunction(adapter, functionId, body.url, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-      });
-      reply.send({ data: result });
-      return;
-    }
-    if (!options.withBrowserSession || !options.browserRenderService) {
-      const result = await testAdapterFunction(adapter, functionId, body.url, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-      });
-      reply.send({ data: result });
-      return;
-    }
-    const result = await options.withBrowserSession(request, body.browserTarget, body.url, undefined, (sessionId) =>
-      testAdapterFunction(adapter, functionId, body.url, {
-        challengeDiscoveryId: body.challengeDiscoveryId,
-        challengeDiscoveryService: options.challengeDiscoveryService,
-        network,
-        htmlRenderer: createSessionRenderer(options.browserRenderService!, sessionId),
-      }));
-    reply.send({ data: result });
-  });
-
+async function runAdapterRouteFunction(
+  ctx: AdapterRouteContext, request: FastifyRequest, adapter: RegisteredAdapter,
+  functionId: AdapterFunctionId, body: AdapterFunctionTestRequest
+) {
+  const base = { challengeDiscoveryId: body.challengeDiscoveryId,
+    challengeDiscoveryService: ctx.options.challengeDiscoveryService,
+    network: await ctx.options.getNetworkConfig?.() };
+  if (ctx.options.htmlRenderer) return testAdapterFunction(adapter, functionId, body.url,
+    { ...base, htmlRenderer: ctx.options.htmlRenderer });
+  if (body.challengeDiscoveryId || !ctx.options.withBrowserSession || !ctx.options.browserRenderService)
+    return testAdapterFunction(adapter, functionId, body.url, base);
+  return ctx.options.withBrowserSession(request, body.browserTarget, body.url, undefined,
+    (sessionId) => testAdapterFunction(adapter, functionId, body.url,
+      { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId) }));
 }
 
 function sendChapterImagesResponse(
@@ -427,35 +336,41 @@ function sendChapterImagesResponse(
   renderContext: EffectiveRenderContext
 ): void {
   if (!extraction.ok) {
-    const verificationRequired = extraction.status === 'verification_required';
-    reply.code(verificationRequired ? 409 : 422).send({
-      error: extraction.error ?? 'Chapter image extraction failed.',
-      ...(verificationRequired && extraction.errorCode ? { code: extraction.errorCode } : {}),
-      data: extraction,
-    });
-    return;
+    return sendChapterImageFailure(reply, extraction);
   }
-  const imageUrls = Array.isArray(extraction.resultSummary?.imageUrls)
-    ? extraction.resultSummary.imageUrls.filter((url): url is string => typeof url === 'string')
-    : [];
+  const imageUrls = extractImageUrls(extraction.resultSummary?.imageUrls);
   const chapter = extraction.resultSummary?.chapter;
   const images = extraction.resultSummary?.images;
   if (!isChapterIdentityDescriptor(chapter) || !isChapterImageDescriptors(images, imageUrls)) {
     reply.code(500).send({ error: 'Chapter image extraction returned invalid identity descriptors.' });
     return;
   }
-  const data: ChapterImagesResponse = {
-    adapterId: adapter.id,
-    chapterUrl,
-    chapter,
-    imageUrlCount: imageUrls.length,
-    imageUrls,
-    images,
-    domSource: extraction.domSource,
-    durationMs: extraction.durationMs,
-    renderContext,
-  };
-  reply.send({ data });
+  reply.send({ data: createChapterImagesData(
+    adapter, chapterUrl, imageUrls, chapter, images, extraction, renderContext) });
+}
+
+function createChapterImagesData(
+  adapter: IComicAdapter, chapterUrl: string, imageUrls: string[], chapter: ChapterIdentityDescriptor,
+  images: ChapterImageDescriptor[], extraction: Awaited<ReturnType<typeof testAdapterFunction>>,
+  renderContext: EffectiveRenderContext
+): ChapterImagesResponse {
+  return { adapterId: adapter.id, chapterUrl, chapter, imageUrlCount: imageUrls.length, imageUrls, images,
+    domSource: extraction.domSource, durationMs: extraction.durationMs, renderContext };
+}
+
+function sendChapterImageFailure(
+  reply: FastifyReply, extraction: Awaited<ReturnType<typeof testAdapterFunction>>
+): void {
+  const verificationRequired = extraction.status === 'verification_required';
+  reply.code(verificationRequired ? 409 : 422).send({
+    error: extraction.error ?? 'Chapter image extraction failed.',
+    ...(verificationRequired && extraction.errorCode ? { code: extraction.errorCode } : {}),
+    data: extraction,
+  });
+}
+
+function extractImageUrls(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((url): url is string => typeof url === 'string') : [];
 }
 
 function isChapterIdentityDescriptor(value: unknown): value is ChapterIdentityDescriptor {
@@ -492,27 +407,27 @@ const DEFAULT_RENDER_CONTEXT: EffectiveRenderContext = {
 };
 
 function parseRenderContext(value: RenderContext | undefined): EffectiveRenderContext | Error {
-  if (value === undefined) {
-    return {
-      viewport: { ...DEFAULT_RENDER_CONTEXT.viewport },
-      deviceScaleFactor: DEFAULT_RENDER_CONTEXT.deviceScaleFactor,
-    };
-  }
-  if (!value || typeof value !== 'object' || !value.viewport || typeof value.viewport !== 'object') {
+  if (value === undefined) return cloneDefaultRenderContext();
+  if (!value || typeof value !== 'object' || !value.viewport || typeof value.viewport !== 'object')
     return new Error('renderContext.viewport is required when renderContext is provided.');
-  }
   const { width, height } = value.viewport;
-  if (!Number.isInteger(width) || width < 1 || width > 10_000) {
+  if (!validViewportDimension(width))
     return new Error('renderContext.viewport.width must be an integer between 1 and 10000 CSS pixels.');
-  }
-  if (!Number.isInteger(height) || height < 1 || height > 10_000) {
+  if (!validViewportDimension(height))
     return new Error('renderContext.viewport.height must be an integer between 1 and 10000 CSS pixels.');
-  }
   const deviceScaleFactor = value.deviceScaleFactor ?? DEFAULT_RENDER_CONTEXT.deviceScaleFactor;
-  if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor < 0.1 || deviceScaleFactor > 10) {
+  if (!Number.isFinite(deviceScaleFactor) || deviceScaleFactor < 0.1 || deviceScaleFactor > 10)
     return new Error('renderContext.deviceScaleFactor must be a finite number between 0.1 and 10.');
-  }
   return { viewport: { width, height }, deviceScaleFactor };
+}
+
+function cloneDefaultRenderContext(): EffectiveRenderContext {
+  return { viewport: { ...DEFAULT_RENDER_CONTEXT.viewport },
+    deviceScaleFactor: DEFAULT_RENDER_CONTEXT.deviceScaleFactor };
+}
+
+function validViewportDimension(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 10_000;
 }
 
 function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>) {
@@ -526,39 +441,26 @@ function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>
 }
 
 async function describeAdapterList(registry: AdapterRegistry, storage?: IStorage): Promise<AdapterListItem[]> {
-  const manifests = storage
-    ? (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? []
-    : [];
-  const implementationRecords = storage
-    ? (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? []
-    : [];
+  const manifests = storage ? (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [] : [];
+  const records = storage
+    ? (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [] : [];
+  return registry.getAll().map((adapter) => describeAdapterListItem(adapter, manifests, records));
+}
 
-  return registry.getAll().map((adapter) => {
-    const implementationRecord = implementationRecords.find((record) => record.adapterId === adapter.id);
-    const manifest = manifests.find((record) => record.adapterId === adapter.id);
-    const implementationKind: AdapterImplementationKind = implementationRecord
-      ? 'ts-implementation'
-      : manifest
-        ? 'selector-manifest'
-        : PROJECT_ADAPTER_SOURCE[adapter.id]
-          ? 'project-source'
-          : 'summary';
-    return {
-      ...describeAdapter(adapter),
-      activeVersionLabel: implementationRecord?.promotedAt ?? manifest?.promotedAt ?? 'current',
-      versionCount: 1,
-      implementationKind,
-      ...(PROJECT_ADAPTER_SOURCE[adapter.id]
-        ? { sourcePath: PROJECT_ADAPTER_SOURCE[adapter.id], sourceWillBeDeleted: true }
-        : { sourceWillBeDeleted: false }),
-      ...(implementationRecord?.sourceDiscoveryId || manifest?.sourceDiscoveryId
-        ? { sourceDiscoveryId: implementationRecord?.sourceDiscoveryId ?? manifest?.sourceDiscoveryId }
-        : {}),
-      ...(implementationRecord?.promotedAt || manifest?.promotedAt
-        ? { promotedAt: implementationRecord?.promotedAt ?? manifest?.promotedAt }
-        : {}),
-    };
-  });
+function describeAdapterListItem(
+  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>, manifests: DynamicSiteAdapterManifest[],
+  records: ActiveImplementationAdapterRecord[]
+): AdapterListItem {
+  const record = records.find((item) => item.adapterId === adapter.id);
+  const manifest = manifests.find((item) => item.adapterId === adapter.id);
+  const sourcePath = PROJECT_ADAPTER_SOURCE[adapter.id];
+  const implementationKind: AdapterImplementationKind = record ? 'ts-implementation'
+    : manifest ? 'selector-manifest' : sourcePath ? 'project-source' : 'summary';
+  const discoveryId = record?.sourceDiscoveryId ?? manifest?.sourceDiscoveryId;
+  const promotedAt = record?.promotedAt ?? manifest?.promotedAt;
+  return { ...describeAdapter(adapter), activeVersionLabel: promotedAt ?? 'current', versionCount: 1,
+    implementationKind, ...(sourcePath ? { sourcePath, sourceWillBeDeleted: true } : { sourceWillBeDeleted: false }),
+    ...(discoveryId ? { sourceDiscoveryId: discoveryId } : {}), ...(promotedAt ? { promotedAt } : {}) };
 }
 
 function getAdapterFromRequest(request: FastifyRequest, registry: AdapterRegistry): NonNullable<ReturnType<AdapterRegistry['get']>> | undefined {
@@ -568,12 +470,15 @@ function getAdapterFromRequest(request: FastifyRequest, registry: AdapterRegistr
 
 export function describeAdapterFunctions(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterFunctionDescriptor[] {
   const capabilities = getAdapterCapabilities(adapter);
-  return [
+  return ADAPTER_FUNCTION_DESCRIPTORS.map((descriptor) => ({ ...descriptor,
+    implemented: descriptor.capability === 'common' || capabilities[descriptor.capability] }));
+}
+
+const ADAPTER_FUNCTION_DESCRIPTORS: Omit<AdapterFunctionDescriptor, 'implemented'>[] = [
     {
       id: 'matchUrl',
       label: 'matchUrl(url)',
       capability: 'common',
-      implemented: true,
       inputKind: 'url',
       notes: 'Checks whether this adapter accepts the provided URL.',
     },
@@ -581,7 +486,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'detectVerificationRequired',
       label: 'detectVerificationRequired(urlOrHtml)',
       capability: 'verification',
-      implemented: capabilities.verification,
       inputKind: 'url',
       notes: 'Detects whether the provided URL or HTML text appears to require human verification.',
     },
@@ -589,7 +493,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'describeVerificationHandoff',
       label: 'describeVerificationHandoff()',
       capability: 'verification',
-      implemented: capabilities.verification,
       inputKind: 'url',
       notes: 'Describes the pipeline-level human verification handoff flow.',
     },
@@ -597,7 +500,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractTitle',
       label: 'extractTitle(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only the manga title from a parsed manga catalog document.',
     },
@@ -605,7 +507,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractAuthor',
       label: 'extractAuthor(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only the manga author from a parsed manga catalog document.',
     },
@@ -613,7 +514,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractDescription',
       label: 'extractDescription(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only the manga description from a parsed manga catalog document.',
     },
@@ -621,7 +521,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractCoverUrl',
       label: 'extractCoverUrl(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only the cover URL from a parsed manga catalog document.',
     },
@@ -629,7 +528,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractTags',
       label: 'extractTags(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only tag/category labels from a parsed manga catalog document.',
     },
@@ -637,7 +535,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractStatus',
       label: 'extractStatus(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only completion/ongoing status from a parsed manga catalog document.',
     },
@@ -645,7 +542,6 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractChapterList',
       label: 'extractChapterList(document)',
       capability: 'metadata',
-      implemented: capabilities.metadata,
       inputKind: 'mangaUrl',
       notes: 'Extracts only the chapter list from a parsed manga catalog document.',
     },
@@ -653,12 +549,10 @@ export function describeAdapterFunctions(adapter: NonNullable<ReturnType<Adapter
       id: 'extractChapterImageUrls',
       label: 'extractChapterImageUrls(document)',
       capability: 'chapterImages',
-      implemented: capabilities.chapterImages,
       inputKind: 'chapterUrl',
       notes: 'Extracts only raw chapter image URLs from a parsed chapter reader document.',
     },
-  ];
-}
+];
 
 export function isKnownAdapterFunction(functionId: string): functionId is AdapterFunctionId {
   return [
