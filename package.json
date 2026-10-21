@@ -12,6 +12,14 @@
     "frontend",
     "shared"
   ],
+  "overrides": {
+    "axios": {
+      "follow-redirects": "1.16.1"
+    },
+    "monaco-editor": {
+      "dompurify": "3.4.17"
+    }
+  },
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "dev:raw": "npm run build:shared && npm run build:browser-client-sdk && concurrently \"npm run dev:shared\" \"npm run dev:browser-client-sdk\" \"npm run dev:backend\" \"npm run dev:frontend\"",
@@ -26,6 +34,7 @@
     "build:backend": "npm run -w backend build",
     "build:frontend": "npm run -w frontend build",
     "pretest": "npm run build:shared && npm run build:browser-client-sdk",
+    "audit:production": "npm audit --omit=dev --audit-level=low",
     "test": "npm run test:dev && npm run test:browser-client-acceptance && npm run test:workspaces",
     "test:browser-client-acceptance": "npm run build:browser-client-sdk && node --test tools/browser-client-acceptance/tests/*.test.mjs",
     "test:workspaces": "npm run test --workspaces --if-present",

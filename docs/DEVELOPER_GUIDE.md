@@ -263,11 +263,15 @@ It performs these checks:
 ### 8.5 Focused gates
 
 ```bash
+npm run audit:production
 npm run test:api
 npm run -w backend test:coverage -- --runInBand
 npm run -w frontend test:coverage -- --runInBand
 npm run -w browser-client-sdk test:coverage
 ```
+
+`audit:production` excludes development-only tooling and fails when any
+production dependency has a known vulnerability at any severity.
 
 See the [test strategy](development/TDD.md) for test layers and merge gates.
 
