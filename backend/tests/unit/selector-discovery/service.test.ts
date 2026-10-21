@@ -3,7 +3,10 @@ import type { ComicMetadata } from '@comiccrawler/shared';
 import { AdapterRegistry } from '../../../src/adapter/registry';
 import { AdapterBase } from '../../../src/adapter/base';
 import { SelectorDiscoveryService } from '../../../src/selector-discovery/service';
-import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../../src/adapter/dynamic-site-adapter';
+import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
+import { AdapterCatalog } from '../../../src/adapter/catalog';
+import { createAdapterPackage } from '../../../src/adapter/package-builder';
+import { instantiateAdapterImplementationDraft } from '../../../src/selector-discovery/adapter-draft-runtime';
 import type { IStorage } from '../../../src/storage/types';
 import type { SelectorDiscoveryJob } from '../../../src/selector-discovery/types';
 
@@ -142,7 +145,6 @@ describe('SelectorDiscoveryService adapter strategies', () => {
 function SelectorDiscoveryServiceAdapterStrategiesTestGroup1(): void {
   it('persists the stable browser worker target on an adapter discovery job', SelectorDiscoveryServiceAdapterStrategiesTestPersistsTheStableBrowserWorkerTargetOnAnAdapterDiscoveryJob);
   it('creates augment jobs for full discovery when only a same-domain chapter-only adapter exists', SelectorDiscoveryServiceAdapterStrategiesTestCreatesAugmentJobsForFullDiscoveryWhenOnlyASameDomainChapterOnlyAdapterExists);
-  it('prunes active dynamic manifests that are superseded by an existing same-domain adapter', SelectorDiscoveryServiceAdapterStrategiesTestPrunesActiveDynamicManifestsThatAreSupersededByAnExistingSameDomainAdapter);
   it('returns known_adapter for a matching adapter unless discovery is forced', SelectorDiscoveryServiceAdapterStrategiesTestReturnsKnownAdapterForAMatchingAdapterUnlessDiscoveryIsForced);
   it('preserves the discovery target when retrying a job', SelectorDiscoveryServiceAdapterStrategiesTestPreservesTheDiscoveryTargetWhenRetryingAJob);
   it('replaces the stub job when retrying a configuration_required job', SelectorDiscoveryServiceAdapterStrategiesTestReplacesTheStubJobWhenRetryingAConfigurationRequiredJob);
@@ -196,29 +198,6 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestCreatesAugmentJobsFo
     expect(job.status).toBe('configuration_required');
     expect(job.promotionMode).toBe('augment');
     expect(job.baseAdapterId).toBe('example-dynamic');
-}
-
-async function SelectorDiscoveryServiceAdapterStrategiesTestPrunesActiveDynamicManifestsThatAreSupersededByAnExistingSameDomainAdapter() {
-    const storage = new MemoryStorage();
-    const registry = new AdapterRegistry();
-    const staleManifest = staleDynamicManifest();
-    registry.register(new OracleAdapter());
-    await storage.write('selector-discovery-active-adapters', [staleManifest]);
-    const service = new SelectorDiscoveryService(storage, registry);
-    await service.loadActiveDynamicAdapters();
-    const active = await storage.read<DynamicSiteAdapterManifest[]>('selector-discovery-active-adapters');
-    expect(active).toEqual([]);
-    expect(registry.get('oracle')).toBeDefined();
-    expect(registry.get('example-chapter-only-fixture-replay')).toBeUndefined();
-}
-
-function staleDynamicManifest(): DynamicSiteAdapterManifest {
-  return { adapterId: 'example-chapter-only-fixture-replay',
-    name: 'Example Chapter-only Fixture Replay Candidate', domains: ['example.com'],
-    urlPatterns: ['https://example.com/mangaread/*/*'],
-    capabilities: { verification: true, metadata: false, chapterImages: true },
-    selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-    sourceDiscoveryId: 'fixture-replay-example', promotedAt: '2026-06-25T00:00:00.000Z' };
 }
 
 async function SelectorDiscoveryServiceAdapterStrategiesTestReturnsKnownAdapterForAMatchingAdapterUnlessDiscoveryIsForced() {
@@ -281,12 +260,10 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestPromotesAnAwaitingRe
     const service = new SelectorDiscoveryService(storage, registry);
     await persistJob(storage, reviewJob('disc-ts'));
     const promoted = await service.promote('disc-ts');
-    const active = await storage.read<Array<{ adapterId: string; adapterImplementationTs: string }>>(
-      'selector-discovery-active-implementation-adapters');
+    const active = await new AdapterCatalog(storage).getActivePackage('generated-adapter');
     expect(promoted.adapterId).toBe('generated-adapter');
     expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
-    expect(active).toHaveLength(1);
-    expect(active?.[0]?.adapterImplementationTs).toContain('GeneratedAdapter');
+    expect(active?.implementationTs).toContain('GeneratedAdapter');
     await expect(storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-ts')).resolves.toMatchObject({
         status: 'promoted',
         phase: 'complete',
@@ -373,22 +350,14 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImp
 
 async function SelectorDiscoveryServiceAdapterStrategiesTestLoadsPromotedTypeScriptImplementationAdaptersOnStartup() {
     const storage = new MemoryStorage();
-    await storage.write('selector-discovery-active-implementation-adapters', [
-        {
-            adapterId: 'generated-adapter',
-            name: 'Generated Adapter',
-            domains: ['generated.test'],
-            urlPatterns: ['https://generated.test/*'],
-            parseMode: 'playwright',
-            capabilities: { verification: true, metadata: true, chapterImages: true },
-            sourceDiscoveryId: 'disc-ts',
-            adapterImplementationTs: createImplementationDraftSource(),
-            promotedAt: '2026-06-25T00:00:00.000Z',
-        },
-    ]);
+    const catalog = new AdapterCatalog(storage);
+    const source = createImplementationDraftSource();
+    const adapter = instantiateAdapterImplementationDraft(source);
+    await catalog.installApproved(createAdapterPackage({ adapter, implementationTs: source,
+      origin: 'local-generated', createdAt: '2026-06-25T00:00:00.000Z', sourceDiscoveryId: 'disc-ts' }));
     const registry = new AdapterRegistry();
-    const service = new SelectorDiscoveryService(storage, registry);
-    await service.loadActiveDynamicAdapters();
+    const service = new SelectorDiscoveryService(storage, registry, { adapterCatalog: catalog });
+    await service.loadActiveAdapters();
     expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
 }
 

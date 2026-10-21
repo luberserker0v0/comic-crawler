@@ -205,6 +205,8 @@ Inspect and test individual adapter functions.
   - [Human verification](docs/ARCHITECTURE.md#human-verification-handoff)
   - [AO discovery](docs/ARCHITECTURE.md#ao-adapter-discovery-and-verification-handoff)
 - [Adapters](docs/ADAPTERS.md): adapter contract and capability design.
+- [Adapter Packages](docs/ADAPTER_PACKAGES.md): reviewed package format,
+  catalog lifecycle, and rollback behavior.
 - [AO Selector Discovery](docs/AO_SELECTOR_DISCOVERY.md): generated adapter
   workflow.
 - [Reliability](docs/RELIABILITY.md): queue, checkpoint, and resume behavior.

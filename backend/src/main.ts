@@ -11,6 +11,9 @@ import { resolveRuntimeConfig, type DataDirectoryLayout } from './config/runtime
 import { EventBus } from './events/bus';
 import { AdapterRegistry } from './adapter/registry';
 import { registerProjectAdapters } from './adapter/runtime-state';
+import { AdapterCatalog } from './adapter/catalog';
+import { loadCatalogAdapters } from './adapter/catalog-runtime';
+import { migrateLegacyAdapterStorage } from './adapter/catalog-migration';
 import { TaskManager } from './task/manager';
 import { CrawlerEngine } from './crawler/engine';
 import { errorToLogObject } from './error/types';
@@ -47,19 +50,19 @@ async function bootstrapApplication() {
   const eventBus = new EventBus();
   const storage = await initializeStorage(timing);
   const configuration = await initializeConfiguration(storage, eventBus, timing);
-  const adapterRegistry = await initializeAdapters(storage, eventBus);
+  const adapters = await initializeAdapters(storage, eventBus);
+  const { adapterRegistry, adapterCatalog } = adapters;
   const browser = await initializeBrowserServices(storage, configuration.apiSecurity, timing);
   const discovery = createDiscoveryServices(
-    storage, adapterRegistry, configuration, browser);
+    storage, adapterRegistry, adapterCatalog, configuration, browser);
   const crawlerEngine = createCrawlerEngine(configuration.config, browser.browserRenderService, eventBus);
   const taskManager = await initializeTaskManager(
     storage, configuration, browser, discovery, adapterRegistry, crawlerEngine, eventBus, timing);
   const agentAdminService = await initializeAgentServices(
     configuration.runtime.agentWorkspacePath, storage, eventBus, timing);
   await initializeDiscoveryRuntime(discovery, timing);
-  const maintenanceService = createMaintenanceService(
-    storage, taskManager, discovery, configuration);
-  return { timing, eventBus, storage, ...configuration, adapterRegistry, ...browser,
+  const maintenanceService = createMaintenanceService(storage, taskManager, discovery, configuration);
+  return { timing, eventBus, storage, ...configuration, ...adapters, ...browser,
     ...discovery, crawlerEngine, taskManager, agentAdminService, maintenanceService };
 }
 
@@ -74,10 +77,14 @@ async function initializeStorage(timing: BootstrapTiming): Promise<JsonFileStore
   return storage;
 }
 
-async function initializeAdapters(storage: JsonFileStore, eventBus: EventBus): Promise<AdapterRegistry> {
+async function initializeAdapters(storage: JsonFileStore, eventBus: EventBus) {
   const registry = new AdapterRegistry(eventBus);
+  const catalog = new AdapterCatalog(storage);
+  await catalog.initialize();
+  await migrateLegacyAdapterStorage(storage, catalog);
   await registerProjectAdapters(storage, (adapter) => registry.register(adapter));
-  return registry;
+  await loadCatalogAdapters(catalog, registry);
+  return { adapterRegistry: registry, adapterCatalog: catalog };
 }
 
 async function initializeConfiguration(storage: JsonFileStore, eventBus: EventBus, timing: BootstrapTiming) {
@@ -106,7 +113,7 @@ type ConfigurationRuntime = Awaited<ReturnType<typeof initializeConfiguration>>;
 type BrowserRuntime = Awaited<ReturnType<typeof initializeBrowserServices>>;
 
 function createDiscoveryServices(
-  storage: JsonFileStore, adapterRegistry: AdapterRegistry,
+  storage: JsonFileStore, adapterRegistry: AdapterRegistry, adapterCatalog: AdapterCatalog,
   configuration: ConfigurationRuntime, browser: BrowserRuntime
 ) {
   const challengeDiscoveryService = createChallengeDiscoveryService(storage, configuration, browser);
@@ -116,7 +123,7 @@ function createDiscoveryServices(
     challengeDiscoveryService, configuration.runtime.agentWorkspacePath);
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = createSelectorDiscoveryService(storage, adapterRegistry,
-    configuration, browser, fixtureCaptureService);
+    adapterCatalog, configuration, browser, fixtureCaptureService);
   return { challengeDiscoveryService, adapterDraftService, fixtureCaptureService,
     selectorDiscoverySettingsStore, selectorDiscoveryService };
 }
@@ -145,10 +152,12 @@ async function acquireChallengeBrowserSession(
 }
 
 function createSelectorDiscoveryService(
-  storage: JsonFileStore, registry: AdapterRegistry, configuration: ConfigurationRuntime,
+  storage: JsonFileStore, registry: AdapterRegistry, adapterCatalog: AdapterCatalog,
+  configuration: ConfigurationRuntime,
   browser: BrowserRuntime, fixtureCaptureService: FixtureCaptureService
 ): SelectorDiscoveryService {
   return new SelectorDiscoveryService(storage, registry, {
+    adapterCatalog,
     getBrowserConfig: async () => (await configuration.configManager.get()).browser,
     getNetworkConfig: async () => (await configuration.configManager.get()).network,
     renderBrowserPage: (sessionId, url, options) => browser.browserRenderService.render(
@@ -228,9 +237,8 @@ async function initializeAgentServices(
 }
 
 async function initializeDiscoveryRuntime(discovery: DiscoveryRuntime, timing: BootstrapTiming): Promise<void> {
-  await discovery.selectorDiscoveryService.loadActiveDynamicAdapters();
   await discovery.selectorDiscoveryService.initializeScheduler();
-  timing.mark('dynamic adapter load');
+  timing.mark('adapter catalog load');
   await discovery.challengeDiscoveryService.loadActiveStrategies();
   timing.mark('challenge strategy load');
 }
@@ -265,7 +273,8 @@ async function startApplication(application: ApplicationRuntime): Promise<void> 
 
 function createServerOptions(app: ApplicationRuntime): ServerOptions {
   const runtime = { port: app.runtime.port, host: app.runtime.host,
-    staticDir: app.runtime.staticDir, apiSecurity: app.apiSecurity, storage: app.storage };
+    staticDir: app.runtime.staticDir, apiSecurity: app.apiSecurity, storage: app.storage,
+    adapterCatalog: app.adapterCatalog };
   const core = { configManager: app.configManager, taskManager: app.taskManager,
     adapterRegistry: app.adapterRegistry, crawlerEngine: app.crawlerEngine, eventBus: app.eventBus };
   const discovery = { agentAdminService: app.agentAdminService,

@@ -520,8 +520,10 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
 | `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
-| `POST` | `/api/adapters/:id/restore` | Restore a deleted adapter when a runtime backup or restored project source is available. |
-| `DELETE` | `/api/adapters/:id` | Delete a registered adapter. Generated runtime records are backed up in the deleted marker; project TypeScript adapter source directories under `backend/src/adapter/sites/` are deleted as a code change. |
+| `POST` | `/api/adapters/:id/restore` | Restore a catalog adapter from its last approved version, or a project adapter after its source is restored. |
+| `POST` | `/api/adapters/:id/rollback` | Activate a previous or explicitly named approved catalog version. |
+| `GET` | `/api/adapters/:id/versions` | List approved catalog versions and the active pointer. |
+| `DELETE` | `/api/adapters/:id` | Deactivate a catalog adapter without deleting approved versions; project TypeScript adapter source directories under `backend/src/adapter/sites/` are deleted as a code change. |
 | `GET` | `/api/adapter-drafts` | List user-owned adapter drafts. |
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
 | `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |

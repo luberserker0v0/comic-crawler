@@ -353,7 +353,6 @@ export const enUSText = {
     attemptSummary: 'Attempt {current} / {max}',
     implementationKinds: {
       'project-source': 'TypeScript source',
-      'selector-manifest': 'Selector manifest',
       'ts-implementation': 'Generated TypeScript',
       summary: 'Summary',
       'generated-draft': 'Generated draft',

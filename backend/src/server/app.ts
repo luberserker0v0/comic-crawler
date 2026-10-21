@@ -6,6 +6,7 @@ import type { BrowserTarget, EffectiveRenderContext } from '@comiccrawler/shared
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
+import type { AdapterCatalog } from '../adapter/catalog';
 import type { CrawlerEngine } from '../crawler/engine';
 import type { EventBus } from '../events/bus';
 import type { AgentAdminService } from '../agent/admin-service';
@@ -44,6 +45,7 @@ export interface ServerOptions {
   configManager: ConfigManager;
   taskManager: TaskManager;
   adapterRegistry: AdapterRegistry;
+  adapterCatalog?: AdapterCatalog;
   crawlerEngine: CrawlerEngine;
   eventBus: EventBus;
   agentAdminService?: AgentAdminService;
@@ -168,17 +170,21 @@ export class ComicCrawlerServer {
       browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
+      adapterCatalog: this.options.adapterCatalog,
       apiSecurity: this.apiSecurity,
     });
-    if (this.options.adapterDraftService) {
-      setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
-        challengeDiscoveryService: this.options.challengeDiscoveryService,
-        withBrowserSession: (request, target, initialUrl, action) =>
-          this.withBrowserSession(request, target, initialUrl, undefined, action),
-        browserRenderService: this.options.browserRenderService,
-        getNetworkConfig: async () => (await this.options.configManager.get()).network,
-      });
-    }
+    this.setupAdapterDraftRoutes();
+  }
+
+  private setupAdapterDraftRoutes(): void {
+    if (!this.options.adapterDraftService) return;
+    setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
+      challengeDiscoveryService: this.options.challengeDiscoveryService,
+      withBrowserSession: (request, target, initialUrl, action) =>
+        this.withBrowserSession(request, target, initialUrl, undefined, action),
+      browserRenderService: this.options.browserRenderService,
+      getNetworkConfig: async () => (await this.options.configManager.get()).network,
+    });
   }
 
   private setupDiscoveryRoutes(): void {

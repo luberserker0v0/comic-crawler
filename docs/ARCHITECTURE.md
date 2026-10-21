@@ -32,6 +32,8 @@ flowchart LR
     API --> Tasks["Task manager + queue"]
     Tasks --> Crawler["Crawler engine"]
     Crawler --> Adapters["Adapter registry"]
+    Selector --> Catalog["Adapter Catalog"]
+    Catalog --> Adapters
     Crawler --> Storage["Runtime state + downloads"]
     API --> BrowserGateway["Browser session gateway"]
     Crawler --> BrowserGateway
@@ -83,6 +85,7 @@ The resolved data root is organized for new features as:
   config/           app and integration settings
   user/             user-owned drafts and preferences
   runtime/          task/challenge/checkpoint state
+  adapter-catalog/  immutable approved adapter packages and active pointers
   agent-workspaces/ Agent/AO discovery, fixtures, eval artifacts
   logs/
 ```
@@ -146,6 +149,12 @@ Adapter Lab is the human review workbench for this boundary. It displays the
 full adapter source, supports user-owned drafts, locks
 metadata tests to manga URLs and image tests to chapter URLs, and returns full
 `imageUrls` for image extraction tests.
+
+Developer approval promotes generated TypeScript into an immutable
+`AdapterPackage`. The Adapter Catalog stores every approved version and one
+active-version pointer per adapter. Startup loads only active catalog packages
+into the runtime registry. Deletion deactivates the pointer; restore and
+rollback reactivate an approved version without rewriting package content.
 
 Adapter discovery is intentionally modular:
 

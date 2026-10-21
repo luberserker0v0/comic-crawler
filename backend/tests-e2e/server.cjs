@@ -5,6 +5,7 @@ const { ConfigManager } = require('../dist/config/manager');
 const { CrawlerEngine } = require('../dist/crawler/engine');
 const { EventBus } = require('../dist/events/bus');
 const { AdapterRegistry } = require('../dist/adapter/registry');
+const { AdapterCatalog } = require('../dist/adapter/catalog');
 const { JsonFileStore } = require('../dist/storage/json-store');
 const { TaskManager } = require('../dist/task/manager');
 const { SelectorDiscoveryService, SelectorDiscoverySettingsStore } = require('../dist/selector-discovery');
@@ -23,12 +24,17 @@ const { TaskDeferredError } = require('../dist/scheduler');
 
 process.env.SELECTOR_DISCOVERY_ALLOW_PRIVATE_HOSTS = 'true';
 
+const e2eRoot = path.resolve(__dirname, '../../.artifacts/playwright/runtime');
+const e2eDataPath = path.join(e2eRoot, 'data');
+const e2eDownloadsPath = path.join(e2eRoot, 'downloads');
+const e2eAgentWorkspacesPath = path.join(e2eRoot, 'agent-workspaces');
+
 async function start() {
   const eventBus = new EventBus();
-  await fs.rm(path.resolve(__dirname, '../../test-results/e2e-data'), { recursive: true, force: true });
-  await fs.rm(path.resolve(__dirname, '../../test-results/e2e-downloads'), { recursive: true, force: true });
+  await fs.rm(e2eDataPath, { recursive: true, force: true });
+  await fs.rm(e2eDownloadsPath, { recursive: true, force: true });
   const storage = new JsonFileStore({
-    basePath: path.resolve(__dirname, '../../test-results/e2e-data'),
+    basePath: e2eDataPath,
     flushInterval: 0,
   });
   await storage.initialize();
@@ -52,6 +58,8 @@ async function start() {
   const getBrowserConfig = async () => (await configManager.get()).browser;
 
   const adapterRegistry = new AdapterRegistry(eventBus);
+  const adapterCatalog = new AdapterCatalog(storage);
+  await adapterCatalog.initialize();
   adapterRegistry.register({
     id: 'kuronavi',
     name: 'Kuronavi E2E Fixture',
@@ -115,7 +123,7 @@ async function start() {
   });
 
   const crawlerEngine = new CrawlerEngine({
-    downloadDir: path.resolve(__dirname, '../../test-results/e2e-downloads'),
+    downloadDir: e2eDownloadsPath,
     concurrency: 1,
     eventBus,
     browser: {
@@ -185,6 +193,7 @@ async function start() {
   await taskManager.initialize();
   const selectorDiscoverySettingsStore = new SelectorDiscoverySettingsStore(storage);
   const selectorDiscoveryService = new SelectorDiscoveryService(storage, adapterRegistry, {
+    adapterCatalog,
     getBrowserConfig,
     renderBrowserPage: (sessionId, url, options) => browserRenderService.render(sessionId, url, options),
     acquireBrowserSession: async ({ job, browserTarget }) => {
@@ -200,7 +209,7 @@ async function start() {
     getNetworkConfig: async () => (await configManager.get()).network,
   });
   const challengeDiscoveryService = new ChallengeDiscoveryService(storage, {
-    workspaceRoot: path.resolve(__dirname, '../../test-results/e2e-agent-workspaces'),
+    workspaceRoot: e2eAgentWorkspacesPath,
     getBrowserConfig,
     browserRenderService,
     getNetworkConfig: async () => (await configManager.get()).network,
@@ -222,6 +231,7 @@ async function start() {
     configManager,
     taskManager,
     adapterRegistry,
+    adapterCatalog,
     crawlerEngine,
     eventBus,
     selectorDiscoveryService,

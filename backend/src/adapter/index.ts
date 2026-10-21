@@ -1,6 +1,9 @@
 export { AdapterRegistry } from './registry';
 export { AdapterFactory } from './factory';
 export { UrlResolver } from './url-resolver';
+export { AdapterCatalog } from './catalog';
+export { createAdapterPackage } from './package-builder';
+export { loadCatalogAdapters, instantiateCatalogPackage } from './catalog-runtime';
 export {
   AdapterBase,
   CommonCapability,

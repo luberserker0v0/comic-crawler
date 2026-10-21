@@ -79,6 +79,33 @@ shared/                 shared contracts and defaults
 Runtime data does not belong in Git.
 Generated build and test output does not belong in Git.
 
+### 3.1 Generated output and cleanup
+
+Build output remains beside each workspace because package entrypoints consume
+those `dist/` directories. Test reports, coverage, and temporary development
+output are collected under `.artifacts/`.
+
+Run the safe default cleanup:
+
+```bash
+npm run clean
+```
+
+Use a narrower cleanup when needed:
+
+```bash
+npm run clean:build
+npm run clean:test
+npm run clean:temp
+npm run clean:deps
+npm run rebuild
+```
+
+The default cleanup removes only reproducible build, test, and temporary
+output. It never removes `data/`, downloads, credentials, fixtures, or generated
+adapters. Runtime retention and reset operations use dedicated maintenance
+commands instead of a general-purpose clean command.
+
 ## 4. Development startup behavior
 
 `npm run dev` builds `shared` before starting watchers.

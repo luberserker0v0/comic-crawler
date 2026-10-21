@@ -5,6 +5,7 @@ import type { AdapterRegistry } from '../../adapter/registry';
 import { DynamicSiteAdapter } from '../../adapter/dynamic-site-adapter';
 import { PROJECT_ADAPTER_SOURCE } from '../../adapter/runtime-state';
 import type {
+  AdapterPackageDocument,
   AdapterFunctionCapability,
   AdapterImplementationResponse,
   AdapterImplementationSymbol,
@@ -12,8 +13,10 @@ import type {
 import type { AdapterFunctionId } from './adapter-function-types';
 
 export async function getAdapterImplementation(
-  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>
+  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
+  managed?: AdapterPackageDocument
 ): Promise<AdapterImplementationResponse> {
+  if (managed) return catalogImplementation(managed);
   if (adapter instanceof DynamicSiteAdapter) return dynamicImplementation(adapter);
   const relativePath = PROJECT_ADAPTER_SOURCE[adapter.id];
   if (!relativePath) return unavailableImplementation(adapter.id);
@@ -24,6 +27,14 @@ export async function getAdapterImplementation(
     filePath: relativePath, content, outline: createSourceOutline(content),
     notes: `Full adapter implementation from ${relativePath}. Function selection highlights a test target; the source is reviewed as one implementation artifact.`,
   };
+}
+
+function catalogImplementation(document: AdapterPackageDocument): AdapterImplementationResponse {
+  const { manifest, implementationTs } = document;
+  return { adapterId: manifest.adapterId, sourceType: 'catalog-package', language: 'typescript',
+    filePath: `adapter-catalog/${manifest.adapterId}/${manifest.version}`,
+    content: implementationTs, outline: createSourceOutline(implementationTs),
+    notes: `Approved Adapter Catalog package ${manifest.version}.` };
 }
 
 function dynamicImplementation(adapter: DynamicSiteAdapter): AdapterImplementationResponse {

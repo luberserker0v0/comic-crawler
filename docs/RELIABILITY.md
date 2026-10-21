@@ -56,9 +56,8 @@ UI can show progress as images arrive.
 ## Adapter lifecycle reliability
 
 Adapters are active runtime components. Deleting an adapter immediately removes
-it from the registry and writes a deleted marker. If the adapter came from a
-generated selector manifest or generated TypeScript implementation, ComicCrawler
-keeps the deleted runtime record so it can be restored later.
+it from the registry. If the adapter is catalog-managed, ComicCrawler clears the
+active pointer and keeps every immutable approved version for restore or rollback.
 
 If the adapter came from project TypeScript source, deleting it also removes the
 source directory under `backend/src/adapter/sites/`. ComicCrawler does not

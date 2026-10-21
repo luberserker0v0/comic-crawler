@@ -4,6 +4,9 @@ import { ConfigManager } from './config/manager';
 import { resolveRuntimeConfig } from './config/runtime';
 import { AdapterRegistry } from './adapter/registry';
 import { registerProjectAdapters } from './adapter/runtime-state';
+import { AdapterCatalog } from './adapter/catalog';
+import { loadCatalogAdapters } from './adapter/catalog-runtime';
+import { migrateLegacyAdapterStorage } from './adapter/catalog-migration';
 import { CrawlerEngine } from './crawler/engine';
 import { TaskManager, type TaskDefinition } from './task/manager';
 import type { TaskItem } from './task/types';
@@ -34,11 +37,12 @@ async function createCli(): Promise<ComicCrawlerCli> {
   const eventBus = new EventBus();
   const runtime = resolveRuntimeConfig();
   const { storage, configManager, config } = await createStorageContext(runtime, eventBus);
-  const adapterRegistry = await createAdapterRegistry(storage, eventBus);
+  const { adapterRegistry, adapterCatalog } = await createAdapterRuntime(storage, eventBus);
   const crawlerEngine = createCrawlerEngine(config, eventBus);
   const taskManager = await createTaskManager(storage, eventBus, config, adapterRegistry, crawlerEngine);
   const agentAdminService = await createAgentAdminService(runtime, storage, eventBus);
-  const discovery = await createDiscoveryServices(runtime, storage, configManager, adapterRegistry);
+  const discovery = await createDiscoveryServices(
+    runtime, storage, configManager, adapterRegistry, adapterCatalog);
   const maintenanceService = createMaintenanceService(runtime, storage, configManager, taskManager, discovery);
   return new ComicCrawlerCli({ configManager, taskManager, adapterRegistry, crawlerEngine,
     agentAdminService, selectorDiscoveryService: discovery.selector,
@@ -53,10 +57,14 @@ async function createStorageContext(runtime: RuntimeConfig, eventBus: EventBus) 
   return { storage, configManager, config };
 }
 
-async function createAdapterRegistry(storage: IStorage, eventBus: EventBus): Promise<AdapterRegistry> {
+async function createAdapterRuntime(storage: IStorage, eventBus: EventBus) {
   const registry = new AdapterRegistry(eventBus);
+  const catalog = new AdapterCatalog(storage);
+  await catalog.initialize();
+  await migrateLegacyAdapterStorage(storage, catalog);
   await registerProjectAdapters(storage, (adapter) => registry.register(adapter));
-  return registry;
+  await loadCatalogAdapters(catalog, registry);
+  return { adapterRegistry: registry, adapterCatalog: catalog };
 }
 
 function createCrawlerEngine(config: GlobalConfig, eventBus: EventBus): CrawlerEngine {
@@ -96,11 +104,10 @@ async function createAgentAdminService(runtime: RuntimeConfig, storage: IStorage
 }
 
 async function createDiscoveryServices(runtime: RuntimeConfig, storage: IStorage,
-  configManager: ConfigManager, registry: AdapterRegistry) {
+  configManager: ConfigManager, registry: AdapterRegistry, adapterCatalog: AdapterCatalog) {
   const options = { getBrowserConfig: async () => (await configManager.get()).browser,
-    getNetworkConfig: async () => (await configManager.get()).network };
+    getNetworkConfig: async () => (await configManager.get()).network, adapterCatalog };
   const selector = new SelectorDiscoveryService(storage, registry, options);
-  await selector.loadActiveDynamicAdapters();
   await selector.initializeScheduler();
   const challenge = new ChallengeDiscoveryService(storage,
     { workspaceRoot: runtime.agentWorkspacePath, ...options });

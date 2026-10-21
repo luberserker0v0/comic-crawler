@@ -52,6 +52,18 @@ export type {
 } from './adapter';
 
 export type {
+  AdapterPackageOrigin,
+  AdapterVersionStatus,
+  AdapterPackageManifest,
+  AdapterPackageValidation,
+  AdapterPackageChecksums,
+  AdapterPackageDocument,
+  AdapterCatalogVersionSummary,
+  AdapterCatalogEntry,
+  AdapterCatalogIndex,
+} from './adapter-package';
+
+export type {
   ApiResponse,
   ApiErrorResponse,
   CrawlMode,

@@ -18,8 +18,6 @@ import type {
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
 import {
-  ACTIVE_DYNAMIC_ADAPTERS_KEY,
-  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
   PROJECT_ADAPTER_SOURCE,
   deleteProjectAdapterSource,
   markAdapterDeleted,
@@ -30,9 +28,9 @@ import {
   resolveProjectAdapterSourceDir,
   type AdapterImplementationKind,
 } from '../../adapter/runtime-state';
-import type { DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
-import type { ActiveImplementationAdapterRecord } from '../../selector-discovery/service';
 import type { IStorage } from '../../storage/types';
+import type { AdapterCatalog } from '../../adapter/catalog';
+import { instantiateCatalogPackage } from '../../adapter/catalog-runtime';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
@@ -59,6 +57,7 @@ interface AdapterRouteOptions {
   htmlRenderer?: HtmlRenderer;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   storage?: IStorage;
+  adapterCatalog?: AdapterCatalog;
   apiSecurity?: ApiSecurityService;
 }
 
@@ -82,6 +81,8 @@ function registerAdapterCollectionRoutes(app: FastifyInstance, ctx: AdapterRoute
 function registerAdapterItemRoutes(app: FastifyInstance, ctx: AdapterRouteContext): void {
   app.delete('/api/adapters/:id', (request, reply) => deleteAdapter(ctx, request, reply));
   app.post('/api/adapters/:id/restore', (request, reply) => restoreAdapter(ctx, request, reply));
+  app.post('/api/adapters/:id/rollback', (request, reply) => rollbackManagedAdapter(ctx, request, reply));
+  app.get('/api/adapters/:id/versions', (request, reply) => listManagedAdapterVersions(ctx, request, reply));
   app.get('/api/adapters/:id', (request, reply) => getAdapterDetails(ctx, request, reply));
   app.get('/api/adapters/:id/capabilities', (request, reply) => getAdapterCapabilityDetails(ctx, request, reply));
   app.get('/api/adapters/:id/implementation', (request, reply) => getImplementation(ctx, request, reply));
@@ -93,21 +94,26 @@ function registerAdapterExecutionRoutes(app: FastifyInstance, ctx: AdapterRouteC
 }
 
 async function listAdapters(ctx: AdapterRouteContext, reply: FastifyReply): Promise<void> {
-  reply.send({ data: await describeAdapterList(ctx.registry, ctx.options.storage) });
+  reply.send({ data: await describeAdapterList(ctx.registry, ctx.options.adapterCatalog) });
 }
 
 async function listDeletedAdapters(ctx: AdapterRouteContext, reply: FastifyReply): Promise<void> {
   const storage = requireAdapterStorage(ctx, reply);
   if (!storage) return;
   const records = await readDeletedAdapterRecords(storage);
-  const data: DeletedAdapterListResponse = { adapters: records.map(describeDeletedAdapter) };
+  const catalogEntries = await ctx.options.adapterCatalog?.listEntries() ?? [];
+  const managed = catalogEntries.filter((entry) => entry.deletedAt).map((entry) => ({
+    adapterId: entry.adapterId, deletedAt: entry.deletedAt!, implementationKind: 'ts-implementation' as const,
+    restorable: Boolean(entry.lastActiveVersion || entry.versions.length),
+    restoreReason: 'Adapter can be restored from an approved catalog version.',
+  }));
+  const data: DeletedAdapterListResponse = { adapters: [...records.map(describeDeletedAdapter), ...managed] };
   reply.send({ data });
 }
 
 function describeDeletedAdapter(record: Awaited<ReturnType<typeof readDeletedAdapterRecords>>[number]) {
   const sourceExists = record.sourcePath ? projectAdapterSourceExists(record.adapterId) : undefined;
-  const restorable = Boolean(record.activeManifest || record.activeImplementationRecord
-    || record.sourcePath && sourceExists);
+  const restorable = Boolean(record.sourcePath && sourceExists);
   const restoreReason = restorable
     ? 'Adapter can be restored from saved runtime data or existing project source.'
     : record.sourcePath ? 'Project TypeScript source is missing. Restore it with git before restoring this adapter.'
@@ -129,52 +135,43 @@ async function deleteAdapter(ctx: AdapterRouteContext, request: FastifyRequest, 
   if (!storage) return;
   const { id } = request.params as { id: string };
   if (!ctx.registry.has(id)) return void reply.code(404).send({ error: 'Adapter not found' });
-  const state = await loadAdapterRuntimeState(storage, id);
-  await removeAdapterRuntimeState(storage, id, state);
+  const managed = await ctx.options.adapterCatalog?.getEntry(id);
+  if (managed?.activeVersion) return deleteManagedAdapter(ctx, id, reply);
   const sourceDeletion = PROJECT_ADAPTER_SOURCE[id] ? await deleteProjectAdapterSource(id) : { deleted: false };
-  const record = await markAdapterDeleted(storage, id, createDeletionRecord(id, state, sourceDeletion));
+  const record = await markAdapterDeleted(storage, id, createDeletionRecord(id, sourceDeletion));
   ctx.registry.unregister(id);
-  reply.send({ data: createDeleteAdapterResponse(ctx, id, state, sourceDeletion, Boolean(record)) });
+  reply.send({ data: createDeleteAdapterResponse(ctx, id, sourceDeletion, Boolean(record)) });
 }
 
-async function loadAdapterRuntimeState(storage: IStorage, id: string) {
-  const manifests = (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-  const records = (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-  return { manifests, records, activeManifest: manifests.find((item) => item.adapterId === id),
-    activeImplementationRecord: records.find((item) => item.adapterId === id) };
-}
-
-async function removeAdapterRuntimeState(
-  storage: IStorage, id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>
+async function deleteManagedAdapter(
+  ctx: AdapterRouteContext, id: string, reply: FastifyReply
 ): Promise<void> {
-  await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, state.manifests.filter((item) => item.adapterId !== id));
-  await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, state.records.filter((item) => item.adapterId !== id));
-}
-
-function adapterImplementationKind(id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>): AdapterImplementationKind {
-  return state.activeImplementationRecord ? 'ts-implementation'
-    : state.activeManifest ? 'selector-manifest' : PROJECT_ADAPTER_SOURCE[id] ? 'project-source' : 'summary';
+  await ctx.options.adapterCatalog!.deactivate(id);
+  ctx.registry.unregister(id);
+  const data: DeleteAdapterResponse = { adapterId: id, message: 'Adapter deactivated',
+    implementationKind: 'ts-implementation', registryRemoved: true, catalogDeactivated: true,
+    deletedMarkerWritten: false, sourceDeleted: false };
+  reply.send({ data });
 }
 
 function createDeletionRecord(
-  id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>,
+  id: string,
   source: Awaited<ReturnType<typeof deleteProjectAdapterSource>> | { deleted: boolean }
 ) {
-  return { implementationKind: adapterImplementationKind(id, state), sourcePath: PROJECT_ADAPTER_SOURCE[id],
-    sourceDirectory: 'sourceDir' in source ? source.sourceDir : undefined, sourceDeleted: source.deleted,
-    activeManifest: state.activeManifest, activeImplementationRecord: state.activeImplementationRecord };
+  return { implementationKind: PROJECT_ADAPTER_SOURCE[id] ? 'project-source' as const : 'summary' as const,
+    sourcePath: PROJECT_ADAPTER_SOURCE[id], sourceDirectory: 'sourceDir' in source ? source.sourceDir : undefined,
+    sourceDeleted: source.deleted };
 }
 
 function createDeleteAdapterResponse(
-  ctx: AdapterRouteContext, id: string, state: Awaited<ReturnType<typeof loadAdapterRuntimeState>>,
+  ctx: AdapterRouteContext, id: string,
   source: Awaited<ReturnType<typeof deleteProjectAdapterSource>> | { deleted: boolean }, marked: boolean
 ): DeleteAdapterResponse {
   return { adapterId: id, message: source.deleted ? 'Adapter deleted and source files removed' : 'Adapter deleted',
-    implementationKind: adapterImplementationKind(id, state), registryRemoved: !ctx.registry.has(id),
-    deletedMarkerWritten: marked, sourcePath: PROJECT_ADAPTER_SOURCE[id],
+    implementationKind: PROJECT_ADAPTER_SOURCE[id] ? 'project-source' : 'summary', registryRemoved: !ctx.registry.has(id),
+    catalogDeactivated: false, deletedMarkerWritten: marked, sourcePath: PROJECT_ADAPTER_SOURCE[id],
     sourceDirectory: 'sourceDir' in source ? source.sourceDir : undefined, sourceDeleted: source.deleted,
-    runtimeRecordsRemoved: { selectorManifest: Boolean(state.activeManifest),
-      tsImplementation: Boolean(state.activeImplementationRecord) } };
+  };
 }
 
 async function restoreAdapter(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -182,6 +179,8 @@ async function restoreAdapter(ctx: AdapterRouteContext, request: FastifyRequest,
   if (!storage) return;
   const { id } = request.params as { id: string };
   if (ctx.registry.has(id)) return restoreActiveAdapter(ctx, storage, id, reply);
+  const managed = await ctx.options.adapterCatalog?.getEntry(id);
+  if (managed?.deletedAt) return restoreManagedAdapter(ctx, id, reply);
   const result = await restoreDeletedAdapter(storage, id, (adapter) => ctx.registry.register(adapter));
   if (!result.restored) return void reply.code(result.record ? 409 : 404)
     .send({ error: result.reason ?? 'Adapter could not be restored.' });
@@ -189,6 +188,46 @@ async function restoreAdapter(ctx: AdapterRouteContext, request: FastifyRequest,
     implementationKind: result.record?.implementationKind, restored: true,
     sourcePath: result.record?.sourcePath, sourceDirectory: result.record?.sourceDirectory };
   reply.send({ data });
+}
+
+async function restoreManagedAdapter(
+  ctx: AdapterRouteContext, id: string, reply: FastifyReply
+): Promise<void> {
+  await ctx.options.adapterCatalog!.restore(id);
+  const document = await ctx.options.adapterCatalog!.getActivePackage(id);
+  if (!document) return void reply.code(409).send({ error: 'Approved adapter package was not found.' });
+  ctx.registry.register(instantiateCatalogPackage(document));
+  const data: RestoreAdapterResponse = { adapterId: id, message: 'Adapter restored',
+    implementationKind: 'ts-implementation', restored: true };
+  reply.send({ data });
+}
+
+async function rollbackManagedAdapter(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const catalog = ctx.options.adapterCatalog;
+  if (!catalog) return void reply.code(501).send({ error: 'Adapter Catalog is not available.' });
+  const { id } = request.params as { id: string };
+  const { version } = (request.body ?? {}) as { version?: string };
+  try {
+    const entry = await catalog.rollback(id, version);
+    const document = await catalog.getActivePackage(id);
+    if (!document) throw new Error('Rollback package was not found.');
+    const adapter = instantiateCatalogPackage(document);
+    if (ctx.registry.has(id)) ctx.registry.replace(adapter); else ctx.registry.register(adapter);
+    reply.send({ data: { adapterId: id, activeVersion: entry.activeVersion, rolledBack: true } });
+  } catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
+}
+
+async function listManagedAdapterVersions(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const catalog = ctx.options.adapterCatalog;
+  if (!catalog) return void reply.code(501).send({ error: 'Adapter Catalog is not available.' });
+  const { id } = request.params as { id: string };
+  const entry = await catalog.getEntry(id);
+  if (!entry) return void reply.code(404).send({ error: 'Catalog adapter not found.' });
+  reply.send({ data: entry });
 }
 
 async function restoreActiveAdapter(
@@ -280,7 +319,7 @@ async function runChapterImageExtraction(
 async function getAdapterDetails(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const adapter = getAdapterFromRequest(request, ctx.registry);
   if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
-  const details = (await describeAdapterList(ctx.registry, ctx.options.storage)).find((item) => item.id === adapter.id);
+  const details = (await describeAdapterList(ctx.registry, ctx.options.adapterCatalog)).find((item) => item.id === adapter.id);
   reply.send({ data: details ?? describeAdapter(adapter) });
 }
 
@@ -295,7 +334,8 @@ function getAdapterCapabilityDetails(ctx: AdapterRouteContext, request: FastifyR
 async function getImplementation(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const adapter = getAdapterFromRequest(request, ctx.registry);
   if (!adapter) return void reply.code(404).send({ error: 'Adapter not found' });
-  reply.send({ data: await getAdapterImplementation(adapter) });
+  const managed = await ctx.options.adapterCatalog?.getActivePackage(adapter.id);
+  reply.send({ data: await getAdapterImplementation(adapter, managed ?? undefined) });
 }
 
 async function testAdapterRouteFunction(
@@ -440,25 +480,27 @@ function describeAdapter(adapter: NonNullable<ReturnType<AdapterRegistry['get']>
   };
 }
 
-async function describeAdapterList(registry: AdapterRegistry, storage?: IStorage): Promise<AdapterListItem[]> {
-  const manifests = storage ? (await storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [] : [];
-  const records = storage
-    ? (await storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [] : [];
-  return registry.getAll().map((adapter) => describeAdapterListItem(adapter, manifests, records));
+async function describeAdapterList(
+  registry: AdapterRegistry, catalog?: AdapterCatalog
+): Promise<AdapterListItem[]> {
+  const entries = catalog ? await catalog.listEntries() : [];
+  const managed = new Map(entries.map((entry) => [entry.adapterId, entry]));
+  return Promise.all(registry.getAll().map((adapter) => describeAdapterListItem(adapter, managed, catalog)));
 }
 
-function describeAdapterListItem(
-  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>, manifests: DynamicSiteAdapterManifest[],
-  records: ActiveImplementationAdapterRecord[]
-): AdapterListItem {
-  const record = records.find((item) => item.adapterId === adapter.id);
-  const manifest = manifests.find((item) => item.adapterId === adapter.id);
+async function describeAdapterListItem(
+  adapter: NonNullable<ReturnType<AdapterRegistry['get']>>,
+  entries: Map<string, Awaited<ReturnType<AdapterCatalog['getEntry']>>>, catalog?: AdapterCatalog
+): Promise<AdapterListItem> {
+  const entry = entries.get(adapter.id);
+  const document = entry?.activeVersion ? await catalog?.getPackage(adapter.id, entry.activeVersion) : undefined;
   const sourcePath = PROJECT_ADAPTER_SOURCE[adapter.id];
-  const implementationKind: AdapterImplementationKind = record ? 'ts-implementation'
-    : manifest ? 'selector-manifest' : sourcePath ? 'project-source' : 'summary';
-  const discoveryId = record?.sourceDiscoveryId ?? manifest?.sourceDiscoveryId;
-  const promotedAt = record?.promotedAt ?? manifest?.promotedAt;
-  return { ...describeAdapter(adapter), activeVersionLabel: promotedAt ?? 'current', versionCount: 1,
+  const implementationKind: AdapterImplementationKind = entry ? 'ts-implementation'
+    : sourcePath ? 'project-source' : 'summary';
+  const discoveryId = document?.manifest.sourceDiscoveryId;
+  const promotedAt = document?.manifest.createdAt;
+  return { ...describeAdapter(adapter), activeVersionLabel: entry?.activeVersion ?? 'current',
+    versionCount: entry?.versions.length ?? 1,
     implementationKind, ...(sourcePath ? { sourcePath, sourceWillBeDeleted: true } : { sourceWillBeDeleted: false }),
     ...(discoveryId ? { sourceDiscoveryId: discoveryId } : {}), ...(promotedAt ? { promotedAt } : {}) };
 }

@@ -20,6 +20,8 @@ This directory contains user- and contributor-facing documentation for the
   Browser Client boundary, and runtime data flow.
 - `ADAPTERS.md` - adapter contract, capabilities, deletion behavior, Adapter
   Lab, drafts, and verified fixture policy.
+- `ADAPTER_PACKAGES.md` - immutable reviewed packages, local catalog lifecycle,
+  restore, and rollback.
 - `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
   `AdapterBase` output contract, and AO API lifecycle.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,

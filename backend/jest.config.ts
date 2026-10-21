@@ -31,7 +31,7 @@ const config: Config = {
     '!src/main.ts',
     '!src/index.ts',
   ],
-  coverageDirectory: 'coverage',
+  coverageDirectory: '<rootDir>/../.artifacts/coverage/backend',
   coverageThreshold: {
     global: {
       branches: 80,

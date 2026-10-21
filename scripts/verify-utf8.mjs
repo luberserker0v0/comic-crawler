@@ -24,6 +24,7 @@ const skippedDirectories = new Set([
   'node_modules',
   'dist',
   'data',
+  '.artifacts',
   'playwright-report',
   'test-results',
   '.next',

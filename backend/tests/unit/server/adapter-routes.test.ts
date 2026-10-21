@@ -11,11 +11,12 @@ import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
 import { AdapterBase } from '../../../src/adapter/base';
 import { setupAdaptersRoutes } from '../../../src/server/routes/adapters';
 import {
-  ACTIVE_DYNAMIC_ADAPTERS_KEY,
-  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
   DELETED_ADAPTERS_KEY,
   registerProjectAdapters,
 } from '../../../src/adapter/runtime-state';
+import { AdapterCatalog } from '../../../src/adapter/catalog';
+import { createAdapterPackage } from '../../../src/adapter/package-builder';
+import { instantiateAdapterImplementationDraft } from '../../../src/selector-discovery/adapter-draft-runtime';
 import type { IStorage } from '../../../src/storage/types';
 import { BrowserRenderService } from '../../../src/browser/browser-render-service';
 
@@ -104,19 +105,6 @@ function appWithAdapters(adapters: Array<Parameters<AdapterRegistry['register']>
   return { app, registry };
 }
 
-function dynamicManifest() {
-  return { adapterId: 'dynamic-demo', name: 'Dynamic Demo', domains: ['example.com'],
-    urlPatterns: ['https://example.com/read/*'],
-    capabilities: { verification: true, metadata: false, chapterImages: true },
-    selectors: { images: { item: '.reader img', srcAttr: 'src' } },
-    sourceDiscoveryId: 'disc-1', promotedAt: '2026-07-09T00:00:00.000Z' };
-}
-
-function deletedDynamicRecord() {
-  return { adapterId: 'dynamic-demo', deletedAt: '2026-07-09T00:00:00.000Z',
-    implementationKind: 'selector-manifest', activeManifest: dynamicManifest() };
-}
-
 function deletedProjectRecord() {
   return { adapterId: 'happymh', deletedAt: '2026-07-10T00:00:00.000Z',
     implementationKind: 'project-source', sourcePath: 'backend/src/adapter/sites/happymh/adapter.ts',
@@ -139,6 +127,39 @@ function chapterOnlyDynamicAdapter(adapterId = 'dynamic-demo', name = 'Dynamic D
     capabilities: { verification: true, metadata: false, chapterImages: true },
     selectors: { images: { item: '.reader img', srcAttr: 'src' } },
     sourceDiscoveryId: 'disc-1', promotedAt: '2026-07-09T00:00:00.000Z' });
+}
+
+async function managedCatalogFixture(storage: IStorage, selector = 'img.page') {
+  const catalog = new AdapterCatalog(storage);
+  await catalog.initialize();
+  const implementationTs = catalogAdapterSource(selector);
+  const adapter = instantiateAdapterImplementationDraft(implementationTs);
+  const document = createAdapterPackage({ adapter, implementationTs, origin: 'local-generated',
+    createdAt: selector === 'img.page' ? '2026-07-09T00:00:00.000Z' : '2026-07-10T00:00:00.000Z',
+    sourceDiscoveryId: 'disc-1' });
+  await catalog.installApproved(document);
+  return { adapter, catalog, document };
+}
+
+function catalogAdapterSource(selector: string): string {
+  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base';
+export class DynamicDemoAdapter extends AdapterBase {
+  readonly id = 'dynamic-demo'; readonly name = 'Dynamic Demo'; readonly domains = ['example.com'];
+  readonly parseMode = 'playwright' as const;
+  readonly capabilities = { verification: true, metadata: false, chapterImages: true };
+  readonly common = new DemoCommon(this); readonly verification = new DemoVerification(this);
+  readonly chapterImages = new DemoImages(this);
+}
+class DemoCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('example.com'); } }
+class DemoVerification extends VerificationCapability {
+  detectVerificationRequired(_input: string): boolean { return false; }
+  describeVerificationHandoff(): Record<string, unknown> { return { supported: false }; }
+}
+class DemoImages extends ChapterImagesCapability {
+  extractChapterImageUrls(document: unknown, _sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document); return $('${selector}').map((_, node) => $(node).attr('src') ?? '').get();
+  }
+}`;
 }
 
 function postFunction(app: ReturnType<typeof fastify>, adapterId: string, functionId: string,
@@ -184,14 +205,16 @@ function AdapterRoutesTestGroup1(): void {
 
 function AdapterRoutesTestGroup2(): void {
   it('does not re-register a deleted project-source adapter during startup registration', AdapterRoutesTestDoesNotReRegisterADeletedProjectSourceAdapterDuringStartupRegistration);
-  it('deletes generated adapters from active runtime storage', AdapterRoutesTestDeletesGeneratedAdaptersFromActiveRuntimeStorage);
+  it('deactivates generated adapters in the catalog', AdapterRoutesTestDeactivatesGeneratedAdaptersInCatalog);
   it('lists deleted adapters with restore status', AdapterRoutesTestListsDeletedAdaptersWithRestoreStatus);
-  it('restores deleted generated adapters from the deletion record backup', AdapterRoutesTestRestoresDeletedGeneratedAdaptersFromTheDeletionRecordBackup);
+  it('restores deleted generated adapters from an approved catalog version', AdapterRoutesTestRestoresDeletedGeneratedAdaptersFromCatalog);
+  it('rolls a generated adapter back to an approved catalog version', AdapterRoutesTestRollsBackGeneratedAdapter);
+  it('lists approved catalog versions', AdapterRoutesTestListsApprovedCatalogVersions);
   it('does not restore deleted project-source adapters when the source directory is missing', AdapterRoutesTestDoesNotRestoreDeletedProjectSourceAdaptersWhenTheSourceDirectoryIsMissing);
   it('returns 404 when deleting an unknown adapter', AdapterRoutesTestReturns404WhenDeletingAnUnknownAdapter);
   it('lists adapter function descriptors by capability', AdapterRoutesTestListsAdapterFunctionDescriptorsByCapability);
   it('returns full project-source adapter implementation for Adapter Lab workbench', AdapterRoutesTestReturnsFullProjectSourceAdapterImplementationForAdapterLabWorkbench);
-  it('returns full dynamic adapter manifest for Adapter Lab workbench', AdapterRoutesTestReturnsFullDynamicAdapterManifestForAdapterLabWorkbench);
+  it('returns a catalog package implementation for Adapter Lab workbench', AdapterRoutesTestReturnsCatalogPackageImplementationForAdapterLabWorkbench);
   it('tests metadata and chapter image functions with structured summaries', AdapterRoutesTestTestsMetadataAndChapterImageFunctionsWithStructuredSummaries);
 }
 
@@ -420,15 +443,16 @@ async function AdapterRoutesTestRejectsAnInvalidChapterImageRenderContext(
 
 async function AdapterRoutesTestListsAdaptersWithSameLevelRuntimeMetadata() {
     const storage = new MemoryStorage();
-    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [dynamicManifest()]);
-    const { app } = appWithAdapters([new HappyMhAdapter(), chapterOnlyDynamicAdapter()], { storage });
+    const managed = await managedCatalogFixture(storage);
+    const { app } = appWithAdapters([new HappyMhAdapter(), managed.adapter],
+      { storage, adapterCatalog: managed.catalog });
     const response = await app.inject({ method: 'GET', url: '/api/adapters' });
     expect(response.statusCode).toBe(200);
-    expectRuntimeMetadata(response.json().data);
+    expectRuntimeMetadata(response.json().data, managed.document.manifest.version);
     await app.close();
 }
 
-function expectRuntimeMetadata(data: unknown): void {
+function expectRuntimeMetadata(data: unknown, activeVersion: string): void {
     expect(data).toEqual(expect.arrayContaining([
         expect.objectContaining({
             id: 'happymh',
@@ -438,9 +462,9 @@ function expectRuntimeMetadata(data: unknown): void {
         }),
         expect.objectContaining({
             id: 'dynamic-demo',
-            activeVersionLabel: '2026-07-09T00:00:00.000Z',
+            activeVersionLabel: activeVersion,
             versionCount: 1,
-            implementationKind: 'selector-manifest',
+            implementationKind: 'ts-implementation',
         }),
     ]));
 }
@@ -475,13 +499,10 @@ function expectDeletedProjectResponse(data: unknown): void {
         adapterId: 'happymh',
         implementationKind: 'project-source',
         registryRemoved: true,
+        catalogDeactivated: false,
         deletedMarkerWritten: true,
         sourcePath: 'backend/src/adapter/sites/happymh/adapter.ts',
         sourceDeleted: true,
-        runtimeRecordsRemoved: {
-            selectorManifest: false,
-            tsImplementation: false,
-        },
     });
 }
 
@@ -493,45 +514,40 @@ async function AdapterRoutesTestDoesNotReRegisterADeletedProjectSourceAdapterDur
     expect(registry.has('happymh')).toBe(false);
 }
 
-async function AdapterRoutesTestDeletesGeneratedAdaptersFromActiveRuntimeStorage() {
+async function AdapterRoutesTestDeactivatesGeneratedAdaptersInCatalog() {
     const storage = new MemoryStorage();
-    await storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, [dynamicManifest()]);
-    await storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [{ adapterId: 'other-demo' }]);
-    const { app, registry } = appWithAdapters([chapterOnlyDynamicAdapter()], { storage });
+    const managed = await managedCatalogFixture(storage);
+    const { app, registry } = appWithAdapters([managed.adapter],
+      { storage, adapterCatalog: managed.catalog });
     const response = await app.inject({ method: 'DELETE', url: '/api/adapters/dynamic-demo' });
     expect(response.statusCode).toBe(200);
-    expect(response.json().data).toMatchObject({
-        adapterId: 'dynamic-demo',
-        implementationKind: 'selector-manifest',
-        registryRemoved: true,
-        sourceDeleted: false,
-        runtimeRecordsRemoved: {
-            selectorManifest: true,
-            tsImplementation: false,
-        },
+    expectCatalogDeactivationResponse(response.json().data);
+    expect(registry.has('dynamic-demo')).toBe(false);
+    expect(await managed.catalog.getEntry('dynamic-demo')).toMatchObject({
+      activeVersion: null, lastActiveVersion: managed.document.manifest.version,
+      deletedAt: expect.any(String),
     });
-    await expectGeneratedAdapterDeleted(registry, storage);
     await app.close();
 }
 
-async function expectGeneratedAdapterDeleted(registry: AdapterRegistry, storage: MemoryStorage) {
-  expect(registry.has('dynamic-demo')).toBe(false);
-  expect(await storage.read(ACTIVE_DYNAMIC_ADAPTERS_KEY)).toEqual([]);
-  expect(await storage.read(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)).toEqual([{ adapterId: 'other-demo' }]);
-  expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([
-    expect.objectContaining({ adapterId: 'dynamic-demo',
-      activeManifest: expect.objectContaining({ adapterId: 'dynamic-demo' }) }),
-  ]);
+function expectCatalogDeactivationResponse(data: unknown): void {
+  expect(data).toMatchObject({
+    adapterId: 'dynamic-demo', implementationKind: 'ts-implementation',
+    registryRemoved: true, catalogDeactivated: true,
+    deletedMarkerWritten: false, sourceDeleted: false,
+  });
 }
 
 async function AdapterRoutesTestListsDeletedAdaptersWithRestoreStatus() {
     const app = fastify();
     const registry = new AdapterRegistry();
     const storage = new MemoryStorage();
+    const managed = await managedCatalogFixture(storage);
+    await managed.catalog.deactivate('dynamic-demo');
     const sourceRoot = await mkdtemp(join(tmpdir(), 'comiccrawler-source-root-'));
     process.env.COMICCRAWLER_PROJECT_SOURCE_ROOT = sourceRoot;
-    await storage.write(DELETED_ADAPTERS_KEY, [deletedDynamicRecord(), deletedProjectRecord()]);
-    setupAdaptersRoutes(app, registry, { storage });
+    await storage.write(DELETED_ADAPTERS_KEY, [deletedProjectRecord()]);
+    setupAdaptersRoutes(app, registry, { storage, adapterCatalog: managed.catalog });
     const response = await app.inject({ method: 'GET', url: '/api/adapters/deleted' });
     expect(response.statusCode).toBe(200);
     expect(response.json().data.adapters).toEqual(expect.arrayContaining([
@@ -542,21 +558,47 @@ async function AdapterRoutesTestListsDeletedAdaptersWithRestoreStatus() {
     await rm(sourceRoot, { recursive: true, force: true });
 }
 
-async function AdapterRoutesTestRestoresDeletedGeneratedAdaptersFromTheDeletionRecordBackup() {
+async function AdapterRoutesTestRestoresDeletedGeneratedAdaptersFromCatalog() {
     const app = fastify();
     const registry = new AdapterRegistry();
     const storage = new MemoryStorage();
-    await storage.write(DELETED_ADAPTERS_KEY, [deletedDynamicRecord()]);
-    setupAdaptersRoutes(app, registry, { storage });
+    const managed = await managedCatalogFixture(storage);
+    await managed.catalog.deactivate('dynamic-demo');
+    setupAdaptersRoutes(app, registry, { storage, adapterCatalog: managed.catalog });
     const response = await app.inject({ method: 'POST', url: '/api/adapters/dynamic-demo/restore' });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({ adapterId: 'dynamic-demo', restored: true });
     expect(registry.has('dynamic-demo')).toBe(true);
-    expect(await storage.read(ACTIVE_DYNAMIC_ADAPTERS_KEY)).toEqual([
-        expect.objectContaining({ adapterId: 'dynamic-demo' }),
-    ]);
-    expect(await storage.read(DELETED_ADAPTERS_KEY)).toEqual([]);
+    expect((await managed.catalog.getEntry('dynamic-demo'))?.activeVersion)
+      .toBe(managed.document.manifest.version);
     await app.close();
+}
+
+async function AdapterRoutesTestRollsBackGeneratedAdapter() {
+  const storage = new MemoryStorage();
+  const first = await managedCatalogFixture(storage);
+  const secondSource = catalogAdapterSource('img.reader');
+  const secondAdapter = instantiateAdapterImplementationDraft(secondSource);
+  const secondPackage = createAdapterPackage({ adapter: secondAdapter, implementationTs: secondSource,
+    origin: 'local-generated', createdAt: '2026-07-10T00:00:00.000Z' });
+  await first.catalog.installApproved(secondPackage);
+  const { app } = appWithAdapters([secondAdapter], { storage, adapterCatalog: first.catalog });
+  const response = await app.inject({ method: 'POST', url: '/api/adapters/dynamic-demo/rollback', payload: {} });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().data).toMatchObject({ activeVersion: first.document.manifest.version, rolledBack: true });
+  await app.close();
+}
+
+async function AdapterRoutesTestListsApprovedCatalogVersions() {
+  const storage = new MemoryStorage();
+  const managed = await managedCatalogFixture(storage);
+  const { app } = appWithAdapters([managed.adapter], { storage, adapterCatalog: managed.catalog });
+  const response = await app.inject({ method: 'GET', url: '/api/adapters/dynamic-demo/versions' });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().data).toMatchObject({ adapterId: 'dynamic-demo',
+    activeVersion: managed.document.manifest.version,
+    versions: [expect.objectContaining({ version: managed.document.manifest.version, status: 'active' })] });
+  await app.close();
 }
 
 async function AdapterRoutesTestDoesNotRestoreDeletedProjectSourceAdaptersWhenTheSourceDirectoryIsMissing() {
@@ -616,19 +658,20 @@ async function AdapterRoutesTestReturnsFullProjectSourceAdapterImplementationFor
     await app.close();
 }
 
-async function AdapterRoutesTestReturnsFullDynamicAdapterManifestForAdapterLabWorkbench() {
-    const app = appWithAdapter(chapterOnlyDynamicAdapter());
+async function AdapterRoutesTestReturnsCatalogPackageImplementationForAdapterLabWorkbench() {
+    const storage = new MemoryStorage();
+    const managed = await managedCatalogFixture(storage);
+    const { app } = appWithAdapters([managed.adapter], { storage, adapterCatalog: managed.catalog });
     const response = await app.inject({ method: 'GET', url: '/api/adapters/dynamic-demo/implementation' });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toMatchObject({
         adapterId: 'dynamic-demo',
-        sourceType: 'dynamic',
-        language: 'json',
+        sourceType: 'catalog-package',
+        language: 'typescript',
     });
-    expect(response.json().data.content).toContain('"selectors"');
+    expect(response.json().data.content).toContain('class DynamicDemoAdapter');
     expect(response.json().data.outline).toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: 'manifest', kind: 'manifest-section' }),
-        expect.objectContaining({ id: 'extractChapterImageUrls', capability: 'chapterImages' }),
+        expect.objectContaining({ id: 'extractChapterImageUrls', kind: 'method' }),
     ]));
     await app.close();
 }

@@ -1,12 +1,10 @@
 import type { AdapterRegistry } from '../adapter/registry';
 import { getAdapterCapabilities } from '../adapter/registry';
-import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../adapter/dynamic-site-adapter';
-import {
-  ACTIVE_DYNAMIC_ADAPTERS_KEY,
-  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
-} from '../adapter/runtime-state';
-import type { AdapterCapabilities, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
+import type { AdapterPackageManifest, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
+import { AdapterCatalog } from '../adapter/catalog';
+import { createAdapterPackage } from '../adapter/package-builder';
+import { loadCatalogAdapters } from '../adapter/catalog-runtime';
 import { AoClient } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
@@ -53,19 +51,6 @@ const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'so
   { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
   { stage: 'chapter-images', sourcePath: 'outputs/chapter-images-capability.ts', reviewPath: 'outputs/chapter-images-review.md' },
 ];
-
-export interface ActiveImplementationAdapterRecord {
-  adapterId: string;
-  name: string;
-  domains: string[];
-  urlPatterns: string[];
-  parseMode: IComicAdapter['parseMode'];
-  capabilities: AdapterCapabilities;
-  sourceDiscoveryId: string;
-  adapterImplementationTs: string;
-  promotedAt: string;
-  approvalFixture?: FixtureSummary;
-}
 
 type RegisteredAdapter = ReturnType<AdapterRegistry['getAll']>[number];
 type DiscoveryBundle = Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>;
@@ -338,20 +323,10 @@ function validatePromotionJob(
   }
 }
 
-function createActiveImplementationRecord(
-  job: SelectorDiscoveryJob & { adapterImplementationTs: string }, adapter: IComicAdapter,
-  approvalFixture?: FixtureSummary
-): ActiveImplementationAdapterRecord {
-  return { adapterId: adapter.id, name: adapter.name, domains: adapter.domains,
-    urlPatterns: adapter.domains.map((domain) => `https://${domain}/*`), parseMode: adapter.parseMode,
-    capabilities: getAdapterCapabilities(adapter), sourceDiscoveryId: job.id,
-    adapterImplementationTs: job.adapterImplementationTs, promotedAt: new Date().toISOString(),
-    approvalFixture };
-}
-
-export type SelectorDiscoveryPromotionResult = ActiveImplementationAdapterRecord;
+export type SelectorDiscoveryPromotionResult = AdapterPackageManifest;
 
 interface SelectorDiscoveryServiceOptions {
+  adapterCatalog?: AdapterCatalog;
   bundleManager?: SelectorDiscoveryBundleManager;
   getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
   acquireBrowserSession?: (input: { job: SelectorDiscoveryJob; browserTarget?: DiscoveryInput['browserTarget'] }) =>
@@ -382,6 +357,7 @@ export class SelectorDiscoveryService {
     adapter: IComicAdapter;
   }) => Promise<FixtureSummary>;
   private readonly scheduler: TaskScheduler<DiscoveryInput>;
+  private readonly adapterCatalog: AdapterCatalog;
 
   constructor(
     private readonly storage: IStorage,
@@ -389,6 +365,7 @@ export class SelectorDiscoveryService {
     bundleManagerOrOptions?: SelectorDiscoveryBundleManager | SelectorDiscoveryServiceOptions
   ) {
     const options = normalizeServiceOptions(bundleManagerOrOptions);
+    this.adapterCatalog = options.adapterCatalog ?? new AdapterCatalog(storage);
     this.bundleManager = options.bundleManager ?? new SelectorDiscoveryBundleManager();
     this.getBrowserConfig = options.getBrowserConfig;
     this.acquireBrowserSession = options.acquireBrowserSession;
@@ -477,41 +454,9 @@ export class SelectorDiscoveryService {
     return (await this.get(replacement.id)) ?? replacement;
   }
 
-  async loadActiveDynamicAdapters(): Promise<void> {
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    const retainedManifests = this.registerDynamicManifests(manifests);
-    if (retainedManifests.length !== manifests.length) {
-      await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, retainedManifests);
-    }
-    const records = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    const retainedRecords = this.registerImplementationRecords(records);
-    if (retainedRecords.length !== records.length) {
-      await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, retainedRecords);
-    }
-  }
-
-  private registerDynamicManifests(manifests: DynamicSiteAdapterManifest[]): DynamicSiteAdapterManifest[] {
-    return manifests.filter((manifest) => {
-      if (this.adapterRegistry.has(manifest.adapterId)) return true;
-      const existing = this.findRegisteredAdapterByDomains(manifest.domains);
-      if (existing && existing.id !== manifest.adapterId) return false;
-      this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
-      return true;
-    });
-  }
-
-  private registerImplementationRecords(records: ActiveImplementationAdapterRecord[]): ActiveImplementationAdapterRecord[] {
-    return records.flatMap((record) => {
-      try {
-        const adapter = instantiateAdapterImplementationDraft(record.adapterImplementationTs);
-        if (this.adapterRegistry.has(adapter.id)) return [record];
-        const existing = this.findRegisteredAdapterByDomains(adapter.domains);
-        if (existing && existing.id !== adapter.id) return [];
-        this.adapterRegistry.register(adapter);
-        return [{ ...record, adapterId: adapter.id, name: adapter.name, domains: adapter.domains,
-          parseMode: adapter.parseMode, capabilities: getAdapterCapabilities(adapter) }];
-      } catch { return []; }
-    });
+  async loadActiveAdapters(): Promise<void> {
+    await this.adapterCatalog.initialize();
+    await loadCatalogAdapters(this.adapterCatalog, this.adapterRegistry);
   }
 
   async promote(id: string): Promise<SelectorDiscoveryPromotionResult> {
@@ -970,35 +915,38 @@ export class SelectorDiscoveryService {
     return { browser, network, renderFirst: true, renderPage };
   }
 
-  private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<ActiveImplementationAdapterRecord> {
+  private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<AdapterPackageManifest> {
     validatePromotionJob(job);
     const adapter = instantiateAdapterImplementationDraft(job.adapterImplementationTs);
-    const adapterId = adapter.id;
-    if (job.promotionMode === 'augment' && job.baseAdapterId && adapterId !== job.baseAdapterId)
-      throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapterId}".`);
-    const registeredAdapter = this.adapterRegistry.get(adapterId);
-    if (registeredAdapter && !(job.promotionMode === 'augment' && job.baseAdapterId === adapterId))
-      throw new Error(`Adapter "${adapterId}" is already registered.`);
-    const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
-    if (!registeredAdapter && existingDomainAdapter && existingDomainAdapter.id !== adapterId)
-      throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
+    const registeredAdapter = this.validatePromotionTarget(job, adapter);
     const approvalFixture = this.captureApprovalFixture
       ? await this.captureApprovalFixture({ job, adapter }) : undefined;
+    const document = createAdapterPackage({ adapter, implementationTs: job.adapterImplementationTs,
+      origin: 'local-generated', sourceDiscoveryId: job.id, approvalFixture,
+      validation: job.implementationValidation });
+    await this.adapterCatalog.installApproved(document, true);
     if (registeredAdapter) this.adapterRegistry.replace(adapter);
     else this.adapterRegistry.register(adapter);
-    const record = createActiveImplementationRecord(job, adapter, approvalFixture);
-    await this.persistPromotedAdapter(job, record);
-    return record;
+    await this.persistPromotedAdapter(job, document.manifest);
+    return document.manifest;
+  }
+
+  private validatePromotionTarget(job: SelectorDiscoveryJob, adapter: IComicAdapter) {
+    const registered = this.adapterRegistry.get(adapter.id);
+    if (job.promotionMode === 'augment' && job.baseAdapterId && adapter.id !== job.baseAdapterId)
+      throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapter.id}".`);
+    if (registered && !(job.promotionMode === 'augment' && job.baseAdapterId === adapter.id))
+      throw new Error(`Adapter "${adapter.id}" is already registered.`);
+    const domainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
+    if (!registered && domainAdapter && domainAdapter.id !== adapter.id)
+      throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
+    return registered;
   }
 
   private async persistPromotedAdapter(
-    job: SelectorDiscoveryJob, record: ActiveImplementationAdapterRecord
+    job: SelectorDiscoveryJob, manifest: AdapterPackageManifest
   ): Promise<void> {
-    const records = (await this.storage.read<ActiveImplementationAdapterRecord[]>(
-      ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
-      [...records.filter((item) => item.adapterId !== record.adapterId), record]);
-    await this.updateJob(job.id, { adapterId: record.adapterId, adapterName: record.name,
+    await this.updateJob(job.id, { adapterId: manifest.adapterId, adapterName: manifest.name,
       status: 'promoted', phase: 'complete', error: undefined });
   }
 
@@ -1014,13 +962,10 @@ export class SelectorDiscoveryService {
     if (!adapter) {
       return undefined;
     }
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    const manifest = manifests.find((item) => item.adapterId === job.baseAdapterId);
     return {
       adapterId: adapter.id,
       name: adapter.name,
       capabilities: getAdapterCapabilities(adapter),
-      imageSelectors: manifest?.selectors.images,
       note: 'This is a capability supplement job. Keep the same adapter identity and only add metadata/chapter-list selectors unless image selectors are explicitly revalidated.',
     };
   }

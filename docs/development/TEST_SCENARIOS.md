@@ -9,6 +9,26 @@
 
 ## 2. API 與工作
 
+### DEV-01 安全清理開發產物
+
+1. 建立 build 產物。
+2. 建立 test 產物。
+3. 建立 dev 暫存檔。
+4. 建立 adapter catalog 資料。
+5. 執行預設 clean。
+6. 檢查剩餘資料。
+
+預期：可重建產物被刪除，adapter catalog 保留。
+
+### DEV-02 獨立清理 dependencies
+
+1. 建立 dependency 目錄。
+2. 建立下載檔案。
+3. 執行 dependency clean。
+4. 檢查剩餘資料。
+
+預期：dependencies 被刪除，下載檔案保留。
+
 ### API-01 讀取服務狀態
 
 1. 呼叫 status API。
@@ -159,6 +179,40 @@
 3. 完成延遲 acquire。
 
 預期：handoff 保持 cancelled 並釋放 lease。
+
+### ADP-14 安裝已審核 package
+
+1. 建立通過驗證的 TypeScript package。
+2. 安裝 package。
+3. 讀取 catalog entry。
+
+預期：package 成為 active version。
+
+### ADP-15 保護不可變版本
+
+1. 安裝一個 package version。
+2. 修改相同 version 的內容。
+3. 再次安裝 package。
+
+預期：Catalog 拒絕覆寫既有版本。
+
+### ADP-16 切換 catalog version
+
+1. 安裝兩個 approved version。
+2. 執行 rollback。
+3. 停用 adapter。
+4. 執行 restore。
+
+預期：active pointer 依序切換且 package 不變。
+
+### ADP-17 遷移 generated implementation
+
+1. 建立舊 implementation record。
+2. 啟動 catalog migration。
+3. 讀取 active package。
+4. 檢查舊 storage key。
+
+預期：內容完整遷移且舊 key 被移除。
 
 ### COMIX-01 擷取 Comix fixture
 

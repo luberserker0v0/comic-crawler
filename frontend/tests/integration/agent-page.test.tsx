@@ -159,7 +159,7 @@ function resetAgentStore() {
 function mockAdapterLists() {
   jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: siteAdapters });
   jest.spyOn(api, 'getDeletedAdapters').mockResolvedValue({ data: { adapters: [{
-    adapterId: 'oldsite', deletedAt: '2026-07-09T00:00:00.000Z', implementationKind: 'selector-manifest',
+    adapterId: 'oldsite', deletedAt: '2026-07-09T00:00:00.000Z', implementationKind: 'ts-implementation',
     restorable: true, restoreReason: 'Adapter can be restored from saved runtime data or existing project source.',
   }] } });
   jest.spyOn(api, 'listSelectorDiscoveries').mockResolvedValue({ data: { jobs: [] } });
@@ -172,10 +172,10 @@ function mockAdapterActions() {
   deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({ data: {
     adapterId: 'kuronavi', message: 'Adapter deleted and source files removed', implementationKind: 'project-source',
     registryRemoved: true, deletedMarkerWritten: true, sourcePath: 'backend/src/adapter/sites/kuronavi/adapter.ts',
-    sourceDeleted: true, runtimeRecordsRemoved: { selectorManifest: false, tsImplementation: false },
+    sourceDeleted: true, catalogDeactivated: false,
   } });
   restoreAdapterSpy = jest.spyOn(api, 'restoreAdapter').mockResolvedValue({ data: {
-    adapterId: 'oldsite', message: 'Adapter restored', implementationKind: 'selector-manifest', restored: true,
+    adapterId: 'oldsite', message: 'Adapter restored', implementationKind: 'ts-implementation', restored: true,
   } });
   jest.spyOn(api, 'rejectAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
   jest.spyOn(api, 'rollbackAgentAdapter').mockResolvedValue({ data: { success: true, currentVersion: 'v1' } });
