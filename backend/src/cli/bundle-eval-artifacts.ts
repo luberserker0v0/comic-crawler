@@ -17,35 +17,41 @@ export async function waitForSelectorDiscoveryJob(
   timeoutMs: number,
   pollIntervalMs: number
 ): Promise<SelectorDiscoveryJob> {
-  if (!ctx.options.selectorDiscoveryService) {
-    throw new Error('Selector discovery service is not available in this CLI context.');
-  }
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('--timeout-minutes must be a positive number.');
-  }
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
-    throw new Error('--poll-interval-ms must be a positive number.');
-  }
-
+  const service = requireDiscoveryService(ctx);
+  validatePolling(timeoutMs, pollIntervalMs);
   const startedAt = Date.now();
   let lastStatus = '';
   while (Date.now() - startedAt < timeoutMs) {
-    const job = await ctx.options.selectorDiscoveryService.get(id);
-    if (!job) {
-      throw new Error(`Discovery job "${id}" was not found.`);
-    }
-    const statusText = `${job.status}${job.phase ? `/${job.phase}` : ''}`;
-    if (statusText !== lastStatus) {
-      ctx.ui.renderStatus('bundle-eval status', statusText);
-      lastStatus = statusText;
-    }
-    if (job.status === 'awaiting_review' || job.status === 'invalid' || job.status === 'failed') {
-      return job;
-    }
+    const job = await service.get(id);
+    if (!job) throw new Error(`Discovery job "${id}" was not found.`);
+    lastStatus = renderJobStatus(ctx, job, lastStatus);
+    if (isTerminalDiscoveryJob(job)) return job;
     await sleep(Math.max(250, pollIntervalMs));
   }
-
   throw new Error(`Timed out waiting for selector discovery job "${id}".`);
+}
+
+function renderJobStatus(ctx: CliCommandContext, job: SelectorDiscoveryJob, previous: string): string {
+  const status = `${job.status}${job.phase ? `/${job.phase}` : ''}`;
+  if (status !== previous) ctx.ui.renderStatus('bundle-eval status', status);
+  return status;
+}
+
+function isTerminalDiscoveryJob(job: SelectorDiscoveryJob): boolean {
+  return job.status === 'awaiting_review' || job.status === 'invalid' || job.status === 'failed';
+}
+
+function requireDiscoveryService(ctx: CliCommandContext) {
+  if (!ctx.options.selectorDiscoveryService)
+    throw new Error('Selector discovery service is not available in this CLI context.');
+  return ctx.options.selectorDiscoveryService;
+}
+
+function validatePolling(timeoutMs: number, intervalMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+    throw new Error('--timeout-minutes must be a positive number.');
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0)
+    throw new Error('--poll-interval-ms must be a positive number.');
 }
 
 export async function runSelectorDiscoveryEvalGate(
@@ -53,35 +59,26 @@ export async function runSelectorDiscoveryEvalGate(
   id: string,
   evalCase?: SelectorDiscoveryEvalCase
 ): Promise<{ passed: boolean; job: SelectorDiscoveryJob; reasons: string[] }> {
-  if (!ctx.options.selectorDiscoveryService) {
-    throw new Error('Selector discovery service is not available in this CLI context.');
-  }
-
-  const job = await ctx.options.selectorDiscoveryService.get(id);
+  const job = await requireDiscoveryService(ctx).get(id);
   if (!job) throw new Error(`Discovery job "${id}" was not found.`);
-
   if (evalCase?.type === 'negative') {
-    if (job.status === 'awaiting_review') {
-      return { passed: false, job, reasons: ['Negative eval case unexpectedly produced a reviewable implementation draft.'] };
-    }
-    return { passed: true, job, reasons: [] };
+    const reasons = job.status === 'awaiting_review'
+      ? ['Negative eval case unexpectedly produced a reviewable implementation draft.'] : [];
+    return { passed: reasons.length === 0, job, reasons };
   }
-
-  if (job.status !== 'awaiting_review') {
+  if (job.status !== 'awaiting_review')
     return { passed: false, job, reasons: [`Discovery job ended with status "${job.status}".`] };
-  }
-
-  const reasons: string[] = [];
-  if (!job.adapterImplementationTs?.trim()) {
-    reasons.push('Adapter implementation draft is missing.');
-  }
-  if (!job.implementationValidation?.valid) {
-    reasons.push(`Adapter implementation validation failed: ${(job.implementationValidation?.errors ?? []).join('; ') || 'unknown error'}`);
-  }
-  if (!job.reviewNotesMarkdown?.trim()) {
-    reasons.push('Adapter implementation review notes are missing.');
-  }
+  const reasons = reviewGateReasons(job);
   return { passed: reasons.length === 0, job, reasons };
+}
+
+function reviewGateReasons(job: SelectorDiscoveryJob): string[] {
+  const reasons: string[] = [];
+  if (!job.adapterImplementationTs?.trim()) reasons.push('Adapter implementation draft is missing.');
+  if (!job.implementationValidation?.valid) reasons.push(
+    `Adapter implementation validation failed: ${(job.implementationValidation?.errors ?? []).join('; ') || 'unknown error'}`);
+  if (!job.reviewNotesMarkdown?.trim()) reasons.push('Adapter implementation review notes are missing.');
+  return reasons;
 }
 
 export async function writeSelectorDiscoveryBundleEvalArtifact(
@@ -109,51 +106,44 @@ export async function writeSelectorDiscoveryBundleEvalSuiteArtifact(
   const workspaceRoot = resolveRuntimeConfig().agentWorkspacePath;
   const artifactDir = join(workspaceRoot, 'bundle-evaluations', bundle.hash);
   await fs.mkdir(artifactDir, { recursive: true });
-  const reasons = results.flatMap((result) =>
-    result.reasons.map((reason) => `${result.case?.id ?? 'default'} run ${result.runIndex}: ${reason}`)
-  );
-  const policyReasons = input.policy.reasons.map((reason) => `policy: ${reason}`);
-
-  const summary = {
-    schemaVersion: 1,
-    kind: 'selector-discovery-bundle-evaluation',
-    passed: input.policy.passed,
-    reasons: [...reasons, ...policyReasons],
-    policy: input.policy,
-    createdAt: new Date().toISOString(),
-    bundle: {
-      hash: bundle.hash,
-      root: bundle.root,
-    },
-    runtime: {
-      aoBaseUrl: input.aoBaseUrl,
-      model: input.model,
-      providerFingerprint: fingerprintProviderDocument(input.providerDocument),
-    },
-    cases: results.map((result) => createEvalCaseSummary(result)),
-    job: createEvalJobSummary(findLastJob(results)),
-  };
-
+  const summary = createSuiteSummary(results, input, bundle);
   await fs.writeFile(join(artifactDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf-8');
-
-  for (const result of results) {
-    const caseId = result.case?.id ?? 'default';
-    const runDir = join(artifactDir, 'cases', safePathSegment(caseId), `run-${result.runIndex}`);
-    await fs.mkdir(runDir, { recursive: true });
-    await fs.writeFile(join(runDir, 'summary.json'), `${JSON.stringify(createEvalCaseSummary(result), null, 2)}\n`, 'utf-8');
-    await fs.writeFile(join(runDir, 'phase1-output.md'), result.job?.phase1Markdown ?? '', 'utf-8');
-    await fs.writeFile(join(runDir, 'adapter-implementation.ts'), result.job?.adapterImplementationTs ?? '', 'utf-8');
-    await fs.writeFile(join(runDir, 'review-notes.md'), result.job?.reviewNotesMarkdown ?? '', 'utf-8');
-    await fs.writeFile(join(runDir, 'implementation-validation.json'), `${JSON.stringify(result.job?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
-  }
-
-  const last = findLastJob(results);
-  await fs.writeFile(join(artifactDir, 'phase1-output.md'), last?.phase1Markdown ?? '', 'utf-8');
-  await fs.writeFile(join(artifactDir, 'adapter-implementation.ts'), last?.adapterImplementationTs ?? '', 'utf-8');
-  await fs.writeFile(join(artifactDir, 'review-notes.md'), last?.reviewNotesMarkdown ?? '', 'utf-8');
-  await fs.writeFile(join(artifactDir, 'implementation-validation.json'), `${JSON.stringify(last?.implementationValidation ?? null, null, 2)}\n`, 'utf-8');
-
+  for (const result of results) await writeEvalRun(artifactDir, result);
+  await writeLatestEvalFiles(artifactDir, findLastJob(results));
   return artifactDir;
+}
+
+function createSuiteSummary(results: SelectorDiscoveryEvalRunResult[], input: {
+  providerDocument: ProviderDocument; model: string; aoBaseUrl: string;
+  policy: SelectorDiscoveryEvalPolicyResult }, bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>) {
+  const reasons = results.flatMap((result) => result.reasons.map((reason) =>
+    `${result.case?.id ?? 'default'} run ${result.runIndex}: ${reason}`));
+  return { schemaVersion: 1, kind: 'selector-discovery-bundle-evaluation',
+    passed: input.policy.passed, reasons: [...reasons, ...input.policy.reasons.map((reason) => `policy: ${reason}`)],
+    policy: input.policy, createdAt: new Date().toISOString(),
+    bundle: { hash: bundle.hash, root: bundle.root }, runtime: { aoBaseUrl: input.aoBaseUrl,
+      model: input.model, providerFingerprint: fingerprintProviderDocument(input.providerDocument) },
+    cases: results.map(createEvalCaseSummary), job: createEvalJobSummary(findLastJob(results)) };
+}
+
+async function writeEvalRun(root: string, result: SelectorDiscoveryEvalRunResult): Promise<void> {
+  const runDir = join(root, 'cases', safePathSegment(result.case?.id ?? 'default'), `run-${result.runIndex}`);
+  await fs.mkdir(runDir, { recursive: true });
+  await Promise.all([fs.writeFile(join(runDir, 'summary.json'),
+    `${JSON.stringify(createEvalCaseSummary(result), null, 2)}\n`, 'utf-8'),
+  fs.writeFile(join(runDir, 'phase1-output.md'), result.job?.phase1Markdown ?? '', 'utf-8'),
+  fs.writeFile(join(runDir, 'adapter-implementation.ts'), result.job?.adapterImplementationTs ?? '', 'utf-8'),
+  fs.writeFile(join(runDir, 'review-notes.md'), result.job?.reviewNotesMarkdown ?? '', 'utf-8'),
+  fs.writeFile(join(runDir, 'implementation-validation.json'),
+    `${JSON.stringify(result.job?.implementationValidation ?? null, null, 2)}\n`, 'utf-8')]);
+}
+
+async function writeLatestEvalFiles(root: string, job?: SelectorDiscoveryJob): Promise<void> {
+  await Promise.all([fs.writeFile(join(root, 'phase1-output.md'), job?.phase1Markdown ?? '', 'utf-8'),
+    fs.writeFile(join(root, 'adapter-implementation.ts'), job?.adapterImplementationTs ?? '', 'utf-8'),
+    fs.writeFile(join(root, 'review-notes.md'), job?.reviewNotesMarkdown ?? '', 'utf-8'),
+    fs.writeFile(join(root, 'implementation-validation.json'),
+      `${JSON.stringify(job?.implementationValidation ?? null, null, 2)}\n`, 'utf-8')]);
 }
 
 export function createEvalCaseSummary(result: SelectorDiscoveryEvalRunResult): Record<string, unknown> {
@@ -198,31 +188,26 @@ export function findLastJob(results: SelectorDiscoveryEvalRunResult[]): Selector
 }
 
 export async function readPassingBundleEvalSummary(evalBundleHash: string): Promise<any> {
-  if (!/^[a-f0-9]{64}$/i.test(evalBundleHash)) {
-    throw new Error('--eval-bundle-hash must be a 64-character SHA-256 hex string.');
-  }
-
+  if (!/^[a-f0-9]{64}$/i.test(evalBundleHash)) throw new Error(
+    '--eval-bundle-hash must be a 64-character SHA-256 hex string.');
   const workspaceRoot = resolveRuntimeConfig().agentWorkspacePath;
   const summaryPath = join(workspaceRoot, 'bundle-evaluations', evalBundleHash, 'summary.json');
-  let summary: any;
-  try {
-    summary = JSON.parse(await fs.readFile(summaryPath, 'utf-8'));
-  } catch {
-    throw new Error(`Bundle evaluation summary was not found at ${summaryPath}.`);
-  }
-
-  if (summary?.kind !== 'selector-discovery-bundle-evaluation') {
-    throw new Error(`Bundle evaluation summary at ${summaryPath} has an unexpected kind.`);
-  }
-  if (summary?.bundle?.hash !== evalBundleHash) {
-    throw new Error(`Bundle evaluation summary hash does not match ${evalBundleHash}.`);
-  }
-  if (summary?.passed !== true) {
-    throw new BundleEvalPolicyError(`Bundle evaluation ${evalBundleHash} has not passed.`, summaryPath, summary);
-  }
-  if (summary?.policy?.passed !== true) {
-    throw new BundleEvalPolicyError(`Bundle evaluation ${evalBundleHash} did not pass release policy.`, summaryPath, summary);
-  }
-
+  const summary = await readEvalSummary(summaryPath);
+  validatePassingSummary(summary, evalBundleHash, summaryPath);
   return summary;
+}
+
+async function readEvalSummary(path: string): Promise<any> {
+  try { return JSON.parse(await fs.readFile(path, 'utf-8')); }
+  catch { throw new Error(`Bundle evaluation summary was not found at ${path}.`); }
+}
+
+function validatePassingSummary(summary: any, hash: string, path: string): void {
+  if (summary?.kind !== 'selector-discovery-bundle-evaluation')
+    throw new Error(`Bundle evaluation summary at ${path} has an unexpected kind.`);
+  if (summary?.bundle?.hash !== hash) throw new Error(`Bundle evaluation summary hash does not match ${hash}.`);
+  if (summary?.passed !== true) throw new BundleEvalPolicyError(
+    `Bundle evaluation ${hash} has not passed.`, path, summary);
+  if (summary?.policy?.passed !== true) throw new BundleEvalPolicyError(
+    `Bundle evaluation ${hash} did not pass release policy.`, path, summary);
 }

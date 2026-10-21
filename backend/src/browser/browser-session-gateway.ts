@@ -103,30 +103,27 @@ export class BrowserSessionGateway {
   }
 
   acceptConnection(socket: WebSocket): void {
-    let authenticatedWorkerId: string | undefined;
-    const authenticationTimer = setTimeout(() => {
-      socket.close(4008, 'Browser Client authentication timed out.');
-    }, this.authenticationTimeoutMs);
+    const state: { workerId?: string } = {};
+    const authenticationTimer = setTimeout(() => socket.close(4008,
+      'Browser Client authentication timed out.'), this.authenticationTimeoutMs);
     authenticationTimer.unref();
-
-    socket.on('message', (data, binary) => {
-      if (binary) {
-        socket.close(4002, 'Binary Browser Client messages are not supported.');
-        return;
-      }
-      void this.handleMessage(socket, data.toString(), authenticatedWorkerId).then((workerId) => {
-        if (!authenticatedWorkerId && workerId) {
-          authenticatedWorkerId = workerId;
-          clearTimeout(authenticationTimer);
-        }
-      }).catch((error) => {
-        socket.close(4002, errorMessage(error));
-      });
-    });
+    socket.on('message', (data, binary) => this.handleSocketData(
+      socket, data.toString(), binary, state, authenticationTimer));
     socket.once('close', () => {
       clearTimeout(authenticationTimer);
-      if (authenticatedWorkerId) this.disconnectWorker(authenticatedWorkerId, 'Browser Client disconnected.');
+      if (state.workerId) this.disconnectWorker(state.workerId, 'Browser Client disconnected.');
     });
+  }
+
+  private handleSocketData(socket: WebSocket, raw: string, binary: boolean,
+    state: { workerId?: string }, timer: NodeJS.Timeout): void {
+    if (binary) return void socket.close(4002, 'Binary Browser Client messages are not supported.');
+    void this.handleMessage(socket, raw, state.workerId).then((workerId) => {
+      if (!state.workerId && workerId) {
+        state.workerId = workerId;
+        clearTimeout(timer);
+      }
+    }).catch((error) => socket.close(4002, errorMessage(error)));
   }
 
   listWorkers(ownerUserId?: string): Array<BrowserWorker> {
@@ -159,43 +156,20 @@ export class BrowserSessionGateway {
   async openSession(request: OpenGatewaySessionRequest): Promise<GatewaySession> {
     const connection = this.requireOnlineConnection(request.workerId);
     this.assertValidSessionSource(connection.worker, request.source);
-    if (connection.worker.activeSessionId) {
-      throw new Error(`Browser Worker "${request.workerId}" is busy.`);
-    }
+    if (connection.worker.activeSessionId) throw new Error(`Browser Worker "${request.workerId}" is busy.`);
     const sessionId = request.sessionId ?? `bs_${randomUUID()}`;
     if (this.sessions.has(sessionId)) throw new Error(`Browser session "${sessionId}" already exists.`);
-    const session: GatewaySession = {
-      sessionId,
-      leaseId: request.leaseId,
-      workerId: request.workerId,
-      ownerUserId: connection.worker.ownerUserId,
-      source: request.source,
-      initialPageClaimed: false,
-      state: 'opening',
-      openedAt: new Date().toISOString(),
-    };
-    this.sessions.set(sessionId, session);
-    connection.worker.activeSessionId = sessionId;
-    this.emitChange();
-    const pending = this.createPending<void>(
-      this.pendingSessionOpen,
-      sessionId,
-      request.workerId,
-      sessionId,
-      request.timeoutMs,
-      `Browser session "${sessionId}" timed out while opening.`
-    );
+    const session = this.reserveSession(request, connection.worker, sessionId);
+    return this.activateSession(connection, request, session);
+  }
+
+  private async activateSession(connection: WorkerConnection, request: OpenGatewaySessionRequest,
+    session: GatewaySession): Promise<GatewaySession> {
+    const sessionId = session.sessionId;
+    const pending = this.createPending<void>(this.pendingSessionOpen, sessionId, request.workerId,
+      sessionId, request.timeoutMs, `Browser session "${sessionId}" timed out while opening.`);
     try {
-      this.send(connection.socket, {
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'session.open',
-        request: {
-          sessionId,
-          leaseId: request.leaseId,
-          source: request.source,
-          renderContext: request.renderContext,
-        },
-      });
+      this.sendSessionOpen(connection.socket, request, sessionId);
       await pending;
       session.state = 'active';
       return { ...session };
@@ -208,6 +182,23 @@ export class BrowserSessionGateway {
     }
   }
 
+  private reserveSession(request: OpenGatewaySessionRequest, worker: BrowserWorker,
+    sessionId: string): GatewaySession {
+    const session: GatewaySession = { sessionId, leaseId: request.leaseId,
+      workerId: request.workerId, ownerUserId: worker.ownerUserId, source: request.source,
+      initialPageClaimed: false, state: 'opening', openedAt: new Date().toISOString() };
+    this.sessions.set(sessionId, session);
+    worker.activeSessionId = sessionId;
+    this.emitChange();
+    return session;
+  }
+
+  private sendSessionOpen(socket: WebSocket, request: OpenGatewaySessionRequest, sessionId: string): void {
+    this.send(socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'session.open',
+      request: { sessionId, leaseId: request.leaseId, source: request.source,
+        renderContext: request.renderContext } });
+  }
+
   async execute(
     sessionId: string,
     command: BrowserCommand,
@@ -217,23 +208,11 @@ export class BrowserSessionGateway {
     const connection = this.requireOnlineConnection(session.workerId);
     assertCapability(connection.worker.capabilities, command);
     const requestId = `br_${randomUUID()}`;
-    const pending = this.createPending<BrowserCommandResult>(
-      this.pendingCommands,
-      requestId,
-      session.workerId,
-      sessionId,
-      timeoutMs,
-      `Browser command "${command.type}" timed out.`
-    );
+    const pending = this.createPending<BrowserCommandResult>(this.pendingCommands, requestId,
+      session.workerId, sessionId, timeoutMs, `Browser command "${command.type}" timed out.`);
     try {
-      this.send(connection.socket, {
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'command.execute',
-        requestId,
-        leaseId: session.leaseId,
-        sessionId,
-        command,
-      });
+      this.send(connection.socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+        type: 'command.execute', requestId, leaseId: session.leaseId, sessionId, command });
       return await pending;
     } finally {
       this.clearPending(this.pendingCommands, requestId);
@@ -255,23 +234,19 @@ export class BrowserSessionGateway {
       this.removeSession(sessionId);
       return;
     }
+    await this.closeConnectedSession(connection, session, timeoutMs);
+  }
+
+  private async closeConnectedSession(connection: WorkerConnection, session: GatewaySession,
+    timeoutMs: number): Promise<void> {
+    const sessionId = session.sessionId;
     session.state = 'closing';
     this.rejectPendingCommands(sessionId, new Error(`Browser session "${sessionId}" is closing.`));
-    const pending = this.createPending<void>(
-      this.pendingSessionClose,
-      sessionId,
-      session.workerId,
-      sessionId,
-      timeoutMs,
-      `Browser session "${sessionId}" timed out while closing.`
-    );
+    const pending = this.createPending<void>(this.pendingSessionClose, sessionId, session.workerId,
+      sessionId, timeoutMs, `Browser session "${sessionId}" timed out while closing.`);
     try {
-      this.send(connection.socket, {
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'session.close',
-        sessionId,
-        leaseId: session.leaseId,
-      });
+      this.send(connection.socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+        type: 'session.close', sessionId, leaseId: session.leaseId });
       await pending;
     } catch (error) {
       connection.socket.close(4008, 'Browser session close timed out.');
@@ -315,39 +290,54 @@ export class BrowserSessionGateway {
     const connection = this.connections.get(workerId);
     if (!connection || connection.socket !== socket) throw new Error('Browser Client connection is not active.');
     const message = parsed as unknown as BrowserClientToServerMessage;
+    this.dispatchMessage(connection, workerId, message);
+    return workerId;
+  }
+
+  private dispatchMessage(connection: WorkerConnection, workerId: string,
+    message: BrowserClientToServerMessage): void {
+    if (this.dispatchControlMessage(connection, workerId, message)) return;
+    if (this.dispatchSessionMessage(workerId, message)) return;
+    if (message.type === 'command.result') return void this.resolveCommand(workerId, message);
+    if (message.type === 'client.authenticate')
+      throw new Error('Browser Client connection is already authenticated.');
+    throw new Error('Unknown Browser Client message type.');
+  }
+
+  private dispatchSessionMessage(workerId: string, message: BrowserClientToServerMessage): boolean {
     switch (message.type) {
-      case 'client.heartbeat':
-        if (message.workerId !== workerId) throw new Error('Heartbeat Worker identity does not match connection.');
-        connection.worker.lastHeartbeatAt = new Date().toISOString();
-        break;
-      case 'resource.register':
-        this.handleResourceControl(connection, message.requestId, () => {
-          this.registerResource(connection.worker, message.requestId, message.resource);
-        });
-        break;
-      case 'resource.revoke':
-        this.handleResourceControl(connection, message.requestId, () => {
-          this.revokeResource(connection.worker, message.requestId, message.resourceId);
-        });
-        break;
       case 'session.ready':
         this.resolveSessionOpen(workerId, message.sessionId, message.leaseId);
-        break;
+        return true;
       case 'session.failed':
         this.rejectSessionOpen(workerId, message.sessionId, message.leaseId, message.error);
-        break;
+        return true;
       case 'session.closed':
         this.resolveSessionClose(workerId, message.sessionId, message.leaseId);
-        break;
-      case 'command.result':
-        this.resolveCommand(workerId, message);
-        break;
-      case 'client.authenticate':
-        throw new Error('Browser Client connection is already authenticated.');
+        return true;
       default:
-        throw new Error('Unknown Browser Client message type.');
+        return false;
     }
-    return workerId;
+  }
+
+  private dispatchControlMessage(connection: WorkerConnection, workerId: string,
+    message: BrowserClientToServerMessage): boolean {
+    if (message.type === 'client.heartbeat') {
+      if (message.workerId !== workerId) throw new Error('Heartbeat Worker identity does not match connection.');
+      connection.worker.lastHeartbeatAt = new Date().toISOString();
+      return true;
+    }
+    if (message.type === 'resource.register') {
+      this.handleResourceControl(connection, message.requestId, () =>
+        this.registerResource(connection.worker, message.requestId, message.resource));
+      return true;
+    }
+    if (message.type === 'resource.revoke') {
+      this.handleResourceControl(connection, message.requestId, () =>
+        this.revokeResource(connection.worker, message.requestId, message.resourceId));
+      return true;
+    }
+    return false;
   }
 
   private handleResourceControl(connection: WorkerConnection, requestId: string, operation: () => void): void {
@@ -378,19 +368,11 @@ export class BrowserSessionGateway {
     if (existing && existing.workerId !== worker.workerId) {
       throw new Error(`Browser resource "${resource.resourceId}" is already registered by another Worker.`);
     }
-    const registered: BrowserResource = {
-      ...resource,
-      workerId: worker.workerId,
-      ownerUserId: worker.ownerUserId,
-      registeredAt: existing?.registeredAt ?? new Date().toISOString(),
-    };
+    const registered: BrowserResource = { ...resource, workerId: worker.workerId,
+      ownerUserId: worker.ownerUserId, registeredAt: existing?.registeredAt ?? new Date().toISOString() };
     this.resources.set(resource.resourceId, registered);
     this.send(this.requireOnlineConnection(worker.workerId).socket, {
-      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-      type: 'resource.registered',
-      requestId,
-      resource,
-    });
+      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'resource.registered', requestId, resource });
     this.emitChange();
   }
 
@@ -401,82 +383,69 @@ export class BrowserSessionGateway {
     if (!resource || resource.workerId !== worker.workerId) {
       throw new Error(`Browser resource "${resourceId}" was not found for this Worker.`);
     }
-    const inUse = [...this.sessions.values()].some((session) =>
-      session.workerId === worker.workerId
-      && session.source.type === 'existing-resource'
-      && session.source.resourceId === resourceId);
+    const inUse = [...this.sessions.values()].some((session) => session.workerId === worker.workerId
+      && session.source.type === 'existing-resource' && session.source.resourceId === resourceId);
     if (inUse) throw new Error(`Browser resource "${resourceId}" is in use.`);
     this.resources.delete(resourceId);
     this.send(this.requireOnlineConnection(worker.workerId).socket, {
-      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-      type: 'resource.revoked',
-      requestId,
-      resourceId,
-    });
+      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'resource.revoked', requestId, resourceId });
     this.emitChange();
   }
 
   private async authenticateSocket(socket: WebSocket, message: Record<string, unknown>): Promise<string | undefined> {
     if (message.type !== 'client.authenticate') throw new Error('The first Browser Client message must authenticate.');
-    const clientId = requireString(message.clientId, 'clientId');
-    const credential = requireString(message.credential, 'credential');
-    const processInstanceId = requireString(message.processInstanceId, 'processInstanceId');
-    const capabilities = requireCapabilities(message.capabilities);
+    const { clientId, credential, processInstanceId, capabilities } = parseAuthentication(message);
     const record = this.registry.authenticateCredential(clientId, credential);
     if (!record) {
       this.rejectAuthentication(socket, 'Browser Client credential is invalid.');
       return undefined;
     }
-    const principal = this.security?.principalForUser(record.ownerUserId);
-    if (this.security && !principal) {
-      this.rejectAuthentication(socket, 'Browser Client owner is disabled or unknown.');
-      return undefined;
-    }
-    if (principal && this.security && !this.security.hasPermission(principal, 'browser-client:session-own')) {
-      this.rejectAuthentication(socket, 'Browser Client owner no longer has session permission.');
-      return undefined;
-    }
-    if (principal?.limits.maxOnlineBrowserWorkers !== undefined
-      && this.countOnline(record.ownerUserId) >= principal.limits.maxOnlineBrowserWorkers) {
-      this.rejectAuthentication(socket, 'The maximum number of online Browser Workers has been reached.');
-      return undefined;
-    }
+    if (!this.authorizeBrowserClient(socket, record)) return undefined;
     const processKey = `${clientId}\0${processInstanceId}`;
     const existingWorkerId = this.workerIdByProcess.get(processKey);
-    const existing = existingWorkerId ? this.connections.get(existingWorkerId) : undefined;
-    if (existing?.socket.readyState === WebSocketState.OPEN) {
+    if (this.hasActiveProcessConnection(existingWorkerId)) {
       this.rejectAuthentication(socket, 'This Browser Client process already has an active connection.', 4009);
       return undefined;
     }
     const workerId = existingWorkerId ?? `bw_${randomUUID()}`;
-    const now = new Date().toISOString();
-    const worker: BrowserWorker = {
-      workerId,
-      clientId,
-      name: record.name,
-      ownerUserId: record.ownerUserId,
-      processInstanceId,
-      capabilities,
-      connectedAt: now,
-      lastHeartbeatAt: now,
-      online: true,
-    };
-    await this.registry.markConnected(clientId);
+    const worker = createWorker(workerId, processInstanceId, capabilities, record);
+    await this.registerAuthenticatedWorker(socket, processKey, worker);
+    return workerId;
+  }
+
+  private authorizeBrowserClient(socket: WebSocket,
+    record: NonNullable<ReturnType<BrowserClientRegistry['authenticateCredential']>>): boolean {
+    const principal = this.security?.principalForUser(record.ownerUserId);
+    if (this.security && !principal) {
+      this.rejectAuthentication(socket, 'Browser Client owner is disabled or unknown.');
+      return false;
+    }
+    if (principal && this.security && !this.security.hasPermission(principal, 'browser-client:session-own')) {
+      this.rejectAuthentication(socket, 'Browser Client owner no longer has session permission.');
+      return false;
+    }
+    const limit = principal?.limits.maxOnlineBrowserWorkers;
+    if (limit !== undefined && this.countOnline(record.ownerUserId) >= limit) {
+      this.rejectAuthentication(socket, 'The maximum number of online Browser Workers has been reached.');
+      return false;
+    }
+    return true;
+  }
+
+  private hasActiveProcessConnection(workerId?: string): boolean {
+    return Boolean(workerId && this.connections.get(workerId)?.socket.readyState === WebSocketState.OPEN);
+  }
+
+  private async registerAuthenticatedWorker(socket: WebSocket, processKey: string,
+    worker: BrowserWorker): Promise<void> {
+    const workerId = worker.workerId;
+    await this.registry.markConnected(worker.clientId);
     this.workers.set(workerId, worker);
     this.workerIdByProcess.set(processKey, workerId);
-    this.connections.set(workerId, {
-      socket,
-      worker,
-      connectionId: `bwc_${randomUUID()}`,
-    });
-    this.send(socket, {
-      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-      type: 'client.authenticated',
-      workerId,
-      heartbeatIntervalMs: this.heartbeatIntervalMs,
-    });
+    this.connections.set(workerId, { socket, worker, connectionId: `bwc_${randomUUID()}` });
+    this.send(socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+      type: 'client.authenticated', workerId, heartbeatIntervalMs: this.heartbeatIntervalMs });
     this.emitChange();
-    return workerId;
   }
 
   private rejectAuthentication(socket: WebSocket, reason: string, code = 4003): void {
@@ -676,6 +645,22 @@ export class BrowserSessionGateway {
   private emitChange(): void {
     for (const listener of [...this.changeListeners]) listener();
   }
+}
+
+function createWorker(workerId: string, processInstanceId: string,
+  capabilities: BrowserCapabilities,
+  record: NonNullable<ReturnType<BrowserClientRegistry['authenticateCredential']>>): BrowserWorker {
+  const now = new Date().toISOString();
+  return { workerId, clientId: record.clientId, name: record.name,
+    ownerUserId: record.ownerUserId, processInstanceId, capabilities,
+    connectedAt: now, lastHeartbeatAt: now, online: true };
+}
+
+function parseAuthentication(message: Record<string, unknown>) {
+  return { clientId: requireString(message.clientId, 'clientId'),
+    credential: requireString(message.credential, 'credential'),
+    processInstanceId: requireString(message.processInstanceId, 'processInstanceId'),
+    capabilities: requireCapabilities(message.capabilities) };
 }
 
 function requireString(value: unknown, name: string): string {

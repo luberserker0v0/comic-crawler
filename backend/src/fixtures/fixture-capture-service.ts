@@ -36,6 +36,14 @@ export interface ApprovedFixtureExpectation {
   results: Record<string, unknown>;
 }
 
+interface FixtureLocation {
+  id: string;
+  domain: string;
+  directory: string;
+  htmlPath: string;
+  capturedAt: string;
+}
+
 export class FixtureCaptureService {
   private readonly readiness = new DomReadinessChecker();
 
@@ -45,166 +53,75 @@ export class FixtureCaptureService {
   ) {}
 
   async captureBrowserDocument(input: CaptureFixtureInput): Promise<FixtureSummary> {
-    const job = await this.challengeDiscoveryService.get(input.challengeDiscoveryId);
-    if (!job) {
-      throw new Error(`Challenge discovery job "${input.challengeDiscoveryId}" was not found.`);
-    }
-    if (job.status !== 'ready') {
-      throw new Error(`Challenge discovery job "${input.challengeDiscoveryId}" is not ready.`);
-    }
-
-    const snapshot = await this.challengeDiscoveryService.readRemotePageSnapshot(
-      input.challengeDiscoveryId,
-      {
-        settle: input.settle,
-        allowNavigate: input.allowNavigate,
-      }
-    );
-    if (input.expectedUrl && !sameDocumentPath(snapshot.page.url, input.expectedUrl)) {
-      throw new Error(`Verified browser page does not match the expected URL. Browser page: ${snapshot.page.url}`);
-    }
-
+    await this.requireReadyChallenge(input.challengeDiscoveryId);
+    const snapshot = await this.challengeDiscoveryService.readRemotePageSnapshot(input.challengeDiscoveryId,
+      { settle: input.settle, allowNavigate: input.allowNavigate });
+    validateExpectedUrl(snapshot.page.url, input.expectedUrl);
     const readiness = this.readiness.check({
-      url: snapshot.page.url,
-      html: snapshot.page.html,
-      target: input.target,
-      functionId: input.functionId,
+      url: snapshot.page.url, html: snapshot.page.html,
+      target: input.target, functionId: input.functionId,
     });
-    if (readiness.status === 'human_verification_required') {
+    if (readiness.status === 'human_verification_required')
       throw new Error('Captured browser page still requires human verification.');
-    }
+    const location = await this.createLocation(snapshot.page.url, input.functionId ?? input.target);
+    await writeBrowserFixture(location, snapshot.page, input, readiness);
+    return { id: location.id, domain: location.domain, url: snapshot.page.url,
+      title: snapshot.page.title, htmlLength: snapshot.page.html.length,
+      capturedAt: location.capturedAt, path: location.htmlPath, readiness };
+  }
 
-    const capturedAt = new Date().toISOString();
-    const domain = new URL(snapshot.page.url).hostname;
-    const id = `${Date.now()}-${sanitizePathSegment(input.functionId ?? input.target)}`;
-    const fixtureDir = join(this.workspaceRoot, 'fixtures', sanitizePathSegment(domain), id);
-    await mkdir(fixtureDir, { recursive: true });
-    const htmlPath = join(fixtureDir, 'page.html');
-    const metaPath = join(fixtureDir, 'meta.md');
-    const readinessPath = join(fixtureDir, 'readiness.md');
+  private async requireReadyChallenge(id: string): Promise<void> {
+    const job = await this.challengeDiscoveryService.get(id);
+    if (!job) throw new Error(`Challenge discovery job "${id}" was not found.`);
+    if (job.status !== 'ready') throw new Error(`Challenge discovery job "${id}" is not ready.`);
+  }
 
-    await writeFile(htmlPath, normalizeFixtureHtml(snapshot.page.html), 'utf-8');
-    await writeFile(metaPath, [
-      '# Verified Fixture',
-      '',
-      `- id: ${id}`,
-      `- url: ${snapshot.page.url}`,
-      `- title: ${snapshot.page.title}`,
-      `- domain: ${domain}`,
-      `- target: ${input.target}`,
-      `- htmlLength: ${snapshot.page.html.length}`,
-      `- capturedAt: ${capturedAt}`,
-      `- source: challenge-discovery ${input.challengeDiscoveryId}`,
-      '',
-    ].join('\n'), 'utf-8');
-    await writeFile(readinessPath, [
-      '# DOM Readiness',
-      '',
-      `- status: ${readiness.status}`,
-      `- target: ${readiness.target}`,
-      `- confidence: ${readiness.confidence}`,
-      `- recommendedAction: ${readiness.recommendedAction}`,
-      '',
-      '## Reasons',
-      '',
-      ...readiness.reasons.map((reason) => `- ${reason}`),
-      '',
-    ].join('\n'), 'utf-8');
-
-    return {
-      id,
-      domain,
-      url: snapshot.page.url,
-      title: snapshot.page.title,
-      htmlLength: snapshot.page.html.length,
-      capturedAt,
-      path: htmlPath,
-      readiness,
-    };
+  private async createLocation(url: string, suffix: string): Promise<FixtureLocation> {
+    const domain = new URL(url).hostname;
+    const id = `${Date.now()}-${sanitizePathSegment(suffix)}`;
+    const directory = join(this.workspaceRoot, 'fixtures', sanitizePathSegment(domain), id);
+    await mkdir(directory, { recursive: true });
+    return { id, domain, directory, htmlPath: join(directory, 'page.html'),
+      capturedAt: new Date().toISOString() };
   }
 
   async captureApprovedAdapterFixture(input: CaptureApprovedAdapterFixtureInput): Promise<FixtureSummary> {
-    const target: DomReadinessTarget = input.target === 'chapter-only' ? 'chapterImages' : 'metadata';
-    const readiness = this.readiness.check({
-      url: input.url,
-      html: input.html,
-      target,
-    });
-    if (readiness.status === 'human_verification_required') {
-      throw new Error('Accepted adapter page still requires human verification. Complete handoff before accepting it.');
-    }
-    if (readiness.status !== 'ready') {
-      throw new Error(`Accepted adapter page is not complete: ${readiness.reasons.join(' ')}`);
-    }
-
+    const target = input.target === 'chapter-only' ? 'chapterImages' : 'metadata';
+    const readiness = this.requireApprovedReadiness(input, target);
     const functionIds = getApprovalFunctionIds(input.adapter, input.target);
-    const document = cheerio.load(input.html);
-    const results: Record<string, unknown> = {};
-    for (const functionId of functionIds) {
-      results[functionId] = await runFixtureFunction(input.adapter, functionId, document, input.url);
-    }
+    const results = await runFixtureFunctions(input.adapter, functionIds, input.html, input.url);
     assertUsefulApprovalResult(input.target, results);
-    if (input.target === 'chapter-only') {
-      const extractionReadiness = this.readiness.check({
-        url: input.url,
-        html: input.html,
-        target,
-        extractionResult: results.extractChapterImageUrls,
-      });
-      if (extractionReadiness.status !== 'ready') {
-        throw new Error(`Accepted adapter extraction is incomplete: ${extractionReadiness.reasons.join(' ')}`);
-      }
-    }
-
-    const capturedAt = new Date().toISOString();
-    const domain = new URL(input.url).hostname;
-    const id = `${Date.now()}-${sanitizePathSegment(input.adapter.id)}-${sanitizePathSegment(target)}`;
-    const fixtureDir = join(this.workspaceRoot, 'fixtures', sanitizePathSegment(domain), id);
-    await mkdir(fixtureDir, { recursive: true });
-    const htmlPath = join(fixtureDir, 'page.html');
-    const expectedPath = join(fixtureDir, 'expected.json');
-    const metaPath = join(fixtureDir, 'meta.md');
+    this.requireExtractionReadiness(input, target, results);
+    const location = await this.createLocation(input.url, `${sanitizePathSegment(input.adapter.id)}-${target}`);
+    const expectedPath = join(location.directory, 'expected.json');
     const expectation: ApprovedFixtureExpectation = {
-      schemaVersion: 1,
-      adapterId: input.adapter.id,
-      sourceDiscoveryId: input.sourceDiscoveryId,
-      url: input.url,
-      functionIds,
-      results,
+      schemaVersion: 1, adapterId: input.adapter.id, sourceDiscoveryId: input.sourceDiscoveryId,
+      url: input.url, functionIds, results,
     };
+    await writeApprovedFixture(location, input, target, expectation);
+    return { id: location.id, domain: location.domain, url: input.url, title: input.title ?? '',
+      htmlLength: input.html.length, capturedAt: location.capturedAt, path: location.htmlPath,
+      expectedPath, adapterId: input.adapter.id, sourceDiscoveryId: input.sourceDiscoveryId,
+      functionIds, readiness };
+  }
 
-    await writeFile(htmlPath, normalizeFixtureHtml(input.html), 'utf-8');
-    await writeFile(expectedPath, `${JSON.stringify(expectation, null, 2)}\n`, 'utf-8');
-    await writeFile(metaPath, [
-      '# Approved Adapter Fixture',
-      '',
-      `- id: ${id}`,
-      `- url: ${input.url}`,
-      `- title: ${input.title ?? ''}`,
-      `- domain: ${domain}`,
-      `- target: ${target}`,
-      `- htmlLength: ${input.html.length}`,
-      `- capturedAt: ${capturedAt}`,
-      `- adapterId: ${input.adapter.id}`,
-      `- sourceDiscoveryId: ${input.sourceDiscoveryId}`,
-      `- functionIds: ${functionIds.join(',')}`,
-      '',
-    ].join('\n'), 'utf-8');
+  private requireApprovedReadiness(input: CaptureApprovedAdapterFixtureInput,
+    target: DomReadinessTarget) {
+    const readiness = this.readiness.check({ url: input.url, html: input.html, target });
+    if (readiness.status === 'human_verification_required') throw new Error(
+      'Accepted adapter page still requires human verification. Complete handoff before accepting it.');
+    if (readiness.status !== 'ready') throw new Error(
+      `Accepted adapter page is not complete: ${readiness.reasons.join(' ')}`);
+    return readiness;
+  }
 
-    return {
-      id,
-      domain,
-      url: input.url,
-      title: input.title ?? '',
-      htmlLength: input.html.length,
-      capturedAt,
-      path: htmlPath,
-      expectedPath,
-      adapterId: input.adapter.id,
-      sourceDiscoveryId: input.sourceDiscoveryId,
-      functionIds,
-      readiness,
-    };
+  private requireExtractionReadiness(input: CaptureApprovedAdapterFixtureInput,
+    target: DomReadinessTarget, results: Record<string, unknown>): void {
+    if (input.target !== 'chapter-only') return;
+    const readiness = this.readiness.check({ url: input.url, html: input.html,
+      target, extractionResult: results.extractChapterImageUrls });
+    if (readiness.status !== 'ready') throw new Error(
+      `Accepted adapter extraction is incomplete: ${readiness.reasons.join(' ')}`);
   }
 
   async verifyApprovedAdapterFixture(domain: string, id: string, adapter: IComicAdapter): Promise<{
@@ -219,23 +136,13 @@ export class FixtureCaptureService {
       throw new Error(`Fixture expects adapter "${expectation.adapterId}", got "${adapter.id}".`);
     }
     const detail = await this.readFixture(domain, id, true);
-    const document = cheerio.load(detail.html ?? '');
-    const actual: Record<string, unknown> = {};
-    for (const functionId of expectation.functionIds) {
-      actual[functionId] = await runFixtureFunction(adapter, functionId, document, expectation.url);
-    }
-    return {
-      fixture: {
-        ...detail.fixture,
-        expectedPath: join(fixtureDir, 'expected.json'),
-        adapterId: expectation.adapterId,
-        sourceDiscoveryId: expectation.sourceDiscoveryId,
-        functionIds: expectation.functionIds,
-      },
-      passed: stableJson(actual) === stableJson(expectation.results),
-      expected: expectation.results,
-      actual,
-    };
+    const actual = await runFixtureFunctions(adapter, expectation.functionIds,
+      detail.html ?? '', expectation.url);
+    const fixture = { ...detail.fixture, expectedPath: join(fixtureDir, 'expected.json'),
+      adapterId: expectation.adapterId, sourceDiscoveryId: expectation.sourceDiscoveryId,
+      functionIds: expectation.functionIds };
+    return { fixture, passed: stableJson(actual) === stableJson(expectation.results),
+      expected: expectation.results, actual };
   }
 
   async readFixture(domain: string, id: string, includeHtml = false): Promise<{ fixture: FixtureSummary; html?: string }> {
@@ -247,20 +154,52 @@ export class FixtureCaptureService {
     const url = meta.url ?? `https://${domain}/`;
     const target = parseDomReadinessTarget(meta.target);
     const readiness = this.readiness.check({ url, html, target });
-    return {
-      fixture: {
-        id,
-        domain,
-        url,
-        title: meta.title ?? '',
-        htmlLength: html.length,
-        capturedAt: meta.capturedAt ?? '',
-        path: htmlPath,
-        readiness,
-      },
-      ...(includeHtml ? { html } : {}),
-    };
+    const fixture = { id, domain, url, title: meta.title ?? '', htmlLength: html.length,
+      capturedAt: meta.capturedAt ?? '', path: htmlPath, readiness };
+    return { fixture, ...(includeHtml ? { html } : {}) };
   }
+}
+
+async function writeBrowserFixture(location: FixtureLocation,
+  page: { url: string; title: string; html: string }, input: CaptureFixtureInput,
+  readiness: ReturnType<DomReadinessChecker['check']>): Promise<void> {
+  const meta = ['# Verified Fixture', '', `- id: ${location.id}`, `- url: ${page.url}`,
+    `- title: ${page.title}`, `- domain: ${location.domain}`, `- target: ${input.target}`,
+    `- htmlLength: ${page.html.length}`, `- capturedAt: ${location.capturedAt}`,
+    `- source: challenge-discovery ${input.challengeDiscoveryId}`, ''].join('\n');
+  const readinessText = ['# DOM Readiness', '', `- status: ${readiness.status}`,
+    `- target: ${readiness.target}`, `- confidence: ${readiness.confidence}`,
+    `- recommendedAction: ${readiness.recommendedAction}`, '', '## Reasons', '',
+    ...readiness.reasons.map((reason) => `- ${reason}`), ''].join('\n');
+  await Promise.all([writeFile(location.htmlPath, normalizeFixtureHtml(page.html), 'utf-8'),
+    writeFile(join(location.directory, 'meta.md'), meta, 'utf-8'),
+    writeFile(join(location.directory, 'readiness.md'), readinessText, 'utf-8')]);
+}
+
+async function writeApprovedFixture(location: FixtureLocation,
+  input: CaptureApprovedAdapterFixtureInput, target: DomReadinessTarget,
+  expectation: ApprovedFixtureExpectation): Promise<void> {
+  const meta = ['# Approved Adapter Fixture', '', `- id: ${location.id}`, `- url: ${input.url}`,
+    `- title: ${input.title ?? ''}`, `- domain: ${location.domain}`, `- target: ${target}`,
+    `- htmlLength: ${input.html.length}`, `- capturedAt: ${location.capturedAt}`,
+    `- adapterId: ${input.adapter.id}`, `- sourceDiscoveryId: ${input.sourceDiscoveryId}`,
+    `- functionIds: ${expectation.functionIds.join(',')}`, ''].join('\n');
+  await Promise.all([writeFile(location.htmlPath, normalizeFixtureHtml(input.html), 'utf-8'),
+    writeFile(join(location.directory, 'expected.json'), `${JSON.stringify(expectation, null, 2)}\n`, 'utf-8'),
+    writeFile(join(location.directory, 'meta.md'), meta, 'utf-8')]);
+}
+
+function validateExpectedUrl(actual: string, expected?: string): void {
+  if (expected && !sameDocumentPath(actual, expected)) throw new Error(
+    `Verified browser page does not match the expected URL. Browser page: ${actual}`);
+}
+
+async function runFixtureFunctions(adapter: IComicAdapter, ids: string[], html: string,
+  url: string): Promise<Record<string, unknown>> {
+  const document = cheerio.load(html);
+  const results: Record<string, unknown> = {};
+  for (const id of ids) results[id] = await runFixtureFunction(adapter, id, document, url);
+  return results;
 }
 
 export async function runFixtureFunction(adapter: IComicAdapter, functionId: string, document: cheerio.CheerioAPI, url: string): Promise<unknown> {
