@@ -58,109 +58,62 @@ export function validateCapabilityDraft(
   source: string,
   options: { stage: SelectorDiscoveryCapabilityStage; target?: 'full' | 'chapter-only' }
 ): AdapterImplementationValidation {
-  const errors: string[] = [];
+  const { errors, syntax } = validateSourceBasics(source, 'Capability draft source is empty.');
   const warnings: string[] = [];
-  const trimmed = source.trim();
+  errors.push(...validateCapabilityStage(source, options.stage));
+  return { valid: errors.length === 0, errors, warnings, syntaxValid: syntax.valid };
+}
 
-  if (!trimmed) {
-    errors.push('Capability draft source is empty.');
-  }
-
+function validateSourceBasics(source: string, emptyMessage: string) {
+  const errors: string[] = [];
+  if (!source.trim()) errors.push(emptyMessage);
   const syntax = checkTypeScriptSyntax(source);
-  if (!syntax.valid) {
-    errors.push(`TypeScript syntax check failed: ${syntax.error}`);
-  }
+  if (!syntax.valid) errors.push(`TypeScript syntax check failed: ${syntax.error}`);
+  for (const forbidden of FORBIDDEN_PATTERNS)
+    if (forbidden.pattern.test(source)) errors.push(forbidden.message);
+  return { errors, syntax };
+}
 
-  for (const forbidden of FORBIDDEN_PATTERNS) {
-    if (forbidden.pattern.test(source)) {
-      errors.push(forbidden.message);
-    }
-  }
-
-  switch (options.stage) {
-    case 'common-verification':
-      errors.push(...validateCommonVerificationDraft(source));
-      break;
-    case 'metadata':
-      errors.push(...validateMetadataCapabilityDraft(source));
-      break;
-    case 'chapter-images':
-      errors.push(...validateChapterImagesCapabilityDraft(source));
-      break;
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-    syntaxValid: syntax.valid,
-  };
+function validateCapabilityStage(source: string, stage: SelectorDiscoveryCapabilityStage): string[] {
+  if (stage === 'common-verification') return validateCommonVerificationDraft(source);
+  if (stage === 'metadata') return validateMetadataCapabilityDraft(source);
+  return validateChapterImagesCapabilityDraft(source);
 }
 
 export function validateAdapterImplementationDraft(
   source: string,
   options: { target?: 'full' | 'chapter-only' } = {}
 ): AdapterImplementationValidation {
-  const errors: string[] = [];
+  const { errors, syntax } = validateSourceBasics(source, 'Adapter implementation source is empty.');
   const warnings: string[] = [];
-  const trimmed = source.trim();
-
-  if (!trimmed) {
-    errors.push('Adapter implementation source is empty.');
-  }
-
-  const syntax = checkTypeScriptSyntax(source);
-  if (!syntax.valid) {
-    errors.push(`TypeScript syntax check failed: ${syntax.error}`);
-  }
-
-  for (const forbidden of FORBIDDEN_PATTERNS) {
-    if (forbidden.pattern.test(source)) {
-      errors.push(forbidden.message);
-    }
-  }
-
-  if (!/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source)) {
-    errors.push('Implementation must export a class that extends AdapterBase.');
-  }
-
-  for (const snippet of REQUIRED_SNIPPETS) {
-    if (!source.includes(snippet)) {
-      errors.push(`Missing required adapter declaration: ${snippet}.`);
-    }
-  }
-
-  if (!/readonly\s+parseMode\s*[^=]*=\s*['"]playwright['"]/.test(source)) {
-    errors.push('parseMode must be "playwright".');
-  }
-
-  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*(?:true|false)[^}]*metadata\s*:\s*(?:true|false)[^}]*chapterImages\s*:\s*(?:true|false)/s.test(source)) {
-    errors.push('capabilities must be boolean flags for verification, metadata, and chapterImages.');
-  }
-  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*true/s.test(source)) {
-    errors.push('Every adapter implementation must declare verification: true because VerificationCapability gates DOM trust.');
-  }
-
+  errors.push(...validateAdapterDeclarations(source));
   errors.push(...validateCapabilityStructure(source, options.target));
-
   const requiredFunctions = options.target === 'chapter-only'
     ? REQUIRED_CHAPTER_ONLY_SNIPPETS
     : REQUIRED_FULL_SNIPPETS;
-  for (const functionName of requiredFunctions) {
-    if (!new RegExp(`\\b${functionName}\\b`).test(source)) {
-      errors.push(`Missing required extraction function: ${functionName}.`);
-    }
-  }
+  errors.push(...validateRequiredFunctions(source, requiredFunctions));
+  errors.push(...validateRequiredSignatures(source, requiredFunctions));
+  return { valid: errors.length === 0, errors, warnings, syntaxValid: syntax.valid };
+}
 
-  const signatureErrors = validateRequiredSignatures(source, requiredFunctions);
-  errors.push(...signatureErrors);
+function validateAdapterDeclarations(source: string): string[] {
+  const errors: string[] = [];
+  if (!/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source))
+    errors.push('Implementation must export a class that extends AdapterBase.');
+  for (const snippet of REQUIRED_SNIPPETS) if (!source.includes(snippet))
+    errors.push(`Missing required adapter declaration: ${snippet}.`);
+  if (!/readonly\s+parseMode\s*[^=]*=\s*['"]playwright['"]/.test(source))
+    errors.push('parseMode must be "playwright".');
+  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*(?:true|false)[^}]*metadata\s*:\s*(?:true|false)[^}]*chapterImages\s*:\s*(?:true|false)/s.test(source))
+    errors.push('capabilities must be boolean flags for verification, metadata, and chapterImages.');
+  if (!/capabilities\s*=\s*{[^}]*verification\s*:\s*true/s.test(source))
+    errors.push('Every adapter implementation must declare verification: true because VerificationCapability gates DOM trust.');
+  return errors;
+}
 
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-    syntaxValid: syntax.valid,
-  };
+function validateRequiredFunctions(source: string, names: string[]): string[] {
+  return names.filter((name) => !new RegExp(`\\b${name}\\b`).test(source))
+    .map((name) => `Missing required extraction function: ${name}.`);
 }
 
 function validateRequiredSignatures(source: string, functionNames: string[]): string[] {
@@ -180,71 +133,50 @@ function validateCapabilityStructure(source: string, target?: 'full' | 'chapter-
   const errors: string[] = [];
   const adapterClassMatch = /\bexport\s+class\s+\w+\s+extends\s+AdapterBase\s*{([\s\S]*?)(?:\n}\s*(?:class|$))/m.exec(`${source}\nclass __Sentinel`);
   const adapterClass = adapterClassMatch?.[1] ?? '';
-  if (adapterClass) {
-    for (const methodName of [
-      'extractTitle',
-      'extractAuthor',
-      'extractDescription',
-      'extractCoverUrl',
-      'extractTags',
-      'extractStatus',
-      'extractChapterList',
-      'extractChapterImageUrls',
-    ]) {
-      if (new RegExp(`\\b${methodName}\\s*\\(`).test(adapterClass)) {
-        errors.push(`Extraction method ${methodName} must be implemented in a capability subclass, not directly on the AdapterBase shell class.`);
-      }
-    }
-  }
-
-  if (!/\bclass\s+\w+\s+extends\s+CommonCapability\b/.test(source)) {
-    errors.push('Missing site-specific CommonCapability subclass.');
-  }
-  if (!/\bclass\s+\w+\s+extends\s+VerificationCapability\b/.test(source)) {
-    errors.push('Missing site-specific VerificationCapability subclass.');
-  }
-  if (!/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
-    errors.push('Missing site-specific ChapterImagesCapability subclass.');
-  }
-  if (target !== 'chapter-only' && !/\bclass\s+\w+\s+extends\s+MetadataCapability\b/.test(source)) {
-    errors.push('Missing site-specific MetadataCapability subclass.');
-  }
+  errors.push(...directExtractionMethodErrors(adapterClass));
+  const required = ['CommonCapability', 'VerificationCapability', 'ChapterImagesCapability'];
+  if (target !== 'chapter-only') required.push('MetadataCapability');
+  for (const capability of required)
+    if (!new RegExp(`\\bclass\\s+\\w+\\s+extends\\s+${capability}\\b`).test(source))
+      errors.push(`Missing site-specific ${capability} subclass.`);
   return errors;
 }
 
+function directExtractionMethodErrors(adapterClass: string): string[] {
+  const methods = ['extractTitle', 'extractAuthor', 'extractDescription', 'extractCoverUrl',
+    'extractTags', 'extractStatus', 'extractChapterList', 'extractChapterImageUrls'];
+  return methods.filter((name) => new RegExp(`\\b${name}\\s*\\(`).test(adapterClass))
+    .map((name) => `Extraction method ${name} must be implemented in a capability subclass, not directly on the AdapterBase shell class.`);
+}
+
 function validateCommonVerificationDraft(source: string): string[] {
-  const errors: string[] = [];
-  if (/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source) || /\bextends\s+AdapterBase\b/.test(source)) {
-    errors.push('Common/verification draft must not export or implement an AdapterBase shell.');
-  }
-  if (/\bconstructor\s*\(/.test(source) || /\breadonly\s+(?:id|name|domains|parseMode|capabilities|common|verification|metadata|chapterImages)\b/.test(source)) {
-    errors.push('Common/verification draft must not declare adapter identity, constructor, capability flags, or handler fields.');
-  }
-  if (!/\bclass\s+\w+\s+extends\s+CommonCapability\b/.test(source)) {
-    errors.push('Missing site-specific CommonCapability subclass.');
-  }
-  if (!/\bclass\s+\w+\s+extends\s+VerificationCapability\b/.test(source)) {
-    errors.push('Missing site-specific VerificationCapability subclass.');
-  }
-  if (!/\bmatchUrl\s*\(\s*url\s*:\s*string\s*\)\s*:\s*boolean/.test(source)) {
-    errors.push('CommonCapability must implement matchUrl(url: string): boolean.');
-  }
-  if (!/\bdetectVerificationRequired\s*\(\s*input\s*:\s*string\s*\)\s*:\s*boolean/.test(source)) {
-    errors.push('VerificationCapability must implement detectVerificationRequired(input: string): boolean.');
-  }
-  if (!/\bdescribeVerificationHandoff\s*\(\s*\)\s*:/.test(source)) {
-    errors.push('VerificationCapability must implement describeVerificationHandoff().');
-  }
+  const errors = commonVerificationStructureErrors(source);
   const verificationBody = extractMethodBody(source, 'detectVerificationRequired');
-  if (verificationBody && hasBareCloudflareRegexAlternative(verificationBody)) {
-    errors.push('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
-  } else if (verificationBody && /cloudflare/i.test(verificationBody) && !hasCloudflareChallengeSpecificSignal(verificationBody)) {
+  if (hasUnsafeCloudflareMatch(verificationBody)) {
     errors.push('detectVerificationRequired must not match the bare word "cloudflare"; normal pages can contain Cloudflare scripts. Match challenge-specific signals instead.');
   }
   if (/\bextract(?:Title|Author|Description|CoverUrl|Tags|Status|ChapterList|ChapterImageUrls)\s*\(/.test(source)) {
     errors.push('Common/verification draft must not implement metadata or chapter image extraction methods.');
   }
   return errors;
+}
+
+function commonVerificationStructureErrors(source: string): string[] {
+  const checks: Array<[boolean, string]> = [
+    [/\bextends\s+AdapterBase\b/.test(source), 'Common/verification draft must not export or implement an AdapterBase shell.'],
+    [/\bconstructor\s*\(|\breadonly\s+(?:id|name|domains|parseMode|capabilities|common|verification|metadata|chapterImages)\b/.test(source), 'Common/verification draft must not declare adapter identity, constructor, capability flags, or handler fields.'],
+    [!/\bclass\s+\w+\s+extends\s+CommonCapability\b/.test(source), 'Missing site-specific CommonCapability subclass.'],
+    [!/\bclass\s+\w+\s+extends\s+VerificationCapability\b/.test(source), 'Missing site-specific VerificationCapability subclass.'],
+    [!/\bmatchUrl\s*\(\s*url\s*:\s*string\s*\)\s*:\s*boolean/.test(source), 'CommonCapability must implement matchUrl(url: string): boolean.'],
+    [!/\bdetectVerificationRequired\s*\(\s*input\s*:\s*string\s*\)\s*:\s*boolean/.test(source), 'VerificationCapability must implement detectVerificationRequired(input: string): boolean.'],
+    [!/\bdescribeVerificationHandoff\s*\(\s*\)\s*:/.test(source), 'VerificationCapability must implement describeVerificationHandoff().'],
+  ];
+  return checks.filter(([invalid]) => invalid).map(([, message]) => message);
+}
+
+function hasUnsafeCloudflareMatch(body: string): boolean {
+  return Boolean(body && (hasBareCloudflareRegexAlternative(body)
+    || (/cloudflare/i.test(body) && !hasCloudflareChallengeSpecificSignal(body))));
 }
 
 function hasBareCloudflareRegexAlternative(value: string): boolean {
@@ -257,63 +189,48 @@ function hasCloudflareChallengeSpecificSignal(value: string): boolean {
 }
 
 function validateMetadataCapabilityDraft(source: string): string[] {
-  const errors: string[] = [];
-  if (!/\bclass\s+\w+\s+extends\s+MetadataCapability\b/.test(source)) {
-    errors.push('Metadata draft must contain a site-specific MetadataCapability subclass.');
-  }
-  if (/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source)) {
-    errors.push('Metadata draft must not export an AdapterBase shell.');
-  }
-  if (/\bclass\s+\w+\s+extends\s+(?:CommonCapability|VerificationCapability)\b/.test(source)) {
-    errors.push('Metadata draft must not implement common or verification capabilities.');
-  }
-  if (/\bconstructor\s*\(/.test(source) || /\breadonly\s+(?:id|name|domains|parseMode|common|verification)\b/.test(source)) {
-    errors.push('Metadata draft must not declare adapter identity, constructor, common, or verification fields.');
-  }
+  const errors = metadataStructureErrors(source);
   const required = [
-    'extractTitle',
-    'extractAuthor',
-    'extractDescription',
-    'extractCoverUrl',
-    'extractTags',
-    'extractStatus',
-    'extractChapterList',
+    'extractTitle', 'extractAuthor', 'extractDescription', 'extractCoverUrl',
+    'extractTags', 'extractStatus', 'extractChapterList',
   ];
-  for (const functionName of required) {
-    if (!new RegExp(`\\b${functionName}\\s*\\(`).test(source)) {
-      errors.push(`Missing metadata extraction function: ${functionName}.`);
-    }
-  }
+  for (const name of required) if (!new RegExp(`\\b${name}\\s*\\(`).test(source))
+    errors.push(`Missing metadata extraction function: ${name}.`);
   errors.push(...validateRequiredSignatures(source, required));
-  if (/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source)) {
-    errors.push('Metadata draft must not implement ChapterImagesCapability.');
-  }
-  if (/\bComicStatus\.\w+\b/.test(source)) {
-    errors.push('ComicStatus is a string union; return "ongoing", "completed", or "unknown" instead of ComicStatus enum members.');
-  }
-  if (/status\s*:\s*ComicStatus\./.test(source) || /status\s*:\s*['"](?:ongoing|completed|unknown)['"]/.test(source)) {
-    errors.push('ChapterInfo entries must not use ComicStatus for status; status is task state metadata, not comic publication status.');
-  }
-  const chapterListBody = extractMethodBody(source, 'extractChapterList');
-  if (chapterListBody && !hasObjectFieldOrShorthand(chapterListBody, 'id')) {
-    errors.push('extractChapterList must populate ChapterInfo.id for each chapter.');
-  }
-  if (chapterListBody && !hasObjectFieldOrShorthand(chapterListBody, 'url')) {
-    errors.push('extractChapterList must populate ChapterInfo.url with an absolute chapter URL.');
-  }
-  if (chapterListBody && (/\bsourceUrl\s*:/.test(chapterListBody) || /[{,]\s*sourceUrl\s*[,}]/.test(chapterListBody))) {
-    errors.push('ChapterInfo uses url, not sourceUrl.');
-  }
-  if (chapterListBody && /new\s+Date\s*\(\s*\)/.test(chapterListBody)) {
-    errors.push('extractChapterList must not use new Date() as a placeholder for chapter dates.');
-  }
-  if (chapterListBody && /\burl\s*:\s*(?:relativeUrl|rawHref|href)\b/.test(chapterListBody)) {
-    errors.push('ChapterInfo.url must be absolute; resolve relative hrefs with this.adapter.resolveUrl(sourceUrl, rawHref).');
-  }
-  if (chapterListBody && /\bid\s*:\s*String\s*\(\s*index\s*\+\s*1\s*\)/.test(chapterListBody)) {
-    errors.push('ChapterInfo.id must be derived from the chapter URL path segment, not list index.');
-  }
-  const unchangedTemplateSelectors = [
+  errors.push(...chapterListErrors(extractMethodBody(source, 'extractChapterList')));
+  if (usesUnchangedMetadataTemplate(source)) errors.push(
+    'Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
+  return errors;
+}
+
+function metadataStructureErrors(source: string): string[] {
+  const checks: Array<[boolean, string]> = [
+    [!/\bclass\s+\w+\s+extends\s+MetadataCapability\b/.test(source), 'Metadata draft must contain a site-specific MetadataCapability subclass.'],
+    [/\bexport\s+class\s+\w+\s+extends\s+AdapterBase\b/.test(source), 'Metadata draft must not export an AdapterBase shell.'],
+    [/\bclass\s+\w+\s+extends\s+(?:CommonCapability|VerificationCapability)\b/.test(source), 'Metadata draft must not implement common or verification capabilities.'],
+    [/\bconstructor\s*\(|\breadonly\s+(?:id|name|domains|parseMode|common|verification)\b/.test(source), 'Metadata draft must not declare adapter identity, constructor, common, or verification fields.'],
+    [/\bclass\s+\w+\s+extends\s+ChapterImagesCapability\b/.test(source), 'Metadata draft must not implement ChapterImagesCapability.'],
+    [/\bComicStatus\.\w+\b/.test(source), 'ComicStatus is a string union; return "ongoing", "completed", or "unknown" instead of ComicStatus enum members.'],
+    [/status\s*:\s*(?:ComicStatus\.|['"](?:ongoing|completed|unknown)['"])/.test(source), 'ChapterInfo entries must not use ComicStatus for status; status is task state metadata, not comic publication status.'],
+  ];
+  return checks.filter(([invalid]) => invalid).map(([, message]) => message);
+}
+
+function chapterListErrors(body: string): string[] {
+  if (!body) return [];
+  const checks: Array<[boolean, string]> = [
+    [!hasObjectFieldOrShorthand(body, 'id'), 'extractChapterList must populate ChapterInfo.id for each chapter.'],
+    [!hasObjectFieldOrShorthand(body, 'url'), 'extractChapterList must populate ChapterInfo.url with an absolute chapter URL.'],
+    [/\bsourceUrl\s*:|[{,]\s*sourceUrl\s*[,}]/.test(body), 'ChapterInfo uses url, not sourceUrl.'],
+    [/new\s+Date\s*\(\s*\)/.test(body), 'extractChapterList must not use new Date() as a placeholder for chapter dates.'],
+    [/\burl\s*:\s*(?:relativeUrl|rawHref|href)\b/.test(body), 'ChapterInfo.url must be absolute; resolve relative hrefs with this.adapter.resolveUrl(sourceUrl, rawHref).'],
+    [/\bid\s*:\s*String\s*\(\s*index\s*\+\s*1\s*\)/.test(body), 'ChapterInfo.id must be derived from the chapter URL path segment, not list index.'],
+  ];
+  return checks.filter(([invalid]) => invalid).map(([, message]) => message);
+}
+
+function usesUnchangedMetadataTemplate(source: string): boolean {
+  const unchanged = [
     'main h1',
     '.author a',
     '.description',
@@ -322,13 +239,10 @@ function validateMetadataCapabilityDraft(source: string): string[] {
     '.status',
     '.chapter-list a[href*="/read/"]',
   ].filter((selector) => source.includes(selector));
-  const hasSiteSpecificMetadataSignals = /meta\[(?:name|property)=["'](?:author|keywords|description|og:title|og:description|og:image)["']\]/i.test(source) ||
+  const siteSpecific = /meta\[(?:name|property)=["'](?:author|keywords|description|og:title|og:description|og:image)["']\]/i.test(source) ||
     /href\*=["'][^"']*\/chapter-/i.test(source) ||
     /href\^=["'][^"']*\/chapter-/i.test(source);
-  if (unchangedTemplateSelectors.length >= 3 && !hasSiteSpecificMetadataSignals) {
-    errors.push('Metadata draft still uses template selectors instead of site-specific selectors from task evidence.');
-  }
-  return errors;
+  return unchanged.length >= 3 && !siteSpecific;
 }
 
 function hasObjectFieldOrShorthand(source: string, field: string): boolean {

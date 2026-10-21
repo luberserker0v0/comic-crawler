@@ -124,13 +124,15 @@ export class ChallengeDiscoveryService {
       if (result.status === 'failed') await this.releaseBrowserLease(id);
       return result;
     } catch (error) {
-      await this.updateJob(id, {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      await this.releaseBrowserLease(id);
-      return this.getRequiredJob(id);
+      return this.failRebind(id, error);
     }
+  }
+
+  private async failRebind(id: string, error: unknown): Promise<ChallengeDiscoveryJob> {
+    await this.updateJob(id, { status: 'failed',
+      error: error instanceof Error ? error.message : String(error) });
+    await this.releaseBrowserLease(id);
+    return this.getRequiredJob(id);
   }
 
   async dispose(): Promise<void> {
@@ -158,9 +160,7 @@ export class ChallengeDiscoveryService {
 
   async promote(id: string): Promise<{ strategyId: string; domains: string[] }> {
     const job = await this.getRequiredJob(id);
-    if (!job.candidateSource) {
-      throw new Error('Challenge discovery job has no strategy candidate.');
-    }
+    if (!job.candidateSource) throw new Error('Challenge discovery job has no strategy candidate.');
     const sourceValidation = validateChallengeStrategySource(job.candidateSource);
     if (!sourceValidation.valid) {
       await this.updateJob(id, { validation: sourceValidation, status: 'failed', error: sourceValidation.errors.join(' ') });
@@ -168,16 +168,19 @@ export class ChallengeDiscoveryService {
     }
     const strategy = loadChallengeStrategyFromSource(job.candidateSource);
     const registry = getGlobalChallengeStrategyRegistry();
-    if (!registry.get(strategy.id)) {
-      registry.register(strategy);
-    }
-    const active = (await this.storage.read<Array<{ strategyId: string; source: string; promotedAt: string }>>(ACTIVE_STRATEGIES_KEY)) ?? [];
-    await this.storage.write(ACTIVE_STRATEGIES_KEY, [
-      ...active.filter((entry) => entry.strategyId !== strategy.id),
-      { strategyId: strategy.id, source: job.candidateSource, promotedAt: new Date().toISOString() },
-    ]);
+    if (!registry.get(strategy.id)) registry.register(strategy);
+    await this.persistActiveStrategy(strategy.id, job.candidateSource);
     await this.updateJob(id, { status: 'strategy_promoted', strategyId: strategy.id, validation: sourceValidation });
     return { strategyId: strategy.id, domains: strategy.domains };
+  }
+
+  private async persistActiveStrategy(strategyId: string, source: string): Promise<void> {
+    const active = (await this.storage.read<Array<{ strategyId: string; source: string;
+      promotedAt: string }>>(ACTIVE_STRATEGIES_KEY)) ?? [];
+    await this.storage.write(ACTIVE_STRATEGIES_KEY, [
+      ...active.filter((entry) => entry.strategyId !== strategyId),
+      { strategyId, source, promotedAt: new Date().toISOString() },
+    ]);
   }
 
   async loadActiveStrategies(): Promise<void> {
@@ -214,68 +217,57 @@ export class ChallengeDiscoveryService {
     page: { url: string; title: string; html: string };
   }> {
     const job = await this.requireActiveJob(id);
-    const sessionId = requireSessionId(job);
-    const renderService = this.requireBrowserRenderService();
-    let page = await renderService.snapshot(sessionId);
-    if (options.allowNavigate && !samePage(page.url, job.normalizedUrl)) {
-      await renderService.navigate(sessionId, job.normalizedUrl);
-      page = await renderService.snapshot(sessionId);
-    }
-    if (options.settle) {
-      const browser = await this.getBrowserConfig(sessionId);
-      page = await renderService.render(sessionId, page.url, {
-        timeoutMs: browser.timeout,
-        postLoadDelayMs: browser.postLoadDelayMs,
-      });
-    }
+    const page = await this.captureRemotePage(job, options);
     const title = cheerio.load(page.html)('title').first().text().trim();
-    if (looksLikeAccessBlocked(page.html)) {
-      const message = `Attached browser page is blocked: ${title || page.url}`;
-      await this.updateJob(id, {
-        status: 'access_blocked',
-        error: message,
-      });
-      throw new Error(message);
+    await this.rejectBlockedRemotePage(id, page, title);
+    await this.markRemotePageReady(id, page.url, title);
+    return { job: await this.getRequiredJob(id), page: { ...page, title } };
+  }
+
+  private async captureRemotePage(job: ChallengeDiscoveryJob,
+    options: { settle?: boolean; allowNavigate?: boolean }) {
+    const service = this.requireBrowserRenderService();
+    const sessionId = requireSessionId(job);
+    let page = await service.snapshot(sessionId);
+    if (options.allowNavigate && !samePage(page.url, job.normalizedUrl)) {
+      await service.navigate(sessionId, job.normalizedUrl);
+      page = await service.snapshot(sessionId);
     }
-    if (looksLikeAntiBotChallenge(page.html)) {
-      const message = `Attached browser page still shows a challenge: ${title || page.url}`;
-      await this.updateJob(id, {
-        status: 'challenge_required',
-        error: message,
-      });
-      throw new Error(message);
-    }
-    await this.updateJob(id, {
-      status: 'ready',
-      error: undefined,
-      diagnosisMarkdown: `# Challenge Diagnosis
+    if (!options.settle) return page;
+    const browser = await this.getBrowserConfig(sessionId);
+    return service.render(sessionId, page.url,
+      { timeoutMs: browser.timeout, postLoadDelayMs: browser.postLoadDelayMs });
+  }
+
+  private async rejectBlockedRemotePage(id: string, page: { html: string; url: string },
+    title: string): Promise<void> {
+    const blocked = looksLikeAccessBlocked(page.html);
+    const challenged = looksLikeAntiBotChallenge(page.html);
+    if (!blocked && !challenged) return;
+    const message = blocked ? `Attached browser page is blocked: ${title || page.url}`
+      : `Attached browser page still shows a challenge: ${title || page.url}`;
+    await this.updateJob(id, { status: blocked ? 'access_blocked' : 'challenge_required', error: message });
+    throw new Error(message);
+  }
+
+  private async markRemotePageReady(id: string, url: string, title: string): Promise<void> {
+    await this.updateJob(id, { status: 'ready', error: undefined, diagnosisMarkdown: `# Challenge Diagnosis
 
 ## Status
 
 - Status: ready
 - Source: Browser Worker session
-- Page URL: ${page.url}
+- Page URL: ${url}
 - Page Title: ${title}
-`,
-    });
-    return { job: await this.getRequiredJob(id), page: { ...page, title } };
+` });
   }
 
   async completeHumanVerification(id: string, _options: { settle?: boolean; allowNavigate?: boolean } = {}): Promise<ChallengeDiscoveryJob> {
     const job = await this.requireActiveJob(id);
     const page = await this.requireBrowserRenderService().snapshot(requireSessionId(job));
-    if (looksLikeAccessBlocked(page.html)) {
-      await this.updateJob(id, {
-        status: 'access_blocked',
-        error: 'Human verification reached an explicit access blocked page for this browser/session.',
-      });
-      return this.getRequiredJob(id);
-    }
-    if (looksLikeAntiBotChallenge(page.html)) {
-      await this.updateJob(id, {
-        status: 'challenge_required',
-        error: 'Human verification is not complete yet. The browser still shows a challenge page.',
-      });
+    const pending = humanVerificationFailure(page.html);
+    if (pending) {
+      await this.updateJob(id, pending);
       return this.getRequiredJob(id);
     }
     await this.updateJob(id, {
@@ -310,53 +302,32 @@ export class ChallengeDiscoveryService {
     const job = await this.ensureBrowserSession(await this.getRequiredJob(id));
     if (job.status === 'cancelled') return job;
     try {
-      await this.updateJob(id, { status: 'challenge_detected', error: undefined });
-      await this.renderReady(job.normalizedUrl, {}, job.browserSessionId);
-      const afterRender = await this.getRequiredJob(id);
-      if (afterRender.status === 'cancelled') return afterRender;
-      await this.updateJob(id, {
-        status: 'ready',
-        diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n',
-      });
-      return this.getRequiredJob(id);
+      return await this.runChallengeProbe(job);
     } catch (error) {
-      const current = await this.getRequiredJob(id);
-      if (current.status === 'cancelled') return current;
-      if (!isAntiBotChallengeError(error)) {
-        await this.updateJob(id, { status: 'failed', error: error instanceof Error ? error.message : String(error) });
-        return this.getRequiredJob(id);
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      await this.updateJob(id, {
-        status: isAccessBlockedError(error) ? 'access_blocked' : 'challenge_required',
-        diagnosisMarkdown: [
-          '# Challenge Diagnosis',
-          '',
-          '## Status',
-          '',
-          `- Status: ${isAccessBlockedError(error) ? 'access_blocked' : 'challenge_required'}`,
-          `- URL: ${job.normalizedUrl}`,
-          '- Next step: use the human verification handoff flow.',
-          '',
-        ].join('\n'),
-        evidenceMarkdown: [
-          '# Browser Render Evidence',
-          '',
-          '## Source URL',
-          '',
-          job.normalizedUrl,
-          '',
-          '## Render Result',
-          '',
-          `- Error: ${message}`,
-          '',
-        ].join('\n'),
-        candidateSource: undefined,
-        validation: undefined,
-        error: message,
-      });
-      return this.getRequiredJob(id);
+      return this.handleProbeFailure(job, error);
     }
+  }
+
+  private async runChallengeProbe(job: ChallengeDiscoveryJob): Promise<ChallengeDiscoveryJob> {
+    await this.updateJob(job.id, { status: 'challenge_detected', error: undefined });
+    await this.renderReady(job.normalizedUrl, {}, job.browserSessionId);
+    const current = await this.getRequiredJob(job.id);
+    if (current.status === 'cancelled') return current;
+    await this.updateJob(job.id, { status: 'ready',
+      diagnosisMarkdown: '# Challenge Diagnosis\n\n## Status\n\n- Status: ready\n' });
+    return this.getRequiredJob(job.id);
+  }
+
+  private async handleProbeFailure(job: ChallengeDiscoveryJob, error: unknown): Promise<ChallengeDiscoveryJob> {
+    const current = await this.getRequiredJob(job.id);
+    if (current.status === 'cancelled') return current;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAntiBotChallengeError(error)) {
+      await this.updateJob(job.id, { status: 'failed', error: message });
+      return this.getRequiredJob(job.id);
+    }
+    await this.updateJob(job.id, challengeFailurePatch(job.normalizedUrl, error, message));
+    return this.getRequiredJob(job.id);
   }
 
   private async renderReady(url: string, browserPatch: Partial<BrowserConfig> = {}, browserSessionId?: string): Promise<void> {
@@ -444,6 +415,25 @@ export class ChallengeDiscoveryService {
   private createJobId(): string {
     return `chal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
+}
+
+function humanVerificationFailure(html: string): Partial<ChallengeDiscoveryJob> | undefined {
+  if (looksLikeAccessBlocked(html)) return { status: 'access_blocked',
+    error: 'Human verification reached an explicit access blocked page for this browser/session.' };
+  if (looksLikeAntiBotChallenge(html)) return { status: 'challenge_required',
+    error: 'Human verification is not complete yet. The browser still shows a challenge page.' };
+  return undefined;
+}
+
+function challengeFailurePatch(url: string, error: unknown,
+  message: string): Partial<ChallengeDiscoveryJob> {
+  const status = isAccessBlockedError(error) ? 'access_blocked' : 'challenge_required';
+  return { status, diagnosisMarkdown: ['# Challenge Diagnosis', '', '## Status', '',
+    `- Status: ${status}`, `- URL: ${url}`,
+    '- Next step: use the human verification handoff flow.', ''].join('\n'),
+  evidenceMarkdown: ['# Browser Render Evidence', '', '## Source URL', '', url, '',
+    '## Render Result', '', `- Error: ${message}`, ''].join('\n'),
+  candidateSource: undefined, validation: undefined, error: message };
 }
 
 function isAntiBotChallengeError(error: unknown): boolean {
