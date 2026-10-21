@@ -158,9 +158,44 @@ ComicCrawler never launches Chromium in the backend process.
 See [Browser Client SDK](../browser-client-sdk/README.md) for the executor and
 state-store contracts.
 
-## 7. Verification gates
+## 7. Container image
 
-### 7.1 Development launcher
+Build the production image from the repository root:
+
+```bash
+docker compose build --pull app
+```
+
+The multi-stage Dockerfile performs these actions:
+
+1. Installs locked workspace dependencies with `npm ci`.
+2. Builds shared contracts, Browser Client SDK, backend, and WebUI.
+3. Removes development-only dependencies.
+4. Runs the service as the unprivileged `app` user.
+5. Exposes port `4100` and checks `/api/status` for container health.
+
+Set image metadata for release builds:
+
+```bash
+COMICCRAWLER_IMAGE_VERSION=0.2.0 \
+COMICCRAWLER_IMAGE_REVISION=<git-commit> \
+docker compose build app
+```
+
+PowerShell:
+
+```powershell
+$env:COMICCRAWLER_IMAGE_VERSION = "0.2.0"
+$env:COMICCRAWLER_IMAGE_REVISION = git rev-parse HEAD
+docker compose build app
+```
+
+See [Docker deployment](DOCKER.md) for container replacement and runtime
+verification.
+
+## 8. Verification gates
+
+### 8.1 Development launcher
 
 Use this gate for launcher or port changes:
 
@@ -168,7 +203,7 @@ Use this gate for launcher or port changes:
 npm run test:dev
 ```
 
-### 7.2 Test layers
+### 8.2 Test layers
 
 Run one test layer from the repository root:
 
@@ -195,7 +230,7 @@ npm run test:integration:frontend
 npm run test:e2e:chromium
 ```
 
-### 7.3 Daily gate
+### 8.3 Daily gate
 
 Use this gate for normal code changes:
 
@@ -211,7 +246,7 @@ It performs these checks:
 4. Runs core backend tests.
 5. Runs the REST-only flow.
 
-### 7.4 Full local gate
+### 8.4 Full local gate
 
 Use this gate for browser and WebUI flows:
 
@@ -225,7 +260,7 @@ It performs these checks:
 2. Starts the E2E Browser Client fixture.
 3. Runs the Playwright suite.
 
-### 7.5 Focused gates
+### 8.5 Focused gates
 
 ```bash
 npm run test:api
@@ -236,9 +271,9 @@ npm run -w browser-client-sdk test:coverage
 
 See the [test strategy](development/TDD.md) for test layers and merge gates.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-### 8.1 Frontend returns HTTP 502
+### 9.1 Frontend returns HTTP 502
 
 Check the terminal in this order:
 
@@ -249,7 +284,7 @@ Check the terminal in this order:
 
 The frontend proxy requires a reachable backend.
 
-### 8.2 A port is unavailable
+### 9.2 A port is unavailable
 
 Follow these steps:
 
@@ -264,7 +299,7 @@ $env:COMICCRAWLER_PORT = "4200"
 npm run dev
 ```
 
-### 8.3 Tests do not exit
+### 9.3 Tests do not exit
 
 Use Jest handle detection:
 
@@ -279,7 +314,7 @@ Check these resources:
 3. Pending HTTP requests.
 4. Mounted React effects.
 
-## 9. Development references
+## 10. Development references
 
 - [Contributing](../CONTRIBUTING.md)
 - [Architecture](ARCHITECTURE.md)
@@ -287,3 +322,4 @@ Check these resources:
 - [AO Selector Discovery](AO_SELECTOR_DISCOVERY.md)
 - [Reliability](RELIABILITY.md)
 - [API Reference](API.md)
+- [Docker deployment](DOCKER.md)

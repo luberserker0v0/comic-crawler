@@ -18,10 +18,10 @@ The command examples below assume the current directory is `repo/`.
 
 ### Docker
 
-Start the production container:
+Build the current source and start the production container:
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 Open:
@@ -33,14 +33,21 @@ Open:
 Use another host port when `4100` is unavailable:
 
 ```bash
-COMICCRAWLER_HOST_PORT=4200 docker compose up -d
+COMICCRAWLER_HOST_PORT=4200 docker compose up -d --build
 ```
 
 PowerShell:
 
 ```powershell
 $env:COMICCRAWLER_HOST_PORT = "4200"
-docker compose up -d
+docker compose up -d --build
+```
+
+After pulling new source, rebuild and replace only the application container:
+
+```bash
+docker compose up -d --build --force-recreate app
+docker compose ps
 ```
 
 Stop the container:
@@ -50,6 +57,8 @@ docker compose down
 ```
 
 Docker keeps runtime data and downloads in named volumes.
+See the [Docker deployment guide](docs/DOCKER.md) for image metadata, health
+checks, log rotation, updates, and data persistence.
 
 ### Local development
 
@@ -169,6 +178,8 @@ Inspect and test individual adapter functions.
 
 - [User Guide](docs/USER_GUIDE.md): installation, WebUI workflows, downloads,
   and verification handoff.
+- [Docker deployment](docs/DOCKER.md): build, update, verify, and operate the
+  production container.
 - [Browser Client SDK](browser-client-sdk/README.md): enroll, connect, and
   provide a user-side browser.
 - [Acceptance Consumer](tools/browser-client-acceptance/README.md): verify a

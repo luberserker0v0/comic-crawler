@@ -9,6 +9,8 @@ This directory contains user- and contributor-facing documentation for the
   Browser Client setup, verification, resume, and downloads.
 - `DEVELOPER_GUIDE.md` - local setup, runtime settings, troubleshooting, test
   gates, and Browser Client development.
+- `DOCKER.md` - production image build, container update, health, logs, ports,
+  volumes, and runtime verification.
 - `API.md` - concise reference for the currently implemented backend routes.
 - `API_SECURITY.md` - public/token modes, roles, permissions, secret setup, and
   Browser Client credential behavior.

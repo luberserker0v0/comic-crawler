@@ -4,10 +4,10 @@
 
 ### Docker
 
-Start the production container:
+Build the checked-out source and start the production container:
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 Open these addresses:
@@ -19,7 +19,7 @@ Open these addresses:
 Use another host port when `4100` is unavailable:
 
 ```bash
-COMICCRAWLER_HOST_PORT=4200 docker compose up -d
+COMICCRAWLER_HOST_PORT=4200 docker compose up -d --build
 ```
 
 Docker stores data in two named volumes:
@@ -35,6 +35,16 @@ Stop the container without deleting volumes:
 ```bash
 docker compose down
 ```
+
+After pulling an update, rebuild and replace the application container:
+
+```bash
+docker compose up -d --build --force-recreate app
+```
+
+The named volumes remain attached during replacement. See the
+[Docker deployment guide](DOCKER.md) for health checks, logs, image labels,
+port overrides, and update verification.
 
 ### Source checkout
 

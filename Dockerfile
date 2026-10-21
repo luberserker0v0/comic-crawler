@@ -23,6 +23,16 @@ RUN npm run build:shared && npm run build:browser-client-sdk && npm run build:ba
 RUN npm prune --omit=dev
 
 FROM base AS runner
+ARG COMICCRAWLER_VERSION=0.2.0
+ARG COMICCRAWLER_REVISION=unknown
+ARG COMICCRAWLER_SOURCE=https://github.com/luberserker0v0/ComicCrawler
+
+LABEL org.opencontainers.image.title="ComicCrawler" \
+      org.opencontainers.image.description="Comic crawler REST API, WebUI, and browser-client coordination service" \
+      org.opencontainers.image.version="${COMICCRAWLER_VERSION}" \
+      org.opencontainers.image.revision="${COMICCRAWLER_REVISION}" \
+      org.opencontainers.image.source="${COMICCRAWLER_SOURCE}"
+
 ENV NODE_ENV=production
 ENV COMICCRAWLER_HOST=0.0.0.0
 ENV COMICCRAWLER_PORT=4100
@@ -49,5 +59,10 @@ USER app
 WORKDIR /app
 
 EXPOSE 4100
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:4100/api/status').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+
+STOPSIGNAL SIGTERM
 
 CMD ["node", "backend/dist/main.js"]
