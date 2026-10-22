@@ -36,44 +36,48 @@ export function createChapterImageIdentities(input: {
 }): Pick<ChapterImagesResponse, 'chapter' | 'images'> {
   const strategy: ChapterImageIdentityStrategyContract = input.adapter.chapterImageIdentity
     ?? new NormalizedUrlChapterImageIdentityStrategy();
-  const chapterSource = strategy.identifyChapter({
-    chapterUrl: input.chapterUrl,
-    document: input.document,
-  });
-  const canonicalUrl = chapterSource.canonicalUrl;
-  assertAbsoluteUrl(canonicalUrl, `Adapter "${input.adapter.id}" returned an invalid canonical chapter URL.`);
-  if (!chapterSource.sourceKey.trim()) {
-    throw new Error(`Adapter "${input.adapter.id}" returned an empty chapter source key.`);
-  }
-  const chapterId = opaqueId('chapter', input.adapter.id, chapterSource.sourceKey);
-  const chapter: ChapterIdentityDescriptor = {
-    id: chapterId,
-    canonicalUrl,
+  const chapter = createChapterIdentity(input, strategy);
+  const duplicateOccurrences = new Map<string, number>();
+  const images = input.imageUrls.map((url, index) => createPageIdentity(
+    input, strategy, chapter, duplicateOccurrences, url, index
+  ));
+  return { chapter, images };
+}
+
+function createChapterIdentity(
+  input: { adapter: IComicAdapter; chapterUrl: string; document?: unknown },
+  strategy: ChapterImageIdentityStrategyContract
+): ChapterIdentityDescriptor {
+  const source = strategy.identifyChapter({ chapterUrl: input.chapterUrl, document: input.document });
+  assertAbsoluteUrl(source.canonicalUrl, `Adapter "${input.adapter.id}" returned an invalid canonical chapter URL.`);
+  if (!source.sourceKey.trim()) throw new Error(`Adapter "${input.adapter.id}" returned an empty chapter source key.`);
+  return {
+    id: opaqueId('chapter', input.adapter.id, source.sourceKey),
+    canonicalUrl: source.canonicalUrl,
     stability: 'deterministic',
     identitySource: input.adapter.chapterImageIdentity ? 'adapter' : 'normalized-url',
   };
-  const duplicateOccurrences = new Map<string, number>();
-  const images: ChapterImageDescriptor[] = input.imageUrls.map((url, orderIndex) => {
-    const source = strategy.identifyPage({ chapterUrl: canonicalUrl, imageUrl: url, document: input.document });
-    if (!source.sourceKey.trim()) {
-      throw new Error(`Adapter "${input.adapter.id}" returned an empty chapter image source key.`);
-    }
-    if (source.sourceFingerprint && !/^(?:sha256|etag|opaque):.+/i.test(source.sourceFingerprint)) {
-      throw new Error(
-        `Adapter "${input.adapter.id}" returned a source fingerprint without a supported semantic prefix.`
-      );
-    }
-    const occurrence = duplicateOccurrences.get(source.sourceKey) ?? 0;
-    duplicateOccurrences.set(source.sourceKey, occurrence + 1);
-    return {
-      id: opaqueId('page', chapterId, source.sourceKey, String(occurrence)),
-      orderIndex,
-      url,
-      ...(source.sourceFingerprint ? { sourceFingerprint: source.sourceFingerprint } : {}),
-    };
-  });
+}
 
-  return { chapter, images };
+function createPageIdentity(
+  input: { adapter: IComicAdapter; document?: unknown }, strategy: ChapterImageIdentityStrategyContract,
+  chapter: ChapterIdentityDescriptor, occurrences: Map<string, number>, url: string, orderIndex: number
+): ChapterImageDescriptor {
+  const source = strategy.identifyPage({ chapterUrl: chapter.canonicalUrl, imageUrl: url, document: input.document });
+  validatePageSource(input.adapter.id, source.sourceKey, source.sourceFingerprint);
+  const occurrence = occurrences.get(source.sourceKey) ?? 0;
+  occurrences.set(source.sourceKey, occurrence + 1);
+  return {
+    id: opaqueId('page', chapter.id, source.sourceKey, String(occurrence)), orderIndex, url,
+    ...(source.sourceFingerprint ? { sourceFingerprint: source.sourceFingerprint } : {}),
+  };
+}
+
+function validatePageSource(adapterId: string, sourceKey: string, fingerprint?: string): void {
+  if (!sourceKey.trim()) throw new Error(`Adapter "${adapterId}" returned an empty chapter image source key.`);
+  if (fingerprint && !/^(?:sha256|etag|opaque):.+/i.test(fingerprint)) {
+    throw new Error(`Adapter "${adapterId}" returned a source fingerprint without a supported semantic prefix.`);
+  }
 }
 
 function opaqueId(prefix: 'chapter' | 'page', ...parts: string[]): string {

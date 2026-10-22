@@ -54,6 +54,9 @@ Before developer acceptance, ComicCrawler checks:
 
 Acceptance stores the page fixture and expected extraction result. Future tests
 rerun the adapter against that fixture and compare the complete result.
+The accepted TypeScript is stored as an immutable Adapter Package and activated
+through the local Adapter Catalog. Promotion never overwrites an existing
+package version.
 
 ## AO lifecycle
 

@@ -23,6 +23,15 @@ const SELECTOR_INDEX_KEY = 'selector-discovery-index';
 const CHALLENGE_JOB_PREFIX = 'challenge-discovery-job-';
 const CHALLENGE_INDEX_KEY = 'challenge-discovery-index';
 
+interface CleanupState {
+  result: MaintenanceScopeResult;
+  cutoff: number;
+  referenced: Set<string>;
+  processed: number;
+  batchLimit: number;
+  dryRun: boolean;
+}
+
 export async function cleanupDiscoveryJobs(
   deps: DiscoveryCleanupDeps,
   policy: MaintenanceConfig,
@@ -31,49 +40,49 @@ export async function cleanupDiscoveryJobs(
   recentlyDeletedTaskIds: string[]
 ): Promise<MaintenanceScopeResult> {
   const result: MaintenanceScopeResult = { scanned: 0, deleted: [], skipped: [], errors: [] };
-  const cutoff = Date.now() - policy.discoveryJobsRetainDays * 24 * 60 * 60 * 1000;
-  const referenced = new Set<string>();
-  for (const task of deps.taskManager.getAllTasks()) {
-    if (recentlyDeletedTaskIds.includes(task.id)) continue;
-    const challengeId = deps.taskManager.getTaskResult(task.id)?.challengeDiscoveryId;
-    if (challengeId) referenced.add(challengeId);
-  }
-
   const candidates = await collectDiscoveryCandidates(deps, dryRun);
   result.scanned = candidates.length;
-  let processed = 0;
-  for (const candidate of candidates) {
-    if (processed >= batchLimit) {
-      result.skipped.push(`${candidate.id}: batch limit reached`);
-      continue;
-    }
-    if (referenced.has(candidate.id)) {
-      result.skipped.push(`${candidate.id}: referenced by active task`);
-      continue;
-    }
-    const updatedAt = await resolveCandidateTime(deps, candidate);
-    if (!Number.isFinite(updatedAt)) {
-      result.skipped.push(`${candidate.id}: unknown age, kept for manual review`);
-      continue;
-    }
-    if (updatedAt > cutoff) {
-      result.skipped.push(`${candidate.id}: within retention`);
-      continue;
-    }
-    processed += 1;
-    if (dryRun) {
-      result.deleted.push(candidate.id);
-      continue;
-    }
-    try {
-      const deleted = await deleteDiscoveryCandidate(deps, candidate);
-      if (deleted) result.deleted.push(candidate.id);
-      else result.skipped.push(`${candidate.id}: delete refused`);
-    } catch (error) {
-      result.errors.push({ id: candidate.id, error: error instanceof Error ? error.message : String(error) });
-    }
-  }
+  const state: CleanupState = { result, batchLimit, dryRun, processed: 0,
+    cutoff: Date.now() - policy.discoveryJobsRetainDays * 24 * 60 * 60 * 1000,
+    referenced: referencedChallengeIds(deps, recentlyDeletedTaskIds) };
+  for (const candidate of candidates) await cleanCandidate(deps, candidate, state);
   return result;
+}
+
+function referencedChallengeIds(deps: DiscoveryCleanupDeps, deleted: string[]): Set<string> {
+  const referenced = new Set<string>();
+  for (const task of deps.taskManager.getAllTasks()) {
+    if (deleted.includes(task.id)) continue;
+    const id = deps.taskManager.getTaskResult(task.id)?.challengeDiscoveryId;
+    if (id) referenced.add(id);
+  }
+  return referenced;
+}
+
+async function cleanCandidate(deps: DiscoveryCleanupDeps, candidate: DiscoveryCandidate,
+  state: CleanupState): Promise<void> {
+  const skipReason = await candidateSkipReason(deps, candidate, state);
+  if (skipReason) return void state.result.skipped.push(`${candidate.id}: ${skipReason}`);
+  state.processed += 1;
+  if (state.dryRun) return void state.result.deleted.push(candidate.id);
+  try {
+    const deleted = await deleteDiscoveryCandidate(deps, candidate);
+    if (deleted) state.result.deleted.push(candidate.id);
+    else state.result.skipped.push(`${candidate.id}: delete refused`);
+  } catch (error) {
+    state.result.errors.push({ id: candidate.id,
+      error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function candidateSkipReason(deps: DiscoveryCleanupDeps, candidate: DiscoveryCandidate,
+  state: CleanupState): Promise<string | undefined> {
+  if (state.processed >= state.batchLimit) return 'batch limit reached';
+  if (state.referenced.has(candidate.id)) return 'referenced by active task';
+  const updatedAt = await resolveCandidateTime(deps, candidate);
+  if (!Number.isFinite(updatedAt)) return 'unknown age, kept for manual review';
+  if (updatedAt > state.cutoff) return 'within retention';
+  return undefined;
 }
 
 export async function resolveCandidateTime(deps: DiscoveryCleanupDeps, candidate: DiscoveryCandidate): Promise<number> {
@@ -96,53 +105,46 @@ export async function resolveCandidateTime(deps: DiscoveryCleanupDeps, candidate
 export async function collectDiscoveryCandidates(deps: DiscoveryCleanupDeps, dryRun: boolean): Promise<DiscoveryCandidate[]> {
   const out: DiscoveryCandidate[] = [];
   const seen = new Set<string>();
-  if (deps.selectorDiscoveryService) {
-    try {
-      for (const job of await deps.selectorDiscoveryService.list()) {
-        seen.add(`selector:${job.id}`);
-        out.push({ kind: 'selector', id: job.id, updatedAt: job.updatedAt });
-      }
-    } catch {
-      // Index unreadable; fall back to storage listing below.
-    }
-    await pruneStaleIndexEntries(deps, SELECTOR_INDEX_KEY, seen, 'selector:', dryRun);
-  }
-  if (deps.challengeDiscoveryService) {
-    try {
-      for (const job of await deps.challengeDiscoveryService.list()) {
-        seen.add(`challenge:${job.id}`);
-        out.push({ kind: 'challenge', id: job.id, updatedAt: job.updatedAt });
-      }
-    } catch {
-      // Fall through to storage listing.
-    }
-    await pruneStaleIndexEntries(deps, CHALLENGE_INDEX_KEY, seen, 'challenge:', dryRun);
-  }
-  // Orphan files: keys on disk that fell out of the capped index (slice(0,200)).
+  await collectIndexedCandidates(deps, 'selector', seen, out, dryRun);
+  await collectIndexedCandidates(deps, 'challenge', seen, out, dryRun);
+  await collectOrphanCandidates(deps, seen, out);
+  return out;
+}
+
+async function collectIndexedCandidates(deps: DiscoveryCleanupDeps, kind: DiscoveryCandidate['kind'],
+  seen: Set<string>, out: DiscoveryCandidate[], dryRun: boolean): Promise<void> {
+  const service = kind === 'selector' ? deps.selectorDiscoveryService : deps.challengeDiscoveryService;
+  if (!service) return;
   try {
-    const keys = await deps.storage.list();
-    for (const key of keys) {
-      if (key.startsWith(SELECTOR_JOB_PREFIX)) {
-        const id = key.slice(SELECTOR_JOB_PREFIX.length);
-        if (!seen.has(`selector:${id}`)) {
-          const job = await deps.selectorDiscoveryService?.get(id).catch(() => null);
-          out.push({ kind: 'selector', id, updatedAt: job?.updatedAt });
-        }
-      } else if (key.startsWith(CHALLENGE_JOB_PREFIX)) {
-        const id = key.slice(CHALLENGE_JOB_PREFIX.length);
-        if (!seen.has(`challenge:${id}`)) {
-          const job = await deps.challengeDiscoveryService?.get(id).catch(() => null);
-          out.push({ kind: 'challenge', id, updatedAt: job?.updatedAt });
-        }
-      }
+    for (const job of await service.list()) {
+      seen.add(`${kind}:${job.id}`);
+      out.push({ kind, id: job.id, updatedAt: job.updatedAt });
     }
-    // Repair truncated indexes opportunistically (best effort).
+  } catch { /* Fall back to storage listing. */ }
+  const indexKey = kind === 'selector' ? SELECTOR_INDEX_KEY : CHALLENGE_INDEX_KEY;
+  await pruneStaleIndexEntries(deps, indexKey, seen, `${kind}:`, dryRun);
+}
+
+async function collectOrphanCandidates(deps: DiscoveryCleanupDeps, seen: Set<string>,
+  out: DiscoveryCandidate[]): Promise<void> {
+  try {
+    for (const key of await deps.storage.list()) await appendOrphanCandidate(deps, key, seen, out);
     await repairIndex(deps, SELECTOR_INDEX_KEY, SELECTOR_JOB_PREFIX);
     await repairIndex(deps, CHALLENGE_INDEX_KEY, CHALLENGE_JOB_PREFIX);
-  } catch {
-    // storage.list failure should not fail the whole cleanup.
-  }
-  return out;
+  } catch { /* storage.list failure should not fail cleanup. */ }
+}
+
+async function appendOrphanCandidate(deps: DiscoveryCleanupDeps, key: string,
+  seen: Set<string>, out: DiscoveryCandidate[]): Promise<void> {
+  const kind = key.startsWith(SELECTOR_JOB_PREFIX) ? 'selector'
+    : key.startsWith(CHALLENGE_JOB_PREFIX) ? 'challenge' : undefined;
+  if (!kind) return;
+  const prefix = kind === 'selector' ? SELECTOR_JOB_PREFIX : CHALLENGE_JOB_PREFIX;
+  const id = key.slice(prefix.length);
+  if (seen.has(`${kind}:${id}`)) return;
+  const service = kind === 'selector' ? deps.selectorDiscoveryService : deps.challengeDiscoveryService;
+  const job = await service?.get(id).catch(() => null);
+  out.push({ kind, id, updatedAt: job?.updatedAt });
 }
 
 export async function repairIndex(deps: DiscoveryCleanupDeps, indexKey: string, prefix: string): Promise<void> {
@@ -172,19 +174,21 @@ export async function pruneStaleIndexEntries(
   try {
     const ids = (await deps.storage.read<string[]>(indexKey)) ?? [];
     const stale = ids.filter((id) => !seen.has(`${prefix}${id}`));
-    if (stale.length === 0) return;
-    if (dryRun) return;
-    const verified = new Set<string>();
+    if (!stale.length || dryRun) return;
     const jobPrefix = prefix === 'selector:' ? SELECTOR_JOB_PREFIX : CHALLENGE_JOB_PREFIX;
-    for (const id of stale) {
-      if (await deps.storage.exists(`${jobPrefix}${id}`)) verified.add(id);
-    }
+    const verified = await existingJobIds(deps, stale, jobPrefix);
     const removable = stale.filter((id) => !verified.has(id));
-    if (removable.length === 0) return;
+    if (!removable.length) return;
     await deps.storage.write(indexKey, ids.filter((id) => !removable.includes(id)));
   } catch {
     // best effort only
   }
+}
+
+async function existingJobIds(deps: DiscoveryCleanupDeps, ids: string[], prefix: string): Promise<Set<string>> {
+  const existing = new Set<string>();
+  for (const id of ids) if (await deps.storage.exists(`${prefix}${id}`)) existing.add(id);
+  return existing;
 }
 
 export async function deleteDiscoveryCandidate(deps: DiscoveryCleanupDeps, candidate: DiscoveryCandidate): Promise<boolean> {
@@ -196,20 +200,20 @@ export async function deleteDiscoveryCandidate(deps: DiscoveryCleanupDeps, candi
     const ok = await deps.challengeDiscoveryService.deleteJob(candidate.id);
     if (ok) return true;
   }
-  // Fallback: direct storage delete for orphan keys with no service.
+  await deleteOrphanCandidate(deps, candidate);
+  return true;
+}
+
+async function deleteOrphanCandidate(deps: DiscoveryCleanupDeps,
+  candidate: DiscoveryCandidate): Promise<void> {
   const prefix = candidate.kind === 'selector' ? SELECTOR_JOB_PREFIX : CHALLENGE_JOB_PREFIX;
   const indexKey = candidate.kind === 'selector' ? SELECTOR_INDEX_KEY : CHALLENGE_INDEX_KEY;
   await deps.storage.delete(`${prefix}${candidate.id}`);
-  if (candidate.kind === 'selector') {
-    await deps.storage.delete(`selector-discovery-implementation-${candidate.id}`);
-  }
+  if (candidate.kind === 'selector') await deps.storage.delete(`selector-discovery-implementation-${candidate.id}`);
   try {
     const ids = (await deps.storage.read<string[]>(indexKey)) ?? [];
-    if (ids.includes(candidate.id)) {
-      await deps.storage.write(indexKey, ids.filter((id) => id !== candidate.id));
-    }
+    if (ids.includes(candidate.id)) await deps.storage.write(indexKey, ids.filter((id) => id !== candidate.id));
   } catch {
     // index pruning is best effort; the next run retries it
   }
-  return true;
 }

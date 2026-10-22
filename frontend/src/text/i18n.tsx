@@ -59,20 +59,23 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateLanguage = useConfigStore((state) => state.updateLanguage);
   const configLocale = readConfigLocale(config?.i18n?.language);
   const locale = configLocale ?? normalizeLocale(storedLocale);
+  useConfigLocale(config, fetchConfig, configLocale, storedLocale, setStoredLocale);
+  const value = useLocaleValue(locale, setStoredLocale, updateLanguage);
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+};
 
+function useConfigLocale(
+  config: ReturnType<typeof useConfigStore.getState>['config'], fetchConfig: () => Promise<void>,
+  configLocale: LocaleCode | null, storedLocale: LocaleCode, setStoredLocale: (locale: LocaleCode) => void
+) {
+  React.useEffect(() => { if (!config) void fetchConfig(); }, [config, fetchConfig]);
   React.useEffect(() => {
-    if (!config) {
-      void fetchConfig();
-    }
-  }, [config, fetchConfig]);
-
-  React.useEffect(() => {
-    if (configLocale && configLocale !== storedLocale) {
-      setStoredLocale(configLocale);
-    }
+    if (configLocale && configLocale !== storedLocale) setStoredLocale(configLocale);
   }, [configLocale, storedLocale, setStoredLocale]);
+}
 
-  const value = useMemo<I18nContextValue>(() => ({
+function useLocaleValue(locale: LocaleCode, setStoredLocale: (locale: LocaleCode) => void, updateLanguage: (locale: LocaleCode) => Promise<void>) {
+  return useMemo<I18nContextValue>(() => ({
     locale,
     setLocale: (nextLocale) => {
       const normalized = normalizeLocale(nextLocale);
@@ -81,9 +84,7 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
     },
     text: localeTexts[locale],
   }), [locale, setStoredLocale, updateLanguage]);
-
-  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
-};
+}
 
 export function useI18n(): I18nContextValue {
   return useContext(I18nContext);

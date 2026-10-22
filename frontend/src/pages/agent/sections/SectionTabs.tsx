@@ -8,42 +8,16 @@ export function SectionTabs(props: {
 }) {
   const { text } = useI18n();
   const { activeSection, setActiveSection } = props;
+  const tabs: Array<[AgentSection, string]> = [['site-adapters', text.agent.siteAdaptersTab],
+    ['build-jobs', text.agent.buildJobsTab], ['deleted-adapters', text.agent.deletedAdaptersTab]];
+  return <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 shadow">
+    {tabs.map(([section, label]) => <SectionTab key={section} section={section} label={label}
+      active={activeSection === section} setActiveSection={setActiveSection} />)}
+  </div>;
+}
 
-  return (
-    <div className="flex flex-wrap gap-2 rounded-2xl bg-white p-2 shadow">
-      <button
-        type="button"
-        onClick={() => setActiveSection('site-adapters')}
-        className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-          activeSection === 'site-adapters'
-            ? 'bg-slate-900 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        {text.agent.siteAdaptersTab}
-      </button>
-      <button
-        type="button"
-        onClick={() => setActiveSection('build-jobs')}
-        className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-          activeSection === 'build-jobs'
-            ? 'bg-slate-900 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        {text.agent.buildJobsTab}
-      </button>
-      <button
-        type="button"
-        onClick={() => setActiveSection('deleted-adapters')}
-        className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
-          activeSection === 'deleted-adapters'
-            ? 'bg-slate-900 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        {text.agent.deletedAdaptersTab}
-      </button>
-    </div>
-  );
+function SectionTab(props: { section: AgentSection; label: string; active: boolean; setActiveSection(section: AgentSection): void }) {
+  const color = props.active ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100';
+  return <button type="button" onClick={() => props.setActiveSection(props.section)}
+    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${color}`}>{props.label}</button>;
 }

@@ -37,6 +37,19 @@ reviewing source code, comparing drafts, inspecting verified DOM, or performing
 human verification, prefer the WebUI unless you are building a dedicated API
 client.
 
+## Signed adapter registry
+
+The Server can pull adapter packages from administrator-trusted registries:
+
+- `GET /api/adapter-registry/packages` verifies and lists remote packages.
+- `GET /api/adapter-registry/updates?adapterId={id}` lists missing newest versions.
+- `POST /api/adapter-registry/install` installs one verified version.
+- `POST /api/adapter-registry/update` installs available verified updates.
+
+Install and update default to `activate: false`. The signed index and package,
+local package validation, and Catalog immutability are all checked before a
+write. See [Official Adapter Registry](ADAPTER_REGISTRY.md).
+
 ## Public crawl flow
 
 ### 1. Resolve adapter capability
@@ -520,8 +533,12 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/api/adapters/:id/implementation` | Read full Adapter Lab implementation source/manifest. |
 | `POST` | `/api/adapters/:id/functions/:functionId/test` | Run an Adapter Lab function test against the supplied URL. |
 | `POST` | `/api/adapters/:id/drafts` | Create a user-owned editable draft copy. |
-| `POST` | `/api/adapters/:id/restore` | Restore a deleted adapter when a runtime backup or restored project source is available. |
-| `DELETE` | `/api/adapters/:id` | Delete a registered adapter. Generated runtime records are backed up in the deleted marker; project TypeScript adapter source directories under `backend/src/adapter/sites/` are deleted as a code change. |
+| `POST` | `/api/adapters/:id/restore` | Restore a catalog adapter from its last approved version, or a project adapter after its source is restored. |
+| `POST` | `/api/adapters/:id/rollback` | Activate a previous or explicitly named approved catalog version. |
+| `GET` | `/api/adapters/:id/versions` | List approved catalog versions and the active pointer. |
+| `GET` | `/api/adapters/:id/versions/:version/package` | Export the exact immutable package document. |
+| `POST` | `/api/adapter-packages/import` | Validate and import a package; inactive unless `activate` is true. |
+| `DELETE` | `/api/adapters/:id` | Deactivate a catalog adapter without deleting approved versions; project TypeScript adapter source directories under `backend/src/adapter/sites/` are deleted as a code change. |
 | `GET` | `/api/adapter-drafts` | List user-owned adapter drafts. |
 | `GET` | `/api/adapter-drafts/:id` | Read a saved adapter draft. |
 | `PUT` | `/api/adapter-drafts/:id/content` | Save draft content without executing it. |

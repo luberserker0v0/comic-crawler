@@ -49,27 +49,9 @@ export class AdapterDraftService {
   async create(baseAdapterId: string): Promise<AdapterDraftDetailResponse> {
     const adapter = this.adapterRegistry.get(baseAdapterId);
     if (!adapter) throw new Error(`Adapter "${baseAdapterId}" was not found.`);
-
-    const now = new Date().toISOString();
-    const draftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const initial = await this.loadInitialContent(baseAdapterId);
-    const contentFile = initial.language === 'json' ? 'manifest.json' : 'implementation.ts';
-    const meta: AdapterDraftMeta = {
-      draftId,
-      baseAdapterId,
-      baseAdapterName: adapter.name,
-      sourceKind: initial.sourceKind,
-      language: initial.language,
-      status: 'editing',
-      createdAt: now,
-      updatedAt: now,
-      contentFile,
-    };
-
-    const dir = this.draftDir(draftId);
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, contentFile), initial.content, 'utf-8');
-    await this.writeMeta(meta);
+    const meta = createDraftMeta(baseAdapterId, adapter.name, initial.sourceKind, initial.language);
+    await this.persistNewDraft(meta, initial.content);
     return this.toDetail(meta, initial.content);
   }
 
@@ -80,25 +62,16 @@ export class AdapterDraftService {
   }): Promise<AdapterDraftDetailResponse> {
     if (!input.content.trim()) throw new Error('Generated adapter implementation content is required.');
 
-    const now = new Date().toISOString();
-    const draftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const meta: AdapterDraftMeta = {
-      draftId,
-      baseAdapterId: input.baseAdapterId,
-      baseAdapterName: input.baseAdapterName,
-      sourceKind: 'generated-draft',
-      language: 'typescript',
-      status: 'editing',
-      createdAt: now,
-      updatedAt: now,
-      contentFile: 'implementation.ts',
-    };
-
-    const dir = this.draftDir(draftId);
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, meta.contentFile), input.content, 'utf-8');
-    await this.writeMeta(meta);
+    const meta = createDraftMeta(input.baseAdapterId, input.baseAdapterName, 'generated-draft', 'typescript');
+    await this.persistNewDraft(meta, input.content);
     return this.toDetail(meta, input.content);
+  }
+
+  private async persistNewDraft(meta: AdapterDraftMeta, content: string): Promise<void> {
+    const dir = this.draftDir(meta.draftId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, meta.contentFile), content, 'utf-8');
+    await this.writeMeta(meta);
   }
 
   async get(draftId: string): Promise<AdapterDraftDetailResponse | undefined> {
@@ -192,6 +165,16 @@ export class AdapterDraftService {
       content,
     };
   }
+}
+
+function createDraftMeta(baseAdapterId: string, baseAdapterName: string,
+  sourceKind: AdapterDraftSourceKind, language: 'typescript' | 'json'): AdapterDraftMeta {
+  const now = new Date().toISOString();
+  return {
+    draftId: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    baseAdapterId, baseAdapterName, sourceKind, language, status: 'editing',
+    createdAt: now, updatedAt: now, contentFile: language === 'json' ? 'manifest.json' : 'implementation.ts',
+  };
 }
 
 function toSummary(meta: AdapterDraftMeta): AdapterDraftSummary {

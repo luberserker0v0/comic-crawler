@@ -52,15 +52,9 @@ export function StatusBadge({
   text: ReturnType<typeof useI18n>['text'];
   value: string | null | undefined;
 }) {
-  if (!value) {
-    return <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">-</span>;
-  }
-
-  return (
-    <span className={`rounded-full px-2 py-1 text-xs font-medium ${badgeClassByStatus[value] ?? 'bg-slate-100 text-slate-700'}`}>
-      {getBadgeLabel(text, value)}
-    </span>
-  );
+  if (!value) return <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">-</span>;
+  const color = badgeClassByStatus[value] ?? 'bg-slate-100 text-slate-700';
+  return <span className={`rounded-full px-2 py-1 text-xs font-medium ${color}`}>{getBadgeLabel(text, value)}</span>;
 }
 
 export function formatActionTitle(text: ReturnType<typeof useI18n>['text'], action: PendingAction): string {
@@ -71,30 +65,24 @@ export function formatActionTitle(text: ReturnType<typeof useI18n>['text'], acti
 }
 
 export function formatActionDescription(text: ReturnType<typeof useI18n>['text'], action: PendingAction): string {
-  if (action.type === 'promote') {
-    return formatText(text.agent.pendingActions.promoteDescription, action);
-  }
+  if (action.type === 'promote') return formatText(text.agent.pendingActions.promoteDescription, action);
+  if (action.type === 'reject') return formatText(text.agent.pendingActions.rejectDescription, action);
+  if (action.type === 'deleteAdapter') return formatDeleteDescription(text, action);
+  return formatRollbackDescription(text, action);
+}
 
-  if (action.type === 'reject') {
-    return formatText(text.agent.pendingActions.rejectDescription, action);
-  }
+type AgentText = ReturnType<typeof useI18n>['text'];
 
-  if (action.type === 'deleteAdapter') {
-    return formatText(text.agent.pendingActions.deleteAdapterDescription, {
-      adapterId: action.adapterId,
-      adapterName: action.adapterName ?? action.adapterId,
-      implementationKind: action.implementationKind ?? '-',
-      sourcePath: action.sourcePath ?? '-',
-    });
-  }
+function formatDeleteDescription(text: AgentText, action: Extract<PendingAction, { type: 'deleteAdapter' }>) {
+  return formatText(text.agent.pendingActions.deleteAdapterDescription, { adapterId: action.adapterId,
+    adapterName: action.adapterName ?? action.adapterId, implementationKind: action.implementationKind ?? '-',
+    sourcePath: action.sourcePath ?? '-' });
+}
 
-  const rollbackAction = action as Extract<PendingAction, { type: 'rollback' }>;
-  return rollbackAction.version
-    ? formatText(text.agent.pendingActions.rollbackDescriptionWithVersion, {
-      adapterId: rollbackAction.adapterId,
-      version: rollbackAction.version,
-    })
-    : formatText(text.agent.pendingActions.rollbackDescriptionWithoutVersion, { adapterId: rollbackAction.adapterId });
+function formatRollbackDescription(text: AgentText, action: Extract<PendingAction, { type: 'rollback' }>) {
+  return action.version ? formatText(text.agent.pendingActions.rollbackDescriptionWithVersion,
+    { adapterId: action.adapterId, version: action.version })
+    : formatText(text.agent.pendingActions.rollbackDescriptionWithoutVersion, { adapterId: action.adapterId });
 }
 
 export function VersionDetails({
@@ -104,75 +92,48 @@ export function VersionDetails({
   text: ReturnType<typeof useI18n>['text'];
   version: AgentVersionSummary | null | undefined;
 }) {
-  if (!version) {
-    return (
-      <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-        {text.agent.versionDetailsEmpty}
-      </div>
-    );
-  }
+  if (!version) return <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text.agent.versionDetailsEmpty}</div>;
+  return <div className="rounded-2xl bg-white p-6 shadow">
+    <VersionHeader version={version} text={text} />
+    <VersionStats version={version} text={text} />
+    <FixtureResults version={version} text={text} />
+  </div>;
+}
 
-  return (
-    <div className="rounded-2xl bg-white p-6 shadow">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">{version.version}</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            {text.agent.repairMode}: {version.repairMode ?? '-'} | {text.agent.basedOn}: {version.basedOnVersion ?? text.agent.runtimeBaseline}
-          </p>
-        </div>
-        <StatusBadge text={text} value={version.status} />
-      </div>
+function VersionHeader({ version, text }: { version: AgentVersionSummary; text: AgentText }) {
+  return <div className="flex items-start justify-between gap-3"><div>
+    <h3 className="text-lg font-semibold text-slate-900">{version.version}</h3>
+    <p className="mt-1 text-sm text-slate-500">{text.agent.repairMode}: {version.repairMode ?? '-'} | {text.agent.basedOn}: {version.basedOnVersion ?? text.agent.runtimeBaseline}</p>
+  </div><StatusBadge text={text} value={version.status} /></div>;
+}
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 p-4">
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.agent.validation}</div>
-          <div className="mt-2 text-sm font-semibold text-slate-900">
-            {version.validation?.syntaxValid === false ? text.agent.syntaxFailed : text.agent.syntaxPassed}
-          </div>
-        </div>
-        <div className="rounded-xl border border-slate-200 p-4">
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.agent.fixturesPassed}</div>
-          <div className="mt-2 text-sm font-semibold text-slate-900">{version.testResults?.passed ?? 0}</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 p-4">
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{text.agent.fixturesFailed}</div>
-          <div className="mt-2 text-sm font-semibold text-slate-900">{version.testResults?.failed ?? 0}</div>
-        </div>
-      </div>
+function VersionStats({ version, text }: { version: AgentVersionSummary; text: AgentText }) {
+  const values = [[text.agent.validation, version.validation?.syntaxValid === false ? text.agent.syntaxFailed : text.agent.syntaxPassed],
+    [text.agent.fixturesPassed, version.testResults?.passed ?? 0], [text.agent.fixturesFailed, version.testResults?.failed ?? 0]];
+  return <div className="mt-6 grid gap-4 md:grid-cols-3">{values.map(([label, value]) =>
+    <div key={label} className="rounded-xl border border-slate-200 p-4">
+      <div className="text-xs uppercase tracking-[0.25em] text-slate-400">{label}</div>
+      <div className="mt-2 text-sm font-semibold text-slate-900">{value}</div></div>)}</div>;
+}
 
-      <div className="mt-6">
-        <h4 className="text-sm font-semibold uppercase tracking-[0.25em] text-slate-400">{text.agent.fixtureResults}</h4>
-        <div className="mt-3 space-y-3">
-          {version.validation?.fixtureResults?.map((fixture) => (
-            <div key={`${version.version}-${fixture.fixtureName}`} className="rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-900">{fixture.fixtureName}</div>
-                <StatusBadge text={text} value={fixture.valid ? 'valid' : 'invalid'} />
-              </div>
-              {fixture.errors.length > 0 ? (
-                <ul className="mt-3 space-y-2 text-sm text-rose-700">
-                  {fixture.errors.map((error) => (
-                    <li key={`${fixture.fixtureName}-${error}`} className="rounded-lg bg-rose-50 px-3 py-2">
-                      {error}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {text.agent.fixtureMatched}
-                </div>
-              )}
-            </div>
-          )) ?? (
-            <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-              {text.agent.noFixtureDetails}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+function FixtureResults({ version, text }: { version: AgentVersionSummary; text: AgentText }) {
+  const fixtures = version.validation?.fixtureResults;
+  return <div className="mt-6"><h4 className="text-sm font-semibold uppercase tracking-[0.25em] text-slate-400">{text.agent.fixtureResults}</h4>
+    <div className="mt-3 space-y-3">{fixtures?.map((fixture) => <FixtureResult key={`${version.version}-${fixture.fixtureName}`} fixture={fixture} text={text} />)
+      ?? <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text.agent.noFixtureDetails}</div>}</div>
+  </div>;
+}
+
+type Fixture = NonNullable<NonNullable<AgentVersionSummary['validation']>['fixtureResults']>[number];
+
+function FixtureResult({ fixture, text }: { fixture: Fixture; text: AgentText }) {
+  return <div className="rounded-xl border border-slate-200 p-4"><div className="flex items-center justify-between gap-3">
+    <div className="text-sm font-semibold text-slate-900">{fixture.fixtureName}</div>
+    <StatusBadge text={text} value={fixture.valid ? 'valid' : 'invalid'} /></div>
+    {fixture.errors.length > 0 ? <ul className="mt-3 space-y-2 text-sm text-rose-700">{fixture.errors.map((error) =>
+      <li key={`${fixture.fixtureName}-${error}`} className="rounded-lg bg-rose-50 px-3 py-2">{error}</li>)}</ul>
+      : <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{text.agent.fixtureMatched}</div>}
+  </div>;
 }
 
 export function formatCooldown(ms: number): string {
@@ -234,18 +195,14 @@ export function groupBuildJobsIntoThreads(jobs: SelectorDiscoveryJobSummary[]): 
   for (const [key, attempts] of groups) {
     const latest = attempts[0];
     if (!latest) continue;
-    threads.push({
-      key,
-      hostname: latest.hostname,
-      target: latest.target,
-      promotionMode: latest.promotionMode,
-      normalizedUrl: latest.normalizedUrl ?? latest.url,
-      url: latest.url,
-      attempts,
-      latest,
-    });
+    threads.push(createBuildJobThread(key, attempts, latest));
   }
   return threads.sort((a, b) => buildJobTime(b.latest) - buildJobTime(a.latest));
+}
+
+function createBuildJobThread(key: string, attempts: SelectorDiscoveryJobSummary[], latest: SelectorDiscoveryJobSummary): BuildJobThread {
+  return { key, hostname: latest.hostname, target: latest.target, promotionMode: latest.promotionMode,
+    normalizedUrl: latest.normalizedUrl ?? latest.url, url: latest.url, attempts, latest };
 }
 
 function buildJobTime(job: SelectorDiscoveryJobSummary): number {

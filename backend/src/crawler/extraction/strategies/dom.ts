@@ -8,29 +8,10 @@ export class DomExtractionStrategy implements IExtractionStrategy {
   readonly parseMode = 'playwright' as const;
 
   async extractMetadata(context: ExtractionContext): Promise<ComicMetadata> {
-    const { $, selectors, baseUrl } = context;
+    const { $ } = context;
     this.ensureCheerio($, context.pageType ?? 'metadata');
-
-    const title = this.extractRequiredText($, selectors.metadata.title, 'metadata.title', baseUrl);
-    const author = this.extractOptionalText($, selectors.metadata.author);
-    const description = selectors.metadata.description
-      ? this.extractOptionalText($, selectors.metadata.description)
-      : '';
-    const coverUrl = this.extractFirstAttr($, selectors.metadata.cover, ['src', 'content', 'data-src', 'data-original']);
-    const statusText = this.extractOptionalText($, selectors.metadata.status).toLowerCase();
-    const tags = this.extractAllText($, selectors.metadata.tags);
     const chapters = await this.extractChapters({ ...context, pageType: 'chapters' });
-
-    return {
-      id: this.generateId(baseUrl),
-      title,
-      author: author || undefined,
-      coverUrl: this.resolveUrl(coverUrl, baseUrl) || undefined,
-      description: description || undefined,
-      chapters,
-      tags: tags.length > 0 ? tags : undefined,
-      status: this.parseStatus(statusText),
-    };
+    return this.buildMetadata($, context, chapters);
   }
 
   async extractChapters(context: ExtractionContext): Promise<Array<{ id: string; title: string; url: string }>> {
@@ -41,42 +22,8 @@ export class DomExtractionStrategy implements IExtractionStrategy {
     const items = chapterList.length > 0
       ? chapterList.find(selectors.chapters.item)
       : $(selectors.chapters.item);
-    const chapters: Array<{ id: string; title: string; url: string }> = [];
-
-    items.each((i, el) => {
-      const $el = $(el as any);
-      const title = selectors.chapters.title
-        ? $el.find(selectors.chapters.title).first().text().trim() || $el.text().trim()
-        : $el.text().trim();
-      const rawUrl = selectors.chapters.url
-        ? $el.find(selectors.chapters.url).first().attr('href') || $el.attr('href')
-        : $el.attr('href');
-
-      if (!title || !rawUrl) {
-        return;
-      }
-
-      const url = this.resolveUrl(rawUrl, baseUrl);
-      chapters.push({
-        id: this.generateId(url, `ch-${i}`),
-        title,
-        url,
-      });
-    });
-
-    if (chapters.length === 0) {
-      throw new ComicError(
-        `No chapters found for ${baseUrl}`,
-        ErrorType.PARSING_ERROR,
-        false,
-        {
-          pageType: 'chapters',
-          selector: selectors.chapters.item,
-          baseUrl,
-        }
-      );
-    }
-
+    const chapters = this.collectChapters($, items, context);
+    this.ensureResults(chapters, baseUrl, 'chapters', selectors.chapters.item);
     return chapters;
   }
 
@@ -88,39 +35,56 @@ export class DomExtractionStrategy implements IExtractionStrategy {
     const items = container && container.length > 0
       ? container.find(selectors.images.item)
       : $(selectors.images.item);
-    const srcAttr = selectors.images.srcAttr || 'src';
     const images: ImageInfo[] = [];
-
-    items.each((i, el) => {
-      const $el = $(el as any);
-      const src = $el.attr(srcAttr) || $el.attr('data-src') || $el.attr('data-original') || $el.attr('src');
-
-      if (!src) {
-        return;
-      }
-
-      const resolvedUrl = this.resolveUrl(src, baseUrl);
-      images.push({
-        url: resolvedUrl,
-        index: i,
-        filename: this.createFilename(i, resolvedUrl),
-      });
-    });
-
-    if (images.length === 0) {
-      throw new ComicError(
-        `No images found for ${baseUrl}`,
-        ErrorType.PARSING_ERROR,
-        false,
-        {
-          pageType: 'images',
-          selector: selectors.images.item,
-          baseUrl,
-        }
-      );
-    }
-
+    items.each((i, el) => this.appendImage(images, $, el, i, context));
+    this.ensureResults(images, baseUrl, 'images', selectors.images.item);
     return images;
+  }
+
+  private buildMetadata($: cheerio.CheerioAPI, context: ExtractionContext,
+    chapters: ComicMetadata['chapters']): ComicMetadata {
+    const { metadata } = context.selectors;
+    const author = this.extractOptionalText($, metadata.author);
+    const description = this.extractOptionalText($, metadata.description);
+    const cover = this.extractFirstAttr($, metadata.cover, ['src', 'content', 'data-src', 'data-original']);
+    const tags = this.extractAllText($, metadata.tags);
+    return { id: this.generateId(context.baseUrl),
+      title: this.extractRequiredText($, metadata.title, 'metadata.title', context.baseUrl),
+      author: author || undefined, coverUrl: this.resolveUrl(cover, context.baseUrl) || undefined,
+      description: description || undefined, chapters, tags: tags.length ? tags : undefined,
+      status: this.parseStatus(this.extractOptionalText($, metadata.status).toLowerCase()) };
+  }
+
+  private collectChapters($: cheerio.CheerioAPI, items: cheerio.Cheerio<any>,
+    context: ExtractionContext): ComicMetadata['chapters'] {
+    const chapters: ComicMetadata['chapters'] = [];
+    items.each((index, element) => {
+      const item = $(element as any);
+      const titleSelector = context.selectors.chapters.title;
+      const urlSelector = context.selectors.chapters.url;
+      const title = titleSelector ? item.find(titleSelector).first().text().trim() || item.text().trim() : item.text().trim();
+      const rawUrl = urlSelector ? item.find(urlSelector).first().attr('href') || item.attr('href') : item.attr('href');
+      if (!title || !rawUrl) return;
+      const url = this.resolveUrl(rawUrl, context.baseUrl);
+      chapters.push({ id: this.generateId(url, `ch-${index}`), title, url });
+    });
+    return chapters;
+  }
+
+  private appendImage(images: ImageInfo[], $: cheerio.CheerioAPI, element: unknown,
+    index: number, context: ExtractionContext): void {
+    const item = $(element as any);
+    const src = item.attr(context.selectors.images.srcAttr || 'src')
+      || item.attr('data-src') || item.attr('data-original') || item.attr('src');
+    if (!src) return;
+    const url = this.resolveUrl(src, context.baseUrl);
+    images.push({ url, index, filename: this.createFilename(index, url) });
+  }
+
+  private ensureResults(results: unknown[], baseUrl: string, pageType: string, selector: string): void {
+    if (results.length) return;
+    throw new ComicError(`No ${pageType} found for ${baseUrl}`, ErrorType.PARSING_ERROR,
+      false, { pageType, selector, baseUrl });
   }
 
   async search?(_query: string, _options: SearchOptions, _context: ExtractionContext): Promise<SearchResult[]> {

@@ -137,64 +137,66 @@ const baseDetail = {
   },
 };
 
-describe('AgentPage interactions', () => {
-  let getAgentAdaptersSpy: ReturnType<typeof jest.spyOn>;
-  let getAgentAdapterSpy: ReturnType<typeof jest.spyOn>;
-  let promoteSpy: ReturnType<typeof jest.spyOn>;
-  let deleteAdapterSpy: ReturnType<typeof jest.spyOn>;
-  let restoreAdapterSpy: ReturnType<typeof jest.spyOn>;
+let getAgentAdaptersSpy: ReturnType<typeof jest.spyOn>;
+let getAgentAdapterSpy: ReturnType<typeof jest.spyOn>;
+let promoteSpy: ReturnType<typeof jest.spyOn>;
+let deleteAdapterSpy: ReturnType<typeof jest.spyOn>;
+let restoreAdapterSpy: ReturnType<typeof jest.spyOn>;
 
-  beforeEach(() => {
-    jest.restoreAllMocks();
-    window.localStorage.clear();
-    useAgentStore.setState({
+describe('AgentPage interactions', registerAgentPageTests);
+
+function resetAgentStore() {
+  useAgentStore.setState({
       adapters: [],
       selectedAdapterId: null,
       selectedAdapter: null,
       loading: false,
       actionLoading: false,
       error: null,
-    } as Partial<ReturnType<typeof useAgentStore.getState>>);
+  } as Partial<ReturnType<typeof useAgentStore.getState>>);
+}
 
-    jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: siteAdapters });
-    jest.spyOn(api, 'getDeletedAdapters').mockResolvedValue({
-      data: {
-        adapters: [{
-          adapterId: 'oldsite',
-          deletedAt: '2026-07-09T00:00:00.000Z',
-          implementationKind: 'selector-manifest',
-          restorable: true,
-          restoreReason: 'Adapter can be restored from saved runtime data or existing project source.',
-        }],
-      },
-    });
-    jest.spyOn(api, 'listSelectorDiscoveries').mockResolvedValue({ data: { jobs: [] } });
-    getAgentAdaptersSpy = jest.spyOn(api, 'getAgentAdapters').mockResolvedValue({ data: baseSummary });
-    getAgentAdapterSpy = jest.spyOn(api, 'getAgentAdapter').mockResolvedValue({ data: baseDetail });
-    promoteSpy = jest.spyOn(api, 'promoteAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
-    deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({
-      data: {
-        adapterId: 'kuronavi',
-        message: 'Adapter deleted and source files removed',
-        implementationKind: 'project-source',
-        registryRemoved: true,
-        deletedMarkerWritten: true,
-        sourcePath: 'backend/src/adapter/sites/kuronavi/adapter.ts',
-        sourceDeleted: true,
-        runtimeRecordsRemoved: { selectorManifest: false, tsImplementation: false },
-      },
-    });
-    restoreAdapterSpy = jest.spyOn(api, 'restoreAdapter').mockResolvedValue({
-      data: {
-        adapterId: 'oldsite',
-        message: 'Adapter restored',
-        implementationKind: 'selector-manifest',
-        restored: true,
-      },
-    });
-    jest.spyOn(api, 'rejectAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
-    jest.spyOn(api, 'rollbackAgentAdapter').mockResolvedValue({ data: { success: true, currentVersion: 'v1' } });
-  });
+function mockAdapterLists() {
+  jest.spyOn(api, 'getAdapters').mockResolvedValue({ data: siteAdapters });
+  jest.spyOn(api, 'getDeletedAdapters').mockResolvedValue({ data: { adapters: [{
+    adapterId: 'oldsite', deletedAt: '2026-07-09T00:00:00.000Z', implementationKind: 'ts-implementation',
+    restorable: true, restoreReason: 'Adapter can be restored from saved runtime data or existing project source.',
+  }] } });
+  jest.spyOn(api, 'listSelectorDiscoveries').mockResolvedValue({ data: { jobs: [] } });
+  getAgentAdaptersSpy = jest.spyOn(api, 'getAgentAdapters').mockResolvedValue({ data: baseSummary });
+  getAgentAdapterSpy = jest.spyOn(api, 'getAgentAdapter').mockResolvedValue({ data: baseDetail });
+}
+
+function mockAdapterActions() {
+  promoteSpy = jest.spyOn(api, 'promoteAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
+  deleteAdapterSpy = jest.spyOn(api, 'deleteAdapter').mockResolvedValue({ data: {
+    adapterId: 'kuronavi', message: 'Adapter deleted and source files removed', implementationKind: 'project-source',
+    registryRemoved: true, deletedMarkerWritten: true, sourcePath: 'backend/src/adapter/sites/kuronavi/adapter.ts',
+    sourceDeleted: true, catalogDeactivated: false,
+  } });
+  restoreAdapterSpy = jest.spyOn(api, 'restoreAdapter').mockResolvedValue({ data: {
+    adapterId: 'oldsite', message: 'Adapter restored', implementationKind: 'ts-implementation', restored: true,
+  } });
+  jest.spyOn(api, 'rejectAgentCandidate').mockResolvedValue({ data: { success: true, version: 'v2' } });
+  jest.spyOn(api, 'rollbackAgentAdapter').mockResolvedValue({ data: { success: true, currentVersion: 'v1' } });
+}
+
+function setupAgentPageTest() {
+  jest.restoreAllMocks();
+  window.localStorage.clear();
+  resetAgentStore();
+  mockAdapterLists();
+  mockAdapterActions();
+}
+
+function registerAgentPageTests() {
+  beforeEach(setupAgentPageTest);
+  registerCandidateTests();
+  registerDeleteAdapterTest();
+  registerRestoreAdapterTest();
+}
+
+function registerCandidateTests() {
 
   it('should show confirmation before promoting a candidate', async () => {
     render(<AgentPage />);
@@ -220,7 +222,9 @@ describe('AgentPage interactions', () => {
     expect(screen.getByText('Title did not match expected output')).toBeInTheDocument();
     expect(screen.getByText(uiText.agent.syntaxPassed)).toBeInTheDocument();
   });
+}
 
+function registerDeleteAdapterTest() {
   it('should delete a site adapter through confirmation', async () => {
     render(<AgentPage />);
 
@@ -239,7 +243,9 @@ describe('AgentPage interactions', () => {
     expect(getAgentAdaptersSpy).toHaveBeenCalled();
     expect(getAgentAdapterSpy).toHaveBeenCalled();
   });
+}
 
+function registerRestoreAdapterTest() {
   it('should show deleted adapters and restore restorable entries', async () => {
     render(<AgentPage />);
 
@@ -251,4 +257,4 @@ describe('AgentPage interactions', () => {
       expect(restoreAdapterSpy).toHaveBeenCalledWith('oldsite');
     });
   });
-});
+}

@@ -9,21 +9,27 @@ export function useConfigForm(options: {
   const { config, updateConfig, resetConfig } = options;
   const [formDraft, setForm] = useState<Partial<GlobalConfig> | null>(null);
   const form = formDraft ?? config ?? {};
+  const handleChange = createChangeHandler(setForm, config);
+  const handleNestedChange = createNestedChangeHandler(setForm, config);
+  const handleSave = async () => { await updateConfig(form); setForm(null); };
+  const handleReset = async () => { await resetConfig(); setForm(null); };
+  return { form, handleChange, handleNestedChange, handleSave, handleReset };
+}
 
-  const handleChange = (section: string, key: string, value: any) => {
+function createChangeHandler(setForm: React.Dispatch<React.SetStateAction<Partial<GlobalConfig> | null>>, config: GlobalConfig | null | undefined) {
+  return (section: string, key: string, value: any) => {
     setForm((previousDraft) => {
       const previous = previousDraft ?? config ?? {};
       return {
-      ...previous,
-      [section]: {
-        ...(previous as any)[section],
-        [key]: value,
-      },
-    };
+        ...previous,
+        [section]: { ...(previous as any)[section], [key]: value },
+      };
     });
   };
+}
 
-  const handleNestedChange = (section: string, nested: string, key: string, value: any) => {
+function createNestedChangeHandler(setForm: React.Dispatch<React.SetStateAction<Partial<GlobalConfig> | null>>, config: GlobalConfig | null | undefined) {
+  return (section: string, nested: string, key: string, value: any) => {
     setForm((previousDraft) => {
       const previous = previousDraft ?? config ?? {};
       const sectionValue = (previous as any)[section] ?? {};
@@ -38,23 +44,5 @@ export function useConfigForm(options: {
         },
       };
     });
-  };
-
-  const handleSave = async () => {
-    await updateConfig(form);
-    setForm(null);
-  };
-
-  const handleReset = async () => {
-    await resetConfig();
-    setForm(null);
-  };
-
-  return {
-    form,
-    handleChange,
-    handleNestedChange,
-    handleSave,
-    handleReset,
   };
 }

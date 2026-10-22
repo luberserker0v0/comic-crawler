@@ -34,71 +34,70 @@ export async function fetchSafeHtml(
 ): Promise<SafeHtmlFetchResult> {
   const options = typeof optionsOrTimeout === 'number' ? { timeoutMs: optionsOrTimeout } : optionsOrTimeout;
   const timeoutMs = options.timeoutMs ?? options.browser?.timeout ?? options.network?.timeout ?? 30000;
-  let currentUrl = normalizeAndValidateUrl(url);
+  const currentUrl = normalizeAndValidateUrl(url);
   const redirectChain: string[] = [];
+  if (options.renderFirst) return renderedResult(url, currentUrl, redirectChain, options, timeoutMs);
+  return fetchStaticHtml(url, currentUrl, redirectChain, options, timeoutMs);
+}
 
-  if (options.renderFirst) {
-    await validateResolvedAddresses(currentUrl);
-    const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
-    assertNotAntiBotChallenge(page.html, page.url);
-    return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
-  }
-
+async function fetchStaticHtml(originalUrl: string, initialUrl: string, redirectChain: string[],
+  options: SafeHtmlFetchOptions, timeoutMs: number): Promise<SafeHtmlFetchResult> {
+  let currentUrl = initialUrl;
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
     await validateResolvedAddresses(currentUrl);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(currentUrl, {
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'ComicCrawler/1.0.0 selector-discovery',
-          Accept: 'text/html,application/xhtml+xml',
-          ...(options.network?.userAgent ? { 'User-Agent': options.network.userAgent } : {}),
-        },
-      });
-
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location');
-        if (!location) {
-          throw new Error(`Redirect response from ${currentUrl} did not include a Location header.`);
-        }
-        redirectChain.push(currentUrl);
-        currentUrl = normalizeAndValidateUrl(new URL(location, currentUrl).href);
-        continue;
-      }
-
-      if (!response.ok && shouldFallbackToHeadless(response.status)) {
-        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(page.html, page.url);
-        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
-      }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} while fetching ${currentUrl}`);
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)) {
-        throw new Error(`Expected HTML content but received "${contentType}".`);
-      }
-
-      const html = await readLimitedText(response as any, MAX_HTML_BYTES);
-      if (looksLikeAntiBotChallenge(html)) {
-        const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
-        assertNotAntiBotChallenge(page.html, page.url);
-        return { url, finalUrl: page.url, redirectChain, html: page.html, contentType: 'text/html; rendered=browser-worker' };
-      }
-      assertNotAntiBotChallenge(html, currentUrl);
-      return { url, finalUrl: currentUrl, redirectChain, html, contentType };
-    } finally {
-      clearTimeout(timeout);
-    }
+    const outcome = await fetchStaticAttempt(originalUrl, currentUrl, redirectChain, options, timeoutMs);
+    if (typeof outcome !== 'string') return outcome;
+    redirectChain.push(currentUrl);
+    currentUrl = outcome;
   }
+  throw new Error(`Too many redirects while fetching ${originalUrl}.`);
+}
 
-  throw new Error(`Too many redirects while fetching ${url}.`);
+async function fetchStaticAttempt(originalUrl: string, currentUrl: string, redirectChain: string[],
+  options: SafeHtmlFetchOptions, timeoutMs: number): Promise<SafeHtmlFetchResult | string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(currentUrl, {
+      redirect: 'manual', signal: controller.signal,
+      headers: { 'User-Agent': options.network?.userAgent ?? 'ComicCrawler/1.0.0 selector-discovery',
+        Accept: 'text/html,application/xhtml+xml' },
+    });
+    return processStaticResponse(originalUrl, currentUrl, redirectChain, response, options, timeoutMs);
+  } finally { clearTimeout(timeout); }
+}
+
+async function processStaticResponse(originalUrl: string, currentUrl: string, redirectChain: string[],
+  response: Awaited<ReturnType<typeof fetch>>, options: SafeHtmlFetchOptions,
+  timeoutMs: number): Promise<SafeHtmlFetchResult | string> {
+  if ([301, 302, 303, 307, 308].includes(response.status)) return redirectTarget(response, currentUrl);
+  if (!response.ok && shouldFallbackToHeadless(response.status)) {
+    return renderedResult(originalUrl, currentUrl, redirectChain, options, timeoutMs);
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status} while fetching ${currentUrl}`);
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)) {
+    throw new Error(`Expected HTML content but received "${contentType}".`);
+  }
+  const html = await readLimitedText(response as any, MAX_HTML_BYTES);
+  if (looksLikeAntiBotChallenge(html)) return renderedResult(originalUrl, currentUrl, redirectChain, options, timeoutMs);
+  assertNotAntiBotChallenge(html, currentUrl);
+  return { url: originalUrl, finalUrl: currentUrl, redirectChain, html, contentType };
+}
+
+function redirectTarget(response: Awaited<ReturnType<typeof fetch>>, currentUrl: string): string {
+  const location = response.headers.get('location');
+  if (!location) throw new Error(`Redirect response from ${currentUrl} did not include a Location header.`);
+  return normalizeAndValidateUrl(new URL(location, currentUrl).href);
+}
+
+async function renderedResult(originalUrl: string, currentUrl: string, redirectChain: string[],
+  options: SafeHtmlFetchOptions, timeoutMs: number): Promise<SafeHtmlFetchResult> {
+  await validateResolvedAddresses(currentUrl);
+  const page = await fetchRenderedPage(currentUrl, { ...options, timeoutMs });
+  assertNotAntiBotChallenge(page.html, page.url);
+  return { url: originalUrl, finalUrl: page.url, redirectChain, html: page.html,
+    contentType: 'text/html; rendered=browser-worker' };
 }
 
 export function normalizeAndValidateUrl(rawUrl: string): string {
@@ -144,8 +143,11 @@ function isPrivateOrReservedHost(host: string): boolean {
   if (ipVersion === 6) {
     return normalized === '::' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:');
   }
+  return isPrivateIpv4(normalized);
+}
 
-  const [a = 0, b = 0] = normalized.split('.').map(Number);
+function isPrivateIpv4(value: string): boolean {
+  const [a = 0, b = 0] = value.split('.').map(Number);
   return (
     a === 0 ||
     a === 10 ||
@@ -174,16 +176,13 @@ async function fetchRenderedPage(
 async function readLimitedText(response: { body?: { getReader?: () => any } }, maxBytes: number): Promise<string> {
   const reader = response.body?.getReader?.();
   if (!reader) return '';
-
   const chunks: Uint8Array[] = [];
   let total = 0;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > maxBytes) {
-      throw new Error(`HTML response exceeded ${maxBytes} bytes.`);
-    }
+    if (total > maxBytes) throw new Error(`HTML response exceeded ${maxBytes} bytes.`);
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString('utf-8');

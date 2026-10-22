@@ -13,136 +13,120 @@ export function setupDownloadCommand(ctx: CliCommandContext): void {
     .option('-c, --chapters <chapters>', cliMessages.commands.download.chaptersOption)
     .option('-o, --output <dir>', cliMessages.commands.download.outputOption)
     .option('--concurrency <n>', cliMessages.commands.download.concurrencyOption, '5')
-    .action(async (url: string, options: { chapters?: string; output?: string; concurrency?: string }) => {
-      try {
-        logger.info({ url }, cliMessages.commands.download.startLog);
+    .action((url: string, options: DownloadOptions) => runDownload(ctx, url, options));
+}
 
-        const adapter = ctx.options.adapterRegistry.findByUrl(url) as AdapterBase | undefined;
-        if (!adapter) {
-          ctx.ui.renderError(cliMessages.commands.download.adapterNotFound(url));
-          process.exit(1);
-        }
+interface DownloadOptions { chapters?: string; output?: string; concurrency?: string }
 
-        const chapters = options.chapters?.split(',').map((chapter) => chapter.trim()).filter(Boolean);
-        const result = await ctx.options.crawlerEngine.crawl(adapter, url, { chapters });
+async function runDownload(ctx: CliCommandContext, url: string, options: DownloadOptions): Promise<void> {
+  try {
+    logger.info({ url }, cliMessages.commands.download.startLog);
+    const adapter = ctx.options.adapterRegistry.findByUrl(url) as AdapterBase | undefined;
+    if (!adapter) throw new Error(cliMessages.commands.download.adapterNotFound(url));
+    const chapters = options.chapters?.split(',').map((chapter) => chapter.trim()).filter(Boolean);
+    const result = await ctx.options.crawlerEngine.crawl(adapter, url, { chapters });
+    renderDownloadResult(ctx, result);
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.download.failureLog); }
+}
 
-        ctx.ui.renderSuccess(cliMessages.commands.download.success);
-        ctx.ui.renderStatus(cliMessages.commands.download.totalImages, String(result.totalImages));
-        ctx.ui.renderStatus(cliMessages.commands.download.downloadedImages, String(result.downloadedImages));
-        ctx.ui.renderStatus(cliMessages.commands.download.failedImages, String(result.failedImages));
-        ctx.ui.renderStatus(cliMessages.commands.download.outputPath, result.outputPath);
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.download.failureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
+function renderDownloadResult(ctx: CliCommandContext, result: Awaited<ReturnType<CliCommandContext['options']['crawlerEngine']['crawl']>>): void {
+  ctx.ui.renderSuccess(cliMessages.commands.download.success);
+  ctx.ui.renderStatus(cliMessages.commands.download.totalImages, String(result.totalImages));
+  ctx.ui.renderStatus(cliMessages.commands.download.downloadedImages, String(result.downloadedImages));
+  ctx.ui.renderStatus(cliMessages.commands.download.failedImages, String(result.failedImages));
+  ctx.ui.renderStatus(cliMessages.commands.download.outputPath, result.outputPath);
 }
 
 export function setupConfigCommand(ctx: CliCommandContext): void {
   const configCmd = ctx.program
     .command('config')
     .description(cliMessages.commands.config.description);
+  setupConfigGetCommand(configCmd, ctx);
+  setupConfigSetCommand(configCmd, ctx);
+  setupConfigResetCommand(configCmd, ctx);
+}
 
+function setupConfigGetCommand(configCmd: CliCommandContext['program'], ctx: CliCommandContext): void {
   configCmd
     .command('get')
     .description(cliMessages.commands.config.getDescription)
     .argument('[key]', cliMessages.commands.config.getKeyArgument)
-    .action(async (key?: string) => {
-      try {
-        const config = await ctx.options.configManager.get();
+    .action((key?: string) => getConfig(ctx, key));
+}
 
-        if (!key) {
-          console.log(JSON.stringify(config, null, 2));
-          return;
-        }
+async function getConfig(ctx: CliCommandContext, key?: string): Promise<void> {
+  try {
+    const config = await ctx.options.configManager.get();
+    if (!key) return console.log(JSON.stringify(config, null, 2));
+    const value = getNestedValue(config as unknown as Record<string, unknown>, key);
+    if (value === undefined) return ctx.ui.renderError(cliMessages.commands.config.keyNotFound(key));
+    ctx.ui.renderStatus(key, String(value));
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.config.getFailureLog); }
+}
 
-        const value = getNestedValue(config as unknown as Record<string, unknown>, key);
-        if (value === undefined) {
-          ctx.ui.renderError(cliMessages.commands.config.keyNotFound(key));
-          return;
-        }
-
-        ctx.ui.renderStatus(key, String(value));
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.config.getFailureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
-
+function setupConfigSetCommand(configCmd: CliCommandContext['program'], ctx: CliCommandContext): void {
   configCmd
     .command('set')
     .description(cliMessages.commands.config.setDescription)
     .argument('<key>', cliMessages.commands.config.setKeyArgument)
     .argument('<value>', cliMessages.commands.config.setValueArgument)
-    .action(async (key: string, value: string) => {
-      try {
-        const config = await ctx.options.configManager.get();
-        const parsedValue = parseValue(value);
-        const updated = setNestedValue({ ...config } as unknown as Record<string, unknown>, key, parsedValue);
+    .action((key: string, value: string) => setConfig(ctx, key, value));
+}
 
-        await ctx.options.configManager.update(updated as any);
-        ctx.ui.renderSuccess(cliMessages.commands.config.setSuccess(key, value));
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.config.setFailureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
+async function setConfig(ctx: CliCommandContext, key: string, value: string): Promise<void> {
+  try {
+    const config = await ctx.options.configManager.get();
+    const parsedValue = parseValue(value);
+    const updated = setNestedValue({ ...config } as unknown as Record<string, unknown>, key, parsedValue);
+    await ctx.options.configManager.update(updated as any);
+    ctx.ui.renderSuccess(cliMessages.commands.config.setSuccess(key, value));
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.config.setFailureLog); }
+}
 
+function setupConfigResetCommand(configCmd: CliCommandContext['program'], ctx: CliCommandContext): void {
   configCmd
     .command('reset')
     .description(cliMessages.commands.config.resetDescription)
-    .action(async () => {
-      try {
-        await ctx.options.configManager.reset();
-        ctx.ui.renderSuccess(cliMessages.commands.config.resetSuccess);
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.config.resetFailureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
+    .action(() => resetConfig(ctx));
+}
+
+async function resetConfig(ctx: CliCommandContext): Promise<void> {
+  try {
+    await ctx.options.configManager.reset();
+    ctx.ui.renderSuccess(cliMessages.commands.config.resetSuccess);
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.config.resetFailureLog); }
 }
 
 export function setupStatusCommand(ctx: CliCommandContext): void {
-  const statusLabels: Record<string, string> = {
-    ...cliMessages.statusLabels,
-    interrupted: '中斷',
-  };
-
   ctx.program
     .command('status')
     .description(cliMessages.commands.status.description)
     .option('-a, --all', cliMessages.commands.status.allOption)
-    .action(async (options: { all?: boolean }) => {
-      try {
-        const stats = ctx.options.taskManager.getStats();
-        const tasks = ctx.options.taskManager.getAllTasks();
+    .action((options: { all?: boolean }) => renderStatus(ctx, options.all));
+}
 
-        ctx.ui.renderStatus(cliMessages.commands.status.totalTasks, String(stats.total));
-        ctx.ui.renderStatus(cliMessages.commands.status.runningTasks, String(stats.running));
-        ctx.ui.renderStatus(cliMessages.commands.status.pendingTasks, String(stats.pending));
-        ctx.ui.renderStatus(cliMessages.commands.status.completedTasks, String(stats.completed));
-        ctx.ui.renderStatus(cliMessages.commands.status.failedTasks, String(stats.failed));
+function renderStatus(ctx: CliCommandContext, showAll?: boolean): void {
+  try {
+    const stats = ctx.options.taskManager.getStats();
+    renderTaskStats(ctx, stats);
+    const tasks = ctx.options.taskManager.getAllTasks();
+    if (showAll && tasks.length > 0) renderTaskTable(ctx, tasks);
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.status.failureLog); }
+}
 
-        if (options.all && tasks.length > 0) {
-          const rows = tasks.map((task) => [
-            task.id.slice(0, 12),
-            task.data.url.slice(0, 40),
-            statusLabels[task.status] ?? task.status,
-            String(task.priority),
-          ]);
+function renderTaskStats(ctx: CliCommandContext, stats: ReturnType<CliCommandContext['options']['taskManager']['getStats']>): void {
+  ctx.ui.renderStatus(cliMessages.commands.status.totalTasks, String(stats.total));
+  ctx.ui.renderStatus(cliMessages.commands.status.runningTasks, String(stats.running));
+  ctx.ui.renderStatus(cliMessages.commands.status.pendingTasks, String(stats.pending));
+  ctx.ui.renderStatus(cliMessages.commands.status.completedTasks, String(stats.completed));
+  ctx.ui.renderStatus(cliMessages.commands.status.failedTasks, String(stats.failed));
+}
 
-          ctx.ui.renderTable([...cliMessages.commands.status.tableHeaders], rows);
-        }
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.status.failureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
+function renderTaskTable(ctx: CliCommandContext, tasks: ReturnType<CliCommandContext['options']['taskManager']['getAllTasks']>): void {
+  const labels: Record<string, string> = { ...cliMessages.statusLabels, interrupted: '中斷' };
+  const rows = tasks.map((task) => [task.id.slice(0, 12), task.data.url.slice(0, 40),
+    labels[task.status] ?? task.status, String(task.priority)]);
+  ctx.ui.renderTable([...cliMessages.commands.status.tableHeaders], rows);
 }
 
 export function setupSearchCommand(ctx: CliCommandContext): void {
@@ -152,36 +136,32 @@ export function setupSearchCommand(ctx: CliCommandContext): void {
     .argument('<query>', cliMessages.commands.search.queryArgument)
     .option('--adapter <id>', cliMessages.commands.search.adapterOption)
     .option('--limit <n>', cliMessages.commands.search.limitOption, '10')
-    .action(async (query: string, options: { adapter?: string; limit?: string }) => {
-      try {
-        const adapters = options.adapter
-          ? [ctx.options.adapterRegistry.get(options.adapter) as AdapterBase | undefined].filter(Boolean)
-          : ctx.options.adapterRegistry.getAll() as AdapterBase[];
+    .action((query: string, options: { adapter?: string; limit?: string }) => runSearch(ctx, query, options));
+}
 
-        if (adapters.length === 0) {
-          ctx.ui.renderError(cliMessages.commands.search.adapterNotFound);
-          process.exit(1);
-        }
+async function runSearch(
+  ctx: CliCommandContext, query: string, options: { adapter?: string; limit?: string }
+): Promise<void> {
+  try {
+    const adapters = getSearchAdapters(ctx, options.adapter);
+    if (adapters.length === 0) throw new Error(cliMessages.commands.search.adapterNotFound);
+    const limit = parseInt(options.limit ?? '10', 10);
+    const results = await ctx.options.crawlerEngine.search(adapters[0]!, query, { limit });
+    if (results.length === 0) return ctx.ui.renderInfo(cliMessages.commands.search.noResults);
+    const rows = results.slice(0, limit).map((result) => [result.id.slice(0, 12),
+      result.title.slice(0, 40), result.url.slice(0, 50)]);
+    ctx.ui.renderTable([...cliMessages.commands.search.tableHeaders], rows);
+  } catch (error) { handleCliError(ctx, error, cliMessages.commands.search.failureLog); }
+}
 
-        const limit = parseInt(options.limit ?? '10', 10);
-        const results = await ctx.options.crawlerEngine.search(adapters[0]!, query, { limit });
+function getSearchAdapters(ctx: CliCommandContext, adapterId?: string): AdapterBase[] {
+  if (!adapterId) return ctx.options.adapterRegistry.getAll() as AdapterBase[];
+  const adapter = ctx.options.adapterRegistry.get(adapterId) as AdapterBase | undefined;
+  return adapter ? [adapter] : [];
+}
 
-        if (results.length === 0) {
-          ctx.ui.renderInfo(cliMessages.commands.search.noResults);
-          return;
-        }
-
-        const rows = results.slice(0, limit).map((result) => [
-          result.id.slice(0, 12),
-          result.title.slice(0, 40),
-          result.url.slice(0, 50),
-        ]);
-
-        ctx.ui.renderTable([...cliMessages.commands.search.tableHeaders], rows);
-      } catch (error) {
-        logger.error({ error: formatError(error) }, cliMessages.commands.search.failureLog);
-        ctx.ui.renderError(formatError(error));
-        process.exit(1);
-      }
-    });
+function handleCliError(ctx: CliCommandContext, error: unknown, logMessage: string): never {
+  logger.error({ error: formatError(error) }, logMessage);
+  ctx.ui.renderError(formatError(error));
+  process.exit(1);
 }

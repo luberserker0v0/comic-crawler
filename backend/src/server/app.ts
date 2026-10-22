@@ -6,6 +6,8 @@ import type { BrowserTarget, EffectiveRenderContext } from '@comiccrawler/shared
 import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
+import type { AdapterCatalog } from '../adapter/catalog';
+import type { OfficialAdapterRegistryService } from '../adapter/official-registry';
 import type { CrawlerEngine } from '../crawler/engine';
 import type { EventBus } from '../events/bus';
 import type { AgentAdminService } from '../agent/admin-service';
@@ -32,6 +34,7 @@ import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupMaintenanceRoutes } from './routes/maintenance';
 import { setupBrowserClientRoutes } from './routes/browser-clients';
+import { setupAdapterRegistryRoutes } from './routes/adapter-registry';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { setupApiSecurity } from './middleware/api-security';
@@ -44,6 +47,8 @@ export interface ServerOptions {
   configManager: ConfigManager;
   taskManager: TaskManager;
   adapterRegistry: AdapterRegistry;
+  adapterCatalog?: AdapterCatalog;
+  officialAdapterRegistry?: OfficialAdapterRegistryService;
   crawlerEngine: CrawlerEngine;
   eventBus: EventBus;
   agentAdminService?: AgentAdminService;
@@ -133,6 +138,13 @@ export class ComicCrawlerServer {
   }
 
   private setupRoutes(): void {
+    this.setupCoreRoutes();
+    this.setupAdapterRoutes();
+    this.setupDiscoveryRoutes();
+    this.setupOptionalRoutes();
+  }
+
+  private setupCoreRoutes(): void {
     setupTasksRoutes(
       this.app,
       this.options.taskManager,
@@ -149,6 +161,11 @@ export class ComicCrawlerServer {
     if (this.options.browserClientRegistry && this.options.browserSessionGateway) {
       setupBrowserClientRoutes(this.app, this.options.browserClientRegistry, this.options.browserSessionGateway, this.apiSecurity);
     }
+    setupSearchRoutes(this.app, this.options.crawlerEngine);
+    setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
+  }
+
+  private setupAdapterRoutes(): void {
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
       withBrowserSession: (request, target, initialUrl, renderContext, action) =>
@@ -156,19 +173,26 @@ export class ComicCrawlerServer {
       browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
+      adapterCatalog: this.options.adapterCatalog,
       apiSecurity: this.apiSecurity,
     });
-    setupSearchRoutes(this.app, this.options.crawlerEngine);
-    setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
-    if (this.options.adapterDraftService) {
-      setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
-        challengeDiscoveryService: this.options.challengeDiscoveryService,
-        withBrowserSession: (request, target, initialUrl, action) =>
-          this.withBrowserSession(request, target, initialUrl, undefined, action),
-        browserRenderService: this.options.browserRenderService,
-        getNetworkConfig: async () => (await this.options.configManager.get()).network,
-      });
-    }
+    if (this.options.officialAdapterRegistry)
+      setupAdapterRegistryRoutes(this.app, this.options.officialAdapterRegistry);
+    this.setupAdapterDraftRoutes();
+  }
+
+  private setupAdapterDraftRoutes(): void {
+    if (!this.options.adapterDraftService) return;
+    setupAdapterDraftRoutes(this.app, this.options.adapterDraftService, {
+      challengeDiscoveryService: this.options.challengeDiscoveryService,
+      withBrowserSession: (request, target, initialUrl, action) =>
+        this.withBrowserSession(request, target, initialUrl, undefined, action),
+      browserRenderService: this.options.browserRenderService,
+      getNetworkConfig: async () => (await this.options.configManager.get()).network,
+    });
+  }
+
+  private setupDiscoveryRoutes(): void {
     if (this.options.selectorDiscoveryService && this.options.selectorDiscoverySettingsStore) {
       setupSelectorDiscoveryRoutes(
         this.app,
@@ -187,6 +211,9 @@ export class ComicCrawlerServer {
         }
       );
     }
+  }
+
+  private setupOptionalRoutes(): void {
     if (this.options.challengeDiscoveryService) {
       setupChallengeDiscoveryRoutes(
         this.app,
@@ -211,23 +238,21 @@ export class ComicCrawlerServer {
     action: (sessionId: string) => Promise<T>
   ): Promise<T> {
     const browser = (await this.options.configManager.get()).browser;
-    if (!this.options.browserLeaseCoordinator) {
-      throw new Error('Browser Worker service is not configured.');
-    }
+    const coordinator = this.requireLeaseCoordinator();
     const principal = requestPrincipal(request, this.apiSecurity);
-    const lease = await this.options.browserLeaseCoordinator.acquire({
-      taskId: `operation:${randomUUID()}`,
-      ownerUserId: principal.userId,
-      target,
-      initialUrl,
-      renderContext,
-      timeoutMs: browser.workerWaitTimeoutMs,
-    });
+    const lease = await coordinator.acquire({ taskId: `operation:${randomUUID()}`,
+      ownerUserId: principal.userId, target, initialUrl, renderContext,
+      timeoutMs: browser.workerWaitTimeoutMs });
     try {
       return await action(lease.sessionId);
     } finally {
       await lease.release();
     }
+  }
+
+  private requireLeaseCoordinator(): BrowserWorkerLeaseCoordinator {
+    if (!this.options.browserLeaseCoordinator) throw new Error('Browser Worker service is not configured.');
+    return this.options.browserLeaseCoordinator;
   }
 
   private setupStaticFiles(): void {
@@ -251,27 +276,19 @@ export class ComicCrawlerServer {
   private setupApiDocs(): void {
     const openApiPath = this.resolveOpenApiPath();
     if (!openApiPath) {
-      this.app.get('/api-docs', async (_request: FastifyRequest, reply: FastifyReply) => {
-        reply.code(500).send({ error: 'OpenAPI document not found' });
-      });
+      this.app.get('/api-docs', async (_request, reply) =>
+        reply.code(500).send({ error: 'OpenAPI document not found' }));
       return;
     }
+    this.registerApiDocs(openApiPath);
+  }
 
-    this.app.register(require('@fastify/swagger'), {
-      mode: 'static',
-      specification: {
-        path: openApiPath,
-      },
-    });
-    this.app.register(require('@fastify/swagger-ui'), {
-      routePrefix: '/api-docs',
-      uiConfig: {
-        docExpansion: 'list',
-        deepLinking: true,
-      },
-      staticCSP: true,
-      transformStaticCSP: (header: string) => header,
-    });
+  private registerApiDocs(openApiPath: string): void {
+    this.app.register(require('@fastify/swagger'), { mode: 'static',
+      specification: { path: openApiPath } });
+    this.app.register(require('@fastify/swagger-ui'), { routePrefix: '/api-docs',
+      uiConfig: { docExpansion: 'list', deepLinking: true }, staticCSP: true,
+      transformStaticCSP: (header: string) => header });
   }
 
   private resolveOpenApiPath(): string | undefined {
@@ -286,26 +303,15 @@ export class ComicCrawlerServer {
   }
 
   private setupHealthCheck(): void {
-    this.app.get('/api/status', async (_request: FastifyRequest, reply: FastifyReply) => {
-      const stats = this.options.taskManager.getStats();
-      const adapters = this.options.adapterRegistry.list();
+    this.app.get('/api/status', async (_request, reply) => reply.send({ data: this.healthStatus() }));
+  }
 
-      reply.send({
-        data: {
-          version: COMICCRAWLER_VERSION,
-          uptime: process.uptime(),
-          activeTasks: stats.running,
-          queuedTasks: stats.pending,
-          memory: {
-            used: process.memoryUsage().heapUsed,
-            total: process.memoryUsage().heapTotal,
-          },
-          adapters: {
-            loaded: adapters.length,
-            enabled: adapters.length,
-          },
-        },
-      });
-    });
+  private healthStatus(): Record<string, unknown> {
+    const stats = this.options.taskManager.getStats();
+    const adapters = this.options.adapterRegistry.list();
+    return { version: COMICCRAWLER_VERSION, uptime: process.uptime(),
+      activeTasks: stats.running, queuedTasks: stats.pending,
+      memory: { used: process.memoryUsage().heapUsed, total: process.memoryUsage().heapTotal },
+      adapters: { loaded: adapters.length, enabled: adapters.length } };
   }
 }

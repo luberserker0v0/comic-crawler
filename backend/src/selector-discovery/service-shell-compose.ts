@@ -5,6 +5,16 @@ import type {
   SelectorDiscoveryJob,
 } from './types';
 
+interface ShellParts {
+  commonClass: string;
+  verificationClass: string;
+  metadataClass: string;
+  chapterImagesClass: string;
+  classPrefix: string;
+  adapterId: string;
+  metadata: boolean;
+}
+
 export function hasCompleteImageSelectors(selectors: DynamicSiteAdapterManifest['selectors']['images'] | undefined): boolean {
   return Boolean(selectors?.item && selectors.srcAttr);
 }
@@ -26,36 +36,45 @@ export function composeAdapterShellFromCapabilities(
   drafts: SelectorDiscoveryCapabilityDraft[]
 ): { reviewNotesMarkdown: string; adapterImplementationTs: string } {
   const sources = drafts.map((draft) => draft.sourceTs?.trim() ?? '').filter(Boolean);
-  const commonSource = drafts.find((draft) => draft.stage === 'common-verification')?.sourceTs ?? '';
-  const commonClass = extractCapabilityClassName(commonSource, 'CommonCapability');
-  const verificationClass = extractCapabilityClassName(commonSource, 'VerificationCapability');
-  const metadataClass = extractCapabilityClassName(drafts.find((draft) => draft.stage === 'metadata')?.sourceTs ?? '', 'MetadataCapability');
-  const chapterImagesClass = extractCapabilityClassName(drafts.find((draft) => draft.stage === 'chapter-images')?.sourceTs ?? '', 'ChapterImagesCapability');
-  const classPrefix = toPascalIdentifier(job.hostname.replace(/^m\./i, ''));
-  const adapterId = createAdapterId(job.hostname);
-  const capabilities = {
-    verification: true,
-    metadata: job.target !== 'chapter-only',
-    chapterImages: true,
-  };
-  const shell = `export class ${classPrefix}Adapter extends AdapterBase {
-  readonly id = '${adapterId}';
+  const parts = createShellParts(job, drafts);
+  const shell = createAdapterShell(job, parts);
+  return { adapterImplementationTs: composeImplementation(shell, sources),
+    reviewNotesMarkdown: composeReviewNotes(job, parts) };
+}
+
+function createShellParts(job: SelectorDiscoveryJob,
+  drafts: SelectorDiscoveryCapabilityDraft[]): ShellParts {
+  const source = (stage: SelectorDiscoveryCapabilityDraft['stage']) =>
+    drafts.find((draft) => draft.stage === stage)?.sourceTs ?? '';
+  return { commonClass: extractCapabilityClassName(source('common-verification'), 'CommonCapability'),
+    verificationClass: extractCapabilityClassName(source('common-verification'), 'VerificationCapability'),
+    metadataClass: extractCapabilityClassName(source('metadata'), 'MetadataCapability'),
+    chapterImagesClass: extractCapabilityClassName(source('chapter-images'), 'ChapterImagesCapability'),
+    classPrefix: toPascalIdentifier(job.hostname.replace(/^m\./i, '')),
+    adapterId: createAdapterId(job.hostname), metadata: job.target !== 'chapter-only' };
+}
+
+function createAdapterShell(job: SelectorDiscoveryJob, parts: ShellParts): string {
+  return `export class ${parts.classPrefix}Adapter extends AdapterBase {
+  readonly id = '${parts.adapterId}';
   readonly name = '${toDisplayName(job.hostname)}';
   readonly domains = ['${job.hostname}'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = {
-    verification: ${capabilities.verification},
-    metadata: ${capabilities.metadata},
-    chapterImages: ${capabilities.chapterImages},
+    verification: true,
+    metadata: ${parts.metadata},
+    chapterImages: true,
   };
 
-  readonly common = new ${commonClass}(this);
-  readonly verification = new ${verificationClass}(this);
-${capabilities.metadata ? `  readonly metadata = new ${metadataClass}(this);\n` : ''}  readonly chapterImages = new ${chapterImagesClass}(this);
+  readonly common = new ${parts.commonClass}(this);
+  readonly verification = new ${parts.verificationClass}(this);
+${parts.metadata ? `  readonly metadata = new ${parts.metadataClass}(this);\n` : ''}  readonly chapterImages = new ${parts.chapterImagesClass}(this);
 }`;
+}
+
+function composeImplementation(shell: string, sources: string[]): string {
   const body = sources.map(stripTypeScriptImports).join('\n\n');
-  return {
-    adapterImplementationTs: `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+  return `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
 import {
   AdapterBase,
   CommonCapability,
@@ -67,27 +86,29 @@ import {
 ${shell}
 
 ${body}
-`,
-    reviewNotesMarkdown: `# System-Composed Adapter Draft
+`;
+}
+
+function composeReviewNotes(job: SelectorDiscoveryJob, parts: ShellParts): string {
+  return `# System-Composed Adapter Draft
 
 ComicCrawler assembled the AdapterBase shell from reviewed capability drafts.
 AO/Agent produced only capability subclasses.
 
 ## Adapter Identity
 
-- id: ${adapterId}
+- id: ${parts.adapterId}
 - name: ${toDisplayName(job.hostname)}
 - domains: ${job.hostname}
 - parseMode: playwright
 
 ## Capability Classes
 
-- CommonCapability: ${commonClass}
-- VerificationCapability: ${verificationClass}
-- MetadataCapability: ${capabilities.metadata ? metadataClass : 'not implemented for chapter-only target'}
-- ChapterImagesCapability: ${chapterImagesClass}
-`,
-  };
+- CommonCapability: ${parts.commonClass}
+- VerificationCapability: ${parts.verificationClass}
+- MetadataCapability: ${parts.metadata ? parts.metadataClass : 'not implemented for chapter-only target'}
+- ChapterImagesCapability: ${parts.chapterImagesClass}
+`;
 }
 
 export function extractCapabilityClassName(source: string, baseClass: string): string {
@@ -117,31 +138,32 @@ export function validateMetadataSelectorEvidence(source: string, taskMarkdown: s
   const reported = new Set<string>();
   for (const selector of selectors) {
     if (selector.startsWith('meta[') || selector === 'title' || selector === 'body') continue;
-    for (const className of extractCssClassNames(selector)) {
-      const evidenceNeedles = [
-        `.${className.toLowerCase()}`,
-        `class=${className.toLowerCase()}`,
-        `class="${className.toLowerCase()}`,
-      ];
-      if (!evidenceNeedles.some((needle) => normalizedTask.includes(needle))) {
-        const key = `class:${className}`;
-        if (!reported.has(key)) {
-          errors.push(`Metadata selector ".${className}" is not present in task DOM evidence.`);
-          reported.add(key);
-        }
-      }
-    }
-    for (const pathNeedle of extractHrefPathNeedles(selector)) {
-      if (!normalizedTask.includes(pathNeedle.toLowerCase())) {
-        const key = `href:${pathNeedle}`;
-        if (!reported.has(key)) {
-          errors.push(`Metadata selector href path "${pathNeedle}" is not present in task URL evidence.`);
-          reported.add(key);
-        }
-      }
-    }
+    validateClassEvidence(selector, normalizedTask, reported, errors);
+    validatePathEvidence(selector, normalizedTask, reported, errors);
   }
   return errors;
+}
+
+function validateClassEvidence(selector: string, task: string, reported: Set<string>, errors: string[]): void {
+  for (const name of extractCssClassNames(selector)) {
+    const lower = name.toLowerCase();
+    const found = [`.${lower}`, `class=${lower}`, `class="${lower}`].some((needle) => task.includes(needle));
+    const key = `class:${name}`;
+    if (!found && !reported.has(key)) {
+      errors.push(`Metadata selector ".${name}" is not present in task DOM evidence.`);
+      reported.add(key);
+    }
+  }
+}
+
+function validatePathEvidence(selector: string, task: string, reported: Set<string>, errors: string[]): void {
+  for (const path of extractHrefPathNeedles(selector)) {
+    const key = `href:${path}`;
+    if (!task.includes(path.toLowerCase()) && !reported.has(key)) {
+      errors.push(`Metadata selector href path "${path}" is not present in task URL evidence.`);
+      reported.add(key);
+    }
+  }
 }
 
 export function extractCheerioSelectors(source: string): string[] {
@@ -191,24 +213,29 @@ export function createCommonVerificationSkeleton(sourceUrl: string, hostname: st
   const pathCheck = urlPath
     ? `parsed.pathname === '${urlPath}' || parsed.pathname.startsWith('${urlPath}/')`
     : `parsed.pathname.startsWith('/')`;
-  return `import {
+  return COMMON_VERIFICATION_SKELETON.replace(/\{\{CLASS\}\}/g, classPrefix)
+    .replace(/\{\{HOST\}\}/g, hostname).replace(/\{\{BASE_HOST\}\}/g, baseHostname)
+    .replace('{{PATH_CHECK}}', pathCheck);
+}
+
+const COMMON_VERIFICATION_SKELETON = `import {
   CommonCapability,
   VerificationCapability,
 } from '../../base';
 
-class ${classPrefix}CommonCapability extends CommonCapability {
+class {{CLASS}}CommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
     try {
       const parsed = new URL(url);
-      return (parsed.hostname === '${hostname}' || parsed.hostname === '${baseHostname}') &&
-        (${pathCheck});
+      return (parsed.hostname === '{{HOST}}' || parsed.hostname === '{{BASE_HOST}}') &&
+        ({{PATH_CHECK}});
     } catch {
       return false;
     }
   }
 }
 
-class ${classPrefix}VerificationCapability extends VerificationCapability {
+class {{CLASS}}VerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|verify you are human|captcha|sorry, you have been blocked|you are unable to access|cdn-cgi\\/challenge-platform|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required!|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
@@ -221,14 +248,16 @@ class ${classPrefix}VerificationCapability extends VerificationCapability {
   }
 }
 `;
-}
 
 export function createMetadataSkeleton(hostname: string): string {
   const classPrefix = toPascalIdentifier(hostname.replace(/^m\./i, ''));
-  return `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+  return METADATA_SKELETON.replace(/\{\{CLASS\}\}/g, classPrefix);
+}
+
+const METADATA_SKELETON = `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
 import { MetadataCapability } from '../../base';
 
-class ${classPrefix}MetadataCapability extends MetadataCapability {
+class {{CLASS}}MetadataCapability extends MetadataCapability {
   extractTitle(document: unknown, sourceUrl: string): string {
     const $ = this.adapter.asCheerio(document);
     void $;
@@ -272,7 +301,6 @@ class ${classPrefix}MetadataCapability extends MetadataCapability {
   }
 }
 `;
-}
 
 export function toPascalIdentifier(value: string): string {
   const parts = value.split(/[^a-z0-9]+/i).filter(Boolean);

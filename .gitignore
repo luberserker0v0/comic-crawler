@@ -13,6 +13,7 @@ backend/downloads/
 agent-runtime/
 
 # Test and coverage output
+.artifacts/
 coverage/
 playwright-report/
 test-results/
@@ -23,6 +24,7 @@ logs/
 *.log
 *.tmp
 *.bak
+*.private.pem
 .tmp-dev-logs/
 tools/browser-client-acceptance/config.json
 tools/browser-client-acceptance/.state/

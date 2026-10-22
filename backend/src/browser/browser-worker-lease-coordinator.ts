@@ -87,22 +87,24 @@ export class BrowserWorkerLeaseCoordinator {
     this.validateTarget(request.ownerUserId, request.target);
     const worker = this.gateway.getWorker(request.target.workerId)!;
     const resource = this.gateway.getResource(request.target.resourceId)!;
-    if (!worker.online) {
-      throw new Error(`Browser Worker "${worker.workerId}" is offline.`);
+    this.ensureRecoveryWorkerAvailable(worker, request.requireHumanHandoff);
+    if (normalizeBrowserResourceUrl(resource.url) !== normalizeBrowserResourceUrl(request.expectedUrl)) {
+      throw new Error(`Browser resource "${resource.resourceId}" is not on the task target URL.`);
     }
+    return { resourceUrl: resource.url };
+  }
+
+  private ensureRecoveryWorkerAvailable(worker: BrowserWorker, requireHandoff: boolean): void {
+    if (!worker.online) throw new Error(`Browser Worker "${worker.workerId}" is offline.`);
     if (worker.activeSessionId || this.leasesByWorker.has(worker.workerId)) {
       throw new Error(`Browser Worker "${worker.workerId}" is busy.`);
     }
     if (!worker.capabilities.navigation || !worker.capabilities.renderedDom) {
       throw new Error(`Browser Worker "${worker.workerId}" does not provide the capabilities required by this task.`);
     }
-    if (request.requireHumanHandoff && !worker.capabilities.humanHandoff) {
+    if (requireHandoff && !worker.capabilities.humanHandoff) {
       throw new Error(`Browser Worker "${worker.workerId}" does not support human verification handoff.`);
     }
-    if (normalizeBrowserResourceUrl(resource.url) !== normalizeBrowserResourceUrl(request.expectedUrl)) {
-      throw new Error(`Browser resource "${resource.resourceId}" is not on the task target URL.`);
-    }
-    return { resourceUrl: resource.url };
   }
 
   async acquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease> {
@@ -111,21 +113,15 @@ export class BrowserWorkerLeaseCoordinator {
     const target = request.target ?? { mode: 'managed-profile' as const };
     this.validateTarget(request.ownerUserId, target);
     const deadline = Date.now() + normalizeTimeout(request.timeoutMs ?? this.defaultTimeoutMs);
-    let announcedWaiting = false;
+    return this.acquireUntil(request, target, deadline);
+  }
 
+  private async acquireUntil(request: AcquireBrowserWorkerLeaseRequest,
+    target: BrowserTarget, deadline: number): Promise<BrowserWorkerLease> {
+    let announcedWaiting = false;
     while (Date.now() < deadline) {
-      const worker = this.selectAvailableWorker(request.ownerUserId, target);
-      if (worker) {
-        const lease = this.reserve(request, worker);
-        try {
-          const session = await this.openSession(lease, request);
-          lease.sessionId = session.sessionId;
-          return lease;
-        } catch (error) {
-          this.removeReservation(lease);
-          if (Date.now() >= deadline) throw error;
-        }
-      }
+      const lease = await this.tryReserveAndOpen(request, target, deadline);
+      if (lease) return lease;
       if (!announcedWaiting) {
         announcedWaiting = true;
         await request.onWaiting?.(waitingMessage(target, false));
@@ -133,6 +129,21 @@ export class BrowserWorkerLeaseCoordinator {
       await this.waitForChange(Math.min(5_000, deadline - Date.now()));
     }
     throw new Error(waitingMessage(target, true));
+  }
+
+  private async tryReserveAndOpen(request: AcquireBrowserWorkerLeaseRequest,
+    target: BrowserTarget, deadline: number): Promise<BrowserWorkerLease | undefined> {
+    const worker = this.selectAvailableWorker(request.ownerUserId, target);
+    if (!worker) return undefined;
+    const lease = this.reserve(request, worker);
+    try {
+      lease.sessionId = (await this.openSession(lease, request)).sessionId;
+      return lease;
+    } catch (error) {
+      this.removeReservation(lease);
+      if (Date.now() >= deadline) throw error;
+      return undefined;
+    }
   }
 
   async tryAcquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease | undefined> {
@@ -158,25 +169,22 @@ export class BrowserWorkerLeaseCoordinator {
     lease.state = 'reconnecting';
     while (Date.now() < deadline) {
       if (isReleased(lease)) return false;
-      const worker = this.gateway.getWorker(lease.workerId);
-      if (worker?.online && worker.processInstanceId === lease.processInstanceId) {
-        try {
-          const session = await this.gateway.openSession({
-            workerId: lease.workerId,
-            leaseId: lease.leaseId,
-            sessionId: lease.sessionId,
-            source: lease.source,
-          });
-          lease.sessionId = session.sessionId;
-          lease.state = 'active';
-          return true;
-        } catch {
-          // The Worker may still be finishing disconnect cleanup.
-        }
-      }
+      if (await this.tryReconnect(lease)) return true;
       await this.waitForChange(Math.min(5_000, deadline - Date.now()));
     }
     return false;
+  }
+
+  private async tryReconnect(lease: BrowserWorkerLease): Promise<boolean> {
+    const worker = this.gateway.getWorker(lease.workerId);
+    if (!worker?.online || worker.processInstanceId !== lease.processInstanceId) return false;
+    try {
+      const session = await this.gateway.openSession({ workerId: lease.workerId,
+        leaseId: lease.leaseId, sessionId: lease.sessionId, source: lease.source });
+      lease.sessionId = session.sessionId;
+      lease.state = 'active';
+      return true;
+    } catch { return false; }
   }
 
   async releaseTask(taskId: string): Promise<void> {
@@ -202,7 +210,6 @@ export class BrowserWorkerLeaseCoordinator {
   private reserve(request: AcquireBrowserWorkerLeaseRequest, worker: BrowserWorker): BrowserWorkerLease {
     const target = request.target ?? { mode: 'managed-profile' as const };
     const source = sessionSource(target, request.initialUrl);
-    let released = false;
     const lease: BrowserWorkerLease = {
       leaseId: `lease_${randomUUID()}`,
       taskId: request.taskId,
@@ -213,19 +220,20 @@ export class BrowserWorkerLeaseCoordinator {
       source,
       state: 'active',
       acquiredAt: new Date().toISOString(),
-      release: async () => {
-        if (released) return;
-        released = true;
-        lease.state = 'releasing';
-        if (lease.sessionId) await this.gateway.closeSession(lease.sessionId).catch(() => undefined);
-        lease.state = 'released';
-        this.removeReservation(lease);
-      },
+      release: async () => this.releaseLease(lease),
     };
     this.leasesByWorker.set(worker.workerId, lease);
     this.leasesByTask.set(request.taskId, lease);
     this.notifyChanged();
     return lease;
+  }
+
+  private async releaseLease(lease: BrowserWorkerLease): Promise<void> {
+    if (isReleased(lease)) return;
+    lease.state = 'releasing';
+    if (lease.sessionId) await this.gateway.closeSession(lease.sessionId).catch(() => undefined);
+    lease.state = 'released';
+    this.removeReservation(lease);
   }
 
   private openSession(

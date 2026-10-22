@@ -24,232 +24,16 @@ const capabilities: BrowserCapabilities = {
   responsiveViewport: true,
 };
 
+let server: Server;
+
+let webSocketServer: WebSocketServer;
+
+let gateway: BrowserSessionGateway;
+
+let client: BrowserClient | undefined;
+
 describe('BrowserSessionGateway', () => {
-  let server: Server;
-  let webSocketServer: WebSocketServer;
-  let gateway: BrowserSessionGateway;
-  let client: BrowserClient | undefined;
-
-  afterEach(async () => {
-    await client?.close().catch(() => undefined);
-    gateway?.dispose();
-    webSocketServer?.close();
-    if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
-
-  it('runs session commands through a real WebSocket and retains Worker identity on reconnect', async () => {
-    const registry = new BrowserClientRegistry();
-    const enrollment = await registry.enroll(principal(), { name: 'Integration Client', capabilities });
-    gateway = new BrowserSessionGateway(registry, undefined, {
-      heartbeatIntervalMs: 10_000,
-      heartbeatTimeoutMs: 30_000,
-    });
-    server = createServer();
-    webSocketServer = new WebSocketServer({ noServer: true });
-    server.on('upgrade', (request, socket, head) => {
-      if (request.url !== '/api/browser-clients/connect') return socket.destroy();
-      webSocketServer.handleUpgrade(request, socket, head, (webSocket) => gateway.acceptConnection(webSocket));
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Test server has no address.');
-    const serverUrl = `http://127.0.0.1:${address.port}`;
-    const executor = new TestExecutor();
-    client = new BrowserClient({
-      serverUrl,
-      executor,
-      stateStore: new MemoryStateStore({
-        schemaVersion: 1,
-        serverUrl: `${serverUrl}/`,
-        clientId: enrollment.clientId,
-        credentialId: enrollment.credentialId,
-        credential: enrollment.credential,
-        registeredAt: enrollment.registeredAt,
-      }),
-      fetch: async () => jsonResponse({
-        protocolVersion: 2,
-        apiSecurityMode: 'public',
-        endpoints: {
-          enroll: '/api/browser-clients/enroll',
-          controlWebSocket: '/api/browser-clients/connect',
-        },
-      }),
-      webSocketFactory: {
-        create: (url) => new WebSocket(url) as unknown as BrowserClientSocket,
-      },
-      randomUUID: () => 'process-integration',
-    });
-
-    const firstConnection = await client.connect();
-    expect(firstConnection.workerId).toMatch(/^bw_/);
-    expect(gateway.listWorkers('alice')).toEqual([
-      expect.objectContaining({
-        workerId: firstConnection.workerId,
-        clientId: enrollment.clientId,
-        processInstanceId: 'process-integration',
-        online: true,
-      }),
-    ]);
-
-    const resource = await client.registerResource({
-      kind: 'tab',
-      url: 'https://example.test/chapter',
-      title: 'Chapter',
-    });
-    expect(gateway.listResources('alice', firstConnection.workerId)).toEqual([
-      expect.objectContaining({
-        resourceId: resource.resourceId,
-        workerId: firstConnection.workerId,
-        url: 'https://example.test/chapter',
-      }),
-    ]);
-
-    const session = await gateway.openSession({
-      workerId: firstConnection.workerId,
-      leaseId: 'lease-1',
-      source: {
-        type: 'existing-resource',
-        resourceId: resource.resourceId,
-        expectedUrl: 'https://example.test/chapter',
-        navigationPolicy: 'adopt-current-page',
-      },
-    });
-    expect(executor.openRequests).toEqual([
-      expect.objectContaining({ sessionId: session.sessionId, leaseId: 'lease-1' }),
-    ]);
-    await expect(gateway.openSession({
-      workerId: firstConnection.workerId,
-      leaseId: 'lease-2',
-      source: {
-        type: 'existing-resource',
-        resourceId: resource.resourceId,
-        expectedUrl: 'https://example.test/chapter',
-        navigationPolicy: 'adopt-current-page',
-      },
-    })).rejects.toThrow('is busy');
-
-    await expect(gateway.execute(session.sessionId, {
-      type: 'page.navigate',
-      url: 'https://example.test/chapter',
-    })).resolves.toEqual({
-      type: 'page.navigate',
-      url: 'https://example.test/chapter',
-    });
-    await expect(gateway.execute(session.sessionId, { type: 'page.get-content' })).resolves.toEqual({
-      type: 'page.get-content',
-      url: 'https://example.test/chapter',
-      html: '<main>chapter</main>',
-    });
-
-    await expect(client.revokeResource(resource.resourceId)).rejects.toThrow('is in use');
-    expect(gateway.getWorker(firstConnection.workerId)).toMatchObject({ online: true });
-    expect(gateway.getResource(resource.resourceId)).toBeDefined();
-
-    await gateway.closeSession(session.sessionId);
-    expect(executor.session.closed).toBe(true);
-    await expect(gateway.openSession({
-      workerId: firstConnection.workerId,
-      leaseId: 'lease-url-mismatch',
-      source: {
-        type: 'existing-resource',
-        resourceId: resource.resourceId,
-        expectedUrl: 'https://example.test/another-chapter',
-        navigationPolicy: 'adopt-current-page',
-      },
-    })).rejects.toThrow('is not on the requested URL');
-    await client.revokeResource(resource.resourceId);
-    expect(gateway.getResource(resource.resourceId)).toBeUndefined();
-
-    await client.disconnect();
-    await waitFor(() => gateway.getWorker(firstConnection.workerId)?.online === false);
-    const reconnected = await client.connect();
-    expect(reconnected.workerId).toBe(firstConnection.workerId);
-  });
-
-  it('rejects an invalid client credential before registering a Worker', async () => {
-    const registry = new BrowserClientRegistry();
-    const enrollment = await registry.enroll(principal(), { capabilities });
-    gateway = new BrowserSessionGateway(registry);
-    server = createServer();
-    webSocketServer = new WebSocketServer({ noServer: true });
-    server.on('upgrade', (request, socket, head) => {
-      webSocketServer.handleUpgrade(request, socket, head, (webSocket) => gateway.acceptConnection(webSocket));
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Test server has no address.');
-    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/browser-clients/connect`);
-    await once(socket, 'open');
-    socket.send(JSON.stringify({
-      protocolVersion: 2,
-      type: 'client.authenticate',
-      clientId: enrollment.clientId,
-      credential: 'invalid',
-      processInstanceId: 'bad-process',
-      capabilities,
-    }));
-    const [data] = await once(socket, 'message');
-    expect(JSON.parse(data.toString())).toEqual({
-      protocolVersion: 2,
-      type: 'client.rejected',
-      reason: 'Browser Client credential is invalid.',
-    });
-    await once(socket, 'close');
-    expect(gateway.listWorkers()).toEqual([]);
-  });
-
-  it('rejects resource registration from a managed-profile Worker without disconnecting it', async () => {
-    const managedCapabilities: BrowserCapabilities = {
-      ...capabilities,
-      executionMode: 'managed-profile',
-    };
-    const registry = new BrowserClientRegistry();
-    const enrollment = await registry.enroll(principal(), { capabilities: managedCapabilities });
-    gateway = new BrowserSessionGateway(registry);
-    server = createServer();
-    webSocketServer = new WebSocketServer({ noServer: true });
-    server.on('upgrade', (request, socket, head) => {
-      webSocketServer.handleUpgrade(request, socket, head, (webSocket) => gateway.acceptConnection(webSocket));
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Test server has no address.');
-    const serverUrl = `http://127.0.0.1:${address.port}`;
-    client = new BrowserClient({
-      serverUrl,
-      executor: new TestExecutor(managedCapabilities),
-      stateStore: new MemoryStateStore({
-        schemaVersion: 1,
-        serverUrl: `${serverUrl}/`,
-        clientId: enrollment.clientId,
-        credentialId: enrollment.credentialId,
-        credential: enrollment.credential,
-        registeredAt: enrollment.registeredAt,
-      }),
-      fetch: async () => jsonResponse({
-        protocolVersion: 2,
-        apiSecurityMode: 'public',
-        endpoints: {
-          enroll: '/api/browser-clients/enroll',
-          controlWebSocket: '/api/browser-clients/connect',
-        },
-      }),
-      webSocketFactory: {
-        create: (url) => new WebSocket(url) as unknown as BrowserClientSocket,
-      },
-    });
-
-    const connection = await client.connect();
-    await expect(client.registerResource({
-      kind: 'tab',
-      url: 'https://example.test/chapter',
-    })).rejects.toThrow('Only an existing-tab Browser Worker');
-    expect(gateway.getWorker(connection.workerId)).toMatchObject({ online: true });
-    expect(gateway.listResources('alice')).toEqual([]);
-  });
+  BrowserSessionGatewayTestGroup1();
 });
 
 class MemoryStateStore implements ClientStateStore {
@@ -320,4 +104,192 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     if (Date.now() > deadline) throw new Error('Timed out while waiting for test condition.');
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+}
+
+function BrowserSessionGatewayTestGroup1(): void {
+  afterEach(BrowserSessionGatewayTestScenario1);
+  it('runs session commands through a real WebSocket and retains Worker identity on reconnect', BrowserSessionGatewayTestRunsSessionCommandsThroughARealWebSocketAndRetainsWorkerIdentityOnReconnect);
+  it('rejects an invalid client credential before registering a Worker', BrowserSessionGatewayTestRejectsAnInvalidClientCredentialBeforeRegisteringAWorker);
+  it('rejects resource registration from a managed-profile Worker without disconnecting it', BrowserSessionGatewayTestRejectsResourceRegistrationFromAManagedProfileWorkerWithoutDisconnectingIt);
+}
+
+async function BrowserSessionGatewayTestScenario1() {
+    await client?.close().catch(() => undefined);
+    gateway?.dispose();
+    webSocketServer?.close();
+    if (server?.listening)
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function BrowserSessionGatewayTestRunsSessionCommandsThroughARealWebSocketAndRetainsWorkerIdentityOnReconnect() {
+    const registry = new BrowserClientRegistry();
+    const enrollment = await registry.enroll(principal(), { name: 'Integration Client', capabilities });
+    const serverUrl = await startGateway(registry, { heartbeatIntervalMs: 10000, heartbeatTimeoutMs: 30000 }, true);
+    const executor = new TestExecutor();
+    client = createTestClient(serverUrl, enrollment, executor, 'process-integration');
+    const firstConnection = await client.connect();
+    expectConnectedWorker(firstConnection.workerId, enrollment.clientId);
+    const resource = await client.registerResource({ kind: 'tab',
+      url: 'https://example.test/chapter', title: 'Chapter' });
+    expectRegisteredResource(firstConnection.workerId, resource.resourceId);
+    const session = await openResourceSession(firstConnection.workerId, resource.resourceId, 'lease-1');
+    await expectSessionBehavior(executor, firstConnection.workerId, resource.resourceId, session.sessionId);
+    await expectWorkerReconnect(firstConnection.workerId);
+}
+
+async function startGateway(registry: BrowserClientRegistry,
+  options: NonNullable<ConstructorParameters<typeof BrowserSessionGateway>[2]> = {}, filterPath = false): Promise<string> {
+    gateway = new BrowserSessionGateway(registry, undefined, options);
+    server = createServer();
+    webSocketServer = new WebSocketServer({ noServer: true });
+    server.on('upgrade', (request, socket, head) => {
+        if (filterPath && request.url !== '/api/browser-clients/connect')
+            return socket.destroy();
+        webSocketServer.handleUpgrade(request, socket, head, (webSocket) => gateway.acceptConnection(webSocket));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string')
+        throw new Error('Test server has no address.');
+    return `http://127.0.0.1:${address.port}`;
+}
+
+type Enrollment = Awaited<ReturnType<BrowserClientRegistry['enroll']>>;
+
+function createTestClient(serverUrl: string, enrollment: Enrollment, executor: BrowserExecutor,
+  processInstanceId?: string): BrowserClient {
+  return new BrowserClient({
+        serverUrl,
+        executor,
+        stateStore: new MemoryStateStore(clientState(serverUrl, enrollment)),
+        fetch: async () => jsonResponse(DISCOVERY_RESPONSE),
+        webSocketFactory: {
+            create: (url) => new WebSocket(url) as unknown as BrowserClientSocket,
+        },
+        ...(processInstanceId ? { randomUUID: () => processInstanceId } : {}),
+    });
+}
+
+function clientState(serverUrl: string, enrollment: Enrollment): BrowserClientState {
+  return { schemaVersion: 1, serverUrl: `${serverUrl}/`, clientId: enrollment.clientId,
+    credentialId: enrollment.credentialId, credential: enrollment.credential,
+    registeredAt: enrollment.registeredAt };
+}
+
+const DISCOVERY_RESPONSE = { protocolVersion: 2 as const, apiSecurityMode: 'public' as const,
+  endpoints: { enroll: '/api/browser-clients/enroll',
+    controlWebSocket: '/api/browser-clients/connect' } };
+
+function expectConnectedWorker(workerId: string, clientId: string): void {
+    expect(workerId).toMatch(/^bw_/);
+    expect(gateway.listWorkers('alice')).toEqual([
+        expect.objectContaining({
+            workerId, clientId,
+            processInstanceId: 'process-integration',
+            online: true,
+        }),
+    ]);
+}
+
+function expectRegisteredResource(workerId: string, resourceId: string): void {
+    expect(gateway.listResources('alice', workerId)).toEqual([
+        expect.objectContaining({
+            resourceId, workerId,
+            url: 'https://example.test/chapter',
+        }),
+    ]);
+}
+
+function openResourceSession(workerId: string, resourceId: string, leaseId: string) {
+  return gateway.openSession({ workerId, leaseId,
+        source: {
+            type: 'existing-resource',
+            resourceId,
+            expectedUrl: 'https://example.test/chapter',
+            navigationPolicy: 'adopt-current-page',
+        },
+  });
+}
+
+async function expectSessionBehavior(executor: TestExecutor, workerId: string,
+  resourceId: string, sessionId: string): Promise<void> {
+    expect(executor.openRequests).toEqual([
+        expect.objectContaining({ sessionId, leaseId: 'lease-1' }),
+    ]);
+    await expect(openResourceSession(workerId, resourceId, 'lease-2')).rejects.toThrow('is busy');
+    await expectSessionCommands(sessionId);
+    await expect(client!.revokeResource(resourceId)).rejects.toThrow('is in use');
+    expect(gateway.getWorker(workerId)).toMatchObject({ online: true });
+    await gateway.closeSession(sessionId);
+    expect(executor.session.closed).toBe(true);
+    await expectUrlMismatch(workerId, resourceId);
+    await client!.revokeResource(resourceId);
+}
+
+async function expectSessionCommands(sessionId: string): Promise<void> {
+    await expect(gateway.execute(sessionId, {
+        type: 'page.navigate',
+        url: 'https://example.test/chapter',
+    })).resolves.toEqual({
+        type: 'page.navigate',
+        url: 'https://example.test/chapter',
+    });
+    await expect(gateway.execute(sessionId, { type: 'page.get-content' })).resolves.toEqual({
+        type: 'page.get-content',
+        url: 'https://example.test/chapter',
+        html: '<main>chapter</main>',
+    });
+}
+
+async function expectUrlMismatch(workerId: string, resourceId: string): Promise<void> {
+    await expect(gateway.openSession({ workerId, leaseId: 'lease-url-mismatch', source: {
+      type: 'existing-resource', resourceId, expectedUrl: 'https://example.test/another-chapter',
+      navigationPolicy: 'adopt-current-page' } })).rejects.toThrow('is not on the requested URL');
+}
+
+async function expectWorkerReconnect(workerId: string): Promise<void> {
+  await client!.disconnect();
+  await waitFor(() => gateway.getWorker(workerId)?.online === false);
+  await expect(client!.connect()).resolves.toMatchObject({ workerId });
+}
+
+async function BrowserSessionGatewayTestRejectsAnInvalidClientCredentialBeforeRegisteringAWorker() {
+    const registry = new BrowserClientRegistry();
+    const enrollment = await registry.enroll(principal(), { capabilities });
+    const serverUrl = await startGateway(registry);
+    const socket = new WebSocket(`${serverUrl.replace('http:', 'ws:')}/api/browser-clients/connect`);
+    await once(socket, 'open');
+    sendInvalidAuthentication(socket, enrollment.clientId);
+    const [data] = await once(socket, 'message');
+    expect(JSON.parse(data.toString())).toEqual({
+        protocolVersion: 2,
+        type: 'client.rejected',
+        reason: 'Browser Client credential is invalid.',
+    });
+    await once(socket, 'close');
+    expect(gateway.listWorkers()).toEqual([]);
+}
+
+function sendInvalidAuthentication(socket: WebSocket, clientId: string): void {
+  socket.send(JSON.stringify({ protocolVersion: 2, type: 'client.authenticate', clientId,
+    credential: 'invalid', processInstanceId: 'bad-process', capabilities }));
+}
+
+async function BrowserSessionGatewayTestRejectsResourceRegistrationFromAManagedProfileWorkerWithoutDisconnectingIt() {
+    const managedCapabilities: BrowserCapabilities = {
+        ...capabilities,
+        executionMode: 'managed-profile',
+    };
+    const registry = new BrowserClientRegistry();
+    const enrollment = await registry.enroll(principal(), { capabilities: managedCapabilities });
+    const serverUrl = await startGateway(registry);
+    client = createTestClient(serverUrl, enrollment, new TestExecutor(managedCapabilities));
+    const connection = await client.connect();
+    await expect(client.registerResource({
+        kind: 'tab',
+        url: 'https://example.test/chapter',
+    })).rejects.toThrow('Only an existing-tab Browser Worker');
+    expect(gateway.getWorker(connection.workerId)).toMatchObject({ online: true });
+    expect(gateway.listResources('alice')).toEqual([]);
 }

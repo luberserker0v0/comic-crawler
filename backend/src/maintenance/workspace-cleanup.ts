@@ -21,64 +21,37 @@ export async function cleanupFixtures(
 ): Promise<MaintenanceResult['fixtures']> {
   const result: MaintenanceResult['fixtures'] = { scanned: 0, deleted: [], skipped: [], errors: [], bytesFreed: 0 };
   const workspaceRoot = deps.workspaceRoot;
-  if (!workspaceRoot) {
-    result.skipped.push('workspaceRoot not configured');
-    return result;
-  }
+  if (!workspaceRoot) { result.skipped.push('workspaceRoot not configured'); return result; }
   const fixturesRoot = join(workspaceRoot, 'fixtures');
   const cutoff = Date.now() - policy.discoveryJobsRetainDays * 24 * 60 * 60 * 1000;
-  let domains: string[];
-  try {
-    domains = await fs.readdir(fixturesRoot);
-  } catch {
-    return result;
-  }
-  for (const domain of domains) {
-    const domainDir = join(fixturesRoot, domain);
-    let ids: string[];
-    try {
-      const stat = await fs.stat(domainDir);
-      if (!stat.isDirectory()) continue;
-      ids = await fs.readdir(domainDir);
-    } catch {
-      continue;
-    }
-    for (const id of ids) {
-      const dir = join(domainDir, id);
-      let stat;
-      try {
-        stat = await fs.stat(dir);
-        if (!stat.isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      result.scanned += 1;
-      if (stat.mtimeMs >= cutoff) {
-        result.skipped.push(`${domain}/${id}: within retention`);
-        continue;
-      }
-      let size = 0;
-      try {
-        size = await dirSize(dir);
-      } catch {
-        size = 0;
-      }
-      if (dryRun) {
-        result.deleted.push(`${domain}/${id}`);
-        result.bytesFreed += size;
-        continue;
-      }
-      try {
-        assertInside(dir, fixturesRoot);
-        await fs.rm(dir, { recursive: true, force: true });
-        result.deleted.push(`${domain}/${id}`);
-        result.bytesFreed += size;
-      } catch (error) {
-        result.errors.push({ id: `${domain}/${id}`, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
+  for (const domain of await listDirectories(fixturesRoot)) {
+    await cleanupFixtureDomain(fixturesRoot, domain, cutoff, dryRun, result);
   }
   return result;
+}
+
+async function cleanupFixtureDomain(root: string, domain: string, cutoff: number, dryRun: boolean,
+  result: MaintenanceResult['fixtures']): Promise<void> {
+  const domainDir = join(root, domain);
+  for (const id of await listDirectories(domainDir)) {
+    await cleanupFixture(root, domain, id, cutoff, dryRun, result);
+  }
+}
+
+async function cleanupFixture(root: string, domain: string, id: string, cutoff: number, dryRun: boolean,
+  result: MaintenanceResult['fixtures']): Promise<void> {
+  const dir = join(root, domain, id);
+  const mtimeMs = await directoryMtime(dir);
+  if (mtimeMs === null) return;
+  const key = `${domain}/${id}`;
+  result.scanned += 1;
+  if (mtimeMs >= cutoff) { result.skipped.push(`${key}: within retention`); return; }
+  const size = await dirSize(dir).catch(() => 0);
+  if (dryRun) { result.deleted.push(key); result.bytesFreed += size; return; }
+  try {
+    assertInside(dir, root); await fs.rm(dir, { recursive: true, force: true });
+    result.deleted.push(key); result.bytesFreed += size;
+  } catch (error) { result.errors.push({ id: key, error: errorMessage(error) }); }
 }
 
 /**
@@ -94,56 +67,48 @@ export async function cleanupAgentSessions(
 ): Promise<MaintenanceScopeResult> {
   const result: MaintenanceScopeResult = { scanned: 0, deleted: [], skipped: [], errors: [] };
   const workspaceRoot = deps.workspaceRoot;
-  if (!workspaceRoot) {
-    result.skipped.push('workspaceRoot not configured');
-    return result;
-  }
+  if (!workspaceRoot) { result.skipped.push('workspaceRoot not configured'); return result; }
   const cutoff = Date.now() - policy.tasksRetainDays * 24 * 60 * 60 * 1000;
   const ignoredTopLevel = new Set(['fixtures', 'bundle-evaluations']);
-  let topEntries: string[];
-  try {
-    topEntries = await fs.readdir(workspaceRoot);
-  } catch {
-    return result;
-  }
-  for (const top of topEntries) {
+  for (const top of await listDirectories(workspaceRoot)) {
     if (ignoredTopLevel.has(top)) continue;
-    const adapterDir = join(workspaceRoot, top);
-    let children: string[];
-    try {
-      const stat = await fs.stat(adapterDir);
-      if (!stat.isDirectory()) continue;
-      children = await fs.readdir(adapterDir);
-    } catch {
-      continue;
-    }
-    for (const child of children) {
-      if (!child.startsWith('session-')) continue;
-      const dir = join(adapterDir, child);
-      let stat;
-      try {
-        stat = await fs.stat(dir);
-        if (!stat.isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      result.scanned += 1;
-      if (stat.mtimeMs >= cutoff) {
-        result.skipped.push(`${top}/${child}: within retention`);
-        continue;
-      }
-      if (dryRun) {
-        result.deleted.push(`${top}/${child}`);
-        continue;
-      }
-      try {
-        assertInside(dir, workspaceRoot);
-        await fs.rm(dir, { recursive: true, force: true });
-        result.deleted.push(`${top}/${child}`);
-      } catch (error) {
-        result.errors.push({ id: `${top}/${child}`, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
+    await cleanupAdapterSessions(workspaceRoot, top, cutoff, dryRun, result);
   }
   return result;
+}
+
+async function cleanupAdapterSessions(root: string, adapterId: string, cutoff: number, dryRun: boolean,
+  result: MaintenanceScopeResult): Promise<void> {
+  for (const child of await listDirectories(join(root, adapterId))) {
+    if (child.startsWith('session-')) await cleanupSession(root, adapterId, child, cutoff, dryRun, result);
+  }
+}
+
+async function cleanupSession(root: string, adapterId: string, session: string, cutoff: number, dryRun: boolean,
+  result: MaintenanceScopeResult): Promise<void> {
+  const dir = join(root, adapterId, session);
+  const mtimeMs = await directoryMtime(dir);
+  if (mtimeMs === null) return;
+  const key = `${adapterId}/${session}`;
+  result.scanned += 1;
+  if (mtimeMs >= cutoff) { result.skipped.push(`${key}: within retention`); return; }
+  if (dryRun) { result.deleted.push(key); return; }
+  try { assertInside(dir, root); await fs.rm(dir, { recursive: true, force: true }); result.deleted.push(key); }
+  catch (error) { result.errors.push({ id: key, error: errorMessage(error) }); }
+}
+
+async function listDirectories(root: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch { return []; }
+}
+
+async function directoryMtime(path: string): Promise<number | null> {
+  try { const stat = await fs.stat(path); return stat.isDirectory() ? stat.mtimeMs : null; }
+  catch { return null; }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

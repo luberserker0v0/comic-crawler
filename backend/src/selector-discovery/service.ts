@@ -1,12 +1,10 @@
 import type { AdapterRegistry } from '../adapter/registry';
 import { getAdapterCapabilities } from '../adapter/registry';
-import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../adapter/dynamic-site-adapter';
-import {
-  ACTIVE_DYNAMIC_ADAPTERS_KEY,
-  ACTIVE_IMPLEMENTATION_ADAPTERS_KEY,
-} from '../adapter/runtime-state';
-import type { AdapterCapabilities, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
+import type { AdapterPackageManifest, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
+import { AdapterCatalog } from '../adapter/catalog';
+import { createAdapterPackage } from '../adapter/package-builder';
+import { loadCatalogAdapters } from '../adapter/catalog-runtime';
 import { AoClient } from './ao-client';
 import { SelectorDiscoveryBundleManager } from './bundle-manager';
 import { fetchSafeHtml, normalizeAndValidateUrl, type SafeHtmlFetchResult } from './safe-fetch';
@@ -54,20 +52,291 @@ const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'so
   { stage: 'chapter-images', sourcePath: 'outputs/chapter-images-capability.ts', reviewPath: 'outputs/chapter-images-review.md' },
 ];
 
-export interface ActiveImplementationAdapterRecord {
-  adapterId: string;
-  name: string;
-  domains: string[];
-  urlPatterns: string[];
-  parseMode: IComicAdapter['parseMode'];
-  capabilities: AdapterCapabilities;
-  sourceDiscoveryId: string;
-  adapterImplementationTs: string;
-  promotedAt: string;
-  approvalFixture?: FixtureSummary;
+type RegisteredAdapter = ReturnType<AdapterRegistry['getAll']>[number];
+type DiscoveryBundle = Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>;
+type SafeFetchOptions = NonNullable<Parameters<typeof fetchSafeHtml>[1]>;
+type RevisionTask = NonNullable<SelectorDiscoveryJob['functionRevisionTasks']>[number];
+
+interface DiscoveryCreateContext {
+  normalizedUrl: string; hostname: string; target: 'full' | 'chapter-only';
+  matchedAdapter?: RegisteredAdapter; domainMatchedAdapter?: RegisteredAdapter; canAugment: boolean;
 }
 
-export type SelectorDiscoveryPromotionResult = ActiveImplementationAdapterRecord;
+interface DiscoveryRunConfiguration {
+  aoBaseUrl: string;
+  model: string;
+  providerDocument: NonNullable<DiscoveryInput['providerDocument']>;
+}
+
+interface ChapterOnlyDiscoveryInput {
+  client: AoClient; bundle: DiscoveryBundle; model: string; aoBaseUrl: string;
+  chapterFetch: SafeHtmlFetchResult; phase1Markdown: string;
+}
+
+interface RevisionRuntime {
+  job: SelectorDiscoveryJob;
+  settings: Awaited<ReturnType<SelectorDiscoverySettingsStore['getRequired']>>['settings'] & {
+    model: string; aoBaseUrl: string;
+  };
+  providerDocument: Awaited<ReturnType<SelectorDiscoverySettingsStore['getRequired']>>['providerDocument'];
+  client: AoClient;
+}
+
+interface AoPhaseOptions { validate?: (markdown: string) => { valid: boolean; errors: string[] } }
+
+function normalizeServiceOptions(
+  value?: SelectorDiscoveryBundleManager | SelectorDiscoveryServiceOptions
+): SelectorDiscoveryServiceOptions {
+  return value instanceof SelectorDiscoveryBundleManager ? { bundleManager: value } : value ?? {};
+}
+
+function createDiscoveryScheduler(
+  execute: (task: TaskItem<DiscoveryInput>) => Promise<void>, policy?: SchedulingPolicy<DiscoveryInput>
+): TaskScheduler<DiscoveryInput> {
+  const fallback = new ConcurrentSchedulingPolicy<DiscoveryInput>({ maxConcurrency: 2,
+    maxConcurrencyPerGroup: 1, groupBy: (task) => new URL(task.data.url).hostname });
+  return new TaskScheduler(execute, { autoStart: true, concurrency: 1 }, policy ?? fallback);
+}
+
+function createDiscoveryContext(input: DiscoveryInput, registry: AdapterRegistry): DiscoveryCreateContext {
+  const normalizedUrl = normalizeAndValidateUrl(input.url);
+  const matchedAdapter = registry.findByUrl(normalizedUrl);
+  const domainMatchedAdapter = matchedAdapter ?? registry.findByUrlDomain(normalizedUrl);
+  const target = input.target ?? 'full';
+  const canAugment = Boolean(domainMatchedAdapter && target === 'full'
+    && !adapterSupportsDiscoveryTarget(domainMatchedAdapter, target)
+    && getAdapterCapabilities(domainMatchedAdapter).chapterImages);
+  return { normalizedUrl, hostname: new URL(normalizedUrl).hostname, target,
+    matchedAdapter, domainMatchedAdapter, canAugment };
+}
+
+function createBaseDiscoveryJob(
+  id: string, input: DiscoveryInput, context: DiscoveryCreateContext,
+  status: SelectorDiscoveryJob['status']
+): SelectorDiscoveryJob {
+  const now = new Date().toISOString();
+  return { id, url: input.url, normalizedUrl: context.normalizedUrl, hostname: context.hostname,
+    status, target: context.target, promotionMode: context.canAugment ? 'augment' : 'create',
+    baseAdapterId: context.canAugment ? context.domainMatchedAdapter?.id : undefined,
+    createdAt: now, updatedAt: now, ownerUserId: input.ownerUserId,
+    browserTarget: input.browserTarget, browserSessionId: input.browserSessionId };
+}
+
+function createQueuedDiscoveryJob(
+  id: string, input: DiscoveryInput, context: DiscoveryCreateContext
+): SelectorDiscoveryJob {
+  return { ...createBaseDiscoveryJob(id, input, context, 'queued'), model: input.model,
+    aoBaseUrl: input.aoBaseUrl, stopAfterStage: input.stopAfterStage,
+    inputSource: input.htmlSnapshot ? 'html-snapshot' : 'live-fetch' };
+}
+
+function requireRevisionSource(source: string | undefined, job: SelectorDiscoveryJob): string {
+  const value = source?.trim() || job.adapterImplementationTs?.trim();
+  if (!value) throw new Error('Discovery job has no TypeScript implementation draft to revise.');
+  return value;
+}
+
+function createRevisionTask(job: SelectorDiscoveryJob, functionId: string, instruction: string): RevisionTask {
+  const now = new Date().toISOString();
+  return { id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    parentDiscoveryId: job.id, functionId, instruction: instruction.trim(), status: 'queued',
+    createdAt: now, updatedAt: now };
+}
+
+function findRepresentativeChapterUrl(phase1: string, metadata: SafeHtmlFetchResult): string {
+  const url = tryExtractRepresentativeChapterUrl(phase1, metadata.finalUrl)
+    ?? extractFallbackChapterUrlFromHtml(metadata.html, metadata.finalUrl);
+  if (!url) throw new Error(
+    'Phase 1 output did not include a Representative Chapter URL and no fallback chapter link was found.');
+  return url;
+}
+
+const AO_PHASE_MESSAGE_TEMPLATE = `{{TASK}}
+
+## Required AO Output
+
+Write the full Markdown result to {{OUTPUT}}.
+
+Also return the same Markdown result in your chat response. Do not only summarize. Do not output JSON.
+
+Use the exact Markdown headings required by the referenced contract file. Do not rename, decorate, or add parenthetical suffixes to required headings. If this is the final candidate, the first required section must be exactly "## Adapter Identity".
+{{FEEDBACK}}`;
+
+function createAoPhaseMessage(task: string, output: string, feedback: string): string {
+  return AO_PHASE_MESSAGE_TEMPLATE.replace('{{TASK}}', task)
+    .replace('{{OUTPUT}}', output).replace('{{FEEDBACK}}', feedback);
+}
+
+function capabilityStageResult(
+  drafts: SelectorDiscoveryCapabilityDraft[], stopAfter?: SelectorDiscoveryCapabilityDraft['stage']
+) {
+  const latest = drafts.at(-1);
+  if (latest?.validation && !latest.validation.valid)
+    return { adapterImplementationTs: '', reviewNotesMarkdown: formatCapabilityDraftFailureReview(drafts),
+      capabilityDrafts: drafts };
+  if (latest && stopAfter === latest.stage)
+    return { adapterImplementationTs: '', reviewNotesMarkdown: formatCapabilityStageSmokeReview(drafts),
+      capabilityDrafts: drafts };
+  return undefined;
+}
+
+const CAPABILITY_MESSAGE_TEMPLATE = `# Capability Stage Task
+
+Read task.md plus the named contracts. Produce only stage \`{{STAGE}}\`:
+
+- TypeScript: {{SOURCE}}
+- Markdown review: {{REVIEW}}
+
+Use exact capability signatures. Keep source out of review notes and chat. Do not output JSON, import Markdown contracts, write the AdapterBase shell, or mix capabilities. The supplied DOM is prepared Playwright output; capability code extracts from it and does not perform browser actions.
+{{INSTRUCTION}}
+{{RETRY}}
+
+After writing both files, reply with one short confirmation sentence.`;
+
+function createCapabilityMessage(
+  draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+  job: SelectorDiscoveryJob, retry?: string
+): string {
+  return CAPABILITY_MESSAGE_TEMPLATE.replace('{{STAGE}}', draft.stage)
+    .replace('{{SOURCE}}', draft.sourcePath).replace('{{REVIEW}}', draft.reviewPath)
+    .replace('{{INSTRUCTION}}', capabilityTemplateInstruction(draft.stage, job))
+    .replace('{{RETRY}}', retry ? `## Retry Feedback\n\n${retry}` : '');
+}
+
+function capabilityTemplateInstruction(stage: SelectorDiscoveryCapabilityDraft['stage'], job: SelectorDiscoveryJob): string {
+  if (stage === 'common-verification') return COMMON_CAPABILITY_INSTRUCTION
+    .replace('{{HOST}}', job.hostname)
+    .replace('{{SKELETON}}', createCommonVerificationSkeleton(job.normalizedUrl, job.hostname));
+  if (stage === 'metadata') return METADATA_CAPABILITY_INSTRUCTION
+    .replace('{{SKELETON}}', createMetadataSkeleton(job.hostname));
+  return '';
+}
+
+const COMMON_CAPABILITY_INSTRUCTION = `Copy this skeleton. Change URL matching and challenge signals only. Keep its imports, classes, and methods; include hostname {{HOST}} and remove all example placeholders.
+
+\`\`\`ts
+{{SKELETON}}
+\`\`\``;
+
+const METADATA_CAPABILITY_INSTRUCTION = `Copy this skeleton. Replace every placeholder selector and throw with evidence from task.md. Keep one MetadataCapability subclass. Follow ChapterInfo rules in adapter-base-api.md and return the complete supplied catalog.
+
+\`\`\`ts
+{{SKELETON}}
+\`\`\``;
+
+async function readCapabilityOutput(
+  client: AoClient, conversationId: string,
+  draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+  chat?: string
+) {
+  const [source, review] = await Promise.all([
+    client.readFile(conversationId, draft.sourcePath).catch(() => ''),
+    client.readFile(conversationId, draft.reviewPath).catch(() => ''),
+  ]);
+  const reviewText = review.trim();
+  const chatText = chat?.trim() || '';
+  return { sourceTs: source.trim() || extractFirstTypeScriptFence(reviewText)
+    || extractFirstTypeScriptFence(chatText), reviewMarkdown: reviewText || chatText };
+}
+
+function validateCapabilityOutput(
+  draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
+  job: SelectorDiscoveryJob, task: string, source: string, target?: 'full' | 'chapter-only'
+) {
+  const validation = validateCapabilityDraft(source, { stage: draft.stage, target });
+  if (draft.stage === 'common-verification' && source && !source.includes(job.hostname))
+    validation.errors.push(`Common/verification draft must include target hostname "${job.hostname}".`);
+  if (draft.stage === 'metadata' && source)
+    validation.errors.push(...validateMetadataSelectorEvidence(source, task));
+  validation.valid = validation.errors.length === 0;
+  return validation;
+}
+
+function validateHtmlSnapshot(job: SelectorDiscoveryJob, input: DiscoveryInput) {
+  if (job.target !== 'chapter-only')
+    throw new Error('HTML snapshot discovery currently supports chapter-only targets.');
+  const snapshot = input.htmlSnapshot;
+  if (!snapshot?.html?.trim()) throw new Error('HTML snapshot is required.');
+  if (snapshot.html.length > 2_000_000)
+    throw new Error('HTML snapshot is too large. Maximum size is 2,000,000 characters.');
+  if (looksLikeAntiBotChallenge(snapshot.html)) throw new Error(
+    'HTML snapshot still looks like an anti-bot challenge or blocked page. Open the real chapter page after verification, then capture the rendered comic DOM.');
+  return snapshot;
+}
+
+function createSnapshotFetch(url: string, finalUrl: string, html: string): SafeHtmlFetchResult {
+  return { url, finalUrl, redirectChain: [], html, contentType: 'text/html; source=user-snapshot' };
+}
+
+const SNAPSHOT_PHASE1_TEMPLATE = `# Phase 1 Result
+
+## Site Decision
+- Snapshot source: user-provided rendered chapter HTML.
+- Discovery target: chapter-only adapter.
+
+## Title Extraction
+- Not required for chapter-only discovery.
+
+## Chapter List Extraction
+- Not required for chapter-only discovery.
+
+## Representative Chapter URL
+{{URL}}
+
+## Evidence
+- The user supplied a verified browser HTML snapshot for the target chapter page.
+- Backend rejected challenge/blocked snapshots before AO analysis.
+
+## Uncertainty
+- Metadata and chapter list extraction are intentionally out of scope for chapter-only discovery.
+`;
+
+function createSnapshotPhase1(url: string): string {
+  return SNAPSHOT_PHASE1_TEMPLATE.replace('{{URL}}', url);
+}
+
+function createImplementationValidation(
+  job: SelectorDiscoveryJob,
+  output: { adapterImplementationTs: string; capabilityDrafts?: SelectorDiscoveryCapabilityDraft[] },
+  errors: string[]
+) {
+  const smoke = Boolean(job.stopAfterStage
+    && output.capabilityDrafts?.some((draft) => draft.stage === job.stopAfterStage));
+  return smoke ? { valid: errors.length === 0, errors: [], warnings: [], syntaxValid: true }
+    : validateAdapterImplementationDraft(output.adapterImplementationTs, { target: job.target });
+}
+
+function appendRevisionNotes(previous: string | undefined, id: string, notes: string): string {
+  return [previous, '', `# Function Revision ${id}`, '', notes].filter(Boolean).join('\n');
+}
+
+function validatePromotionJob(
+  job: SelectorDiscoveryJob
+): asserts job is SelectorDiscoveryJob & { adapterImplementationTs: string } {
+  if (job.status !== 'awaiting_review')
+    throw new Error('Only awaiting_review discovery jobs can be promoted.');
+  if (!job.adapterImplementationTs?.trim())
+    throw new Error('Discovery job has no adapter implementation draft.');
+  if (!job.implementationValidation?.valid) {
+    const errors = job.implementationValidation?.errors?.join('; ') || 'implementation validation did not pass';
+    throw new Error(`Adapter implementation draft is invalid: ${errors}`);
+  }
+}
+
+export type SelectorDiscoveryPromotionResult = AdapterPackageManifest;
+
+interface SelectorDiscoveryServiceOptions {
+  adapterCatalog?: AdapterCatalog;
+  bundleManager?: SelectorDiscoveryBundleManager;
+  getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
+  acquireBrowserSession?: (input: { job: SelectorDiscoveryJob; browserTarget?: DiscoveryInput['browserTarget'] }) =>
+    Promise<{ sessionId: string; release(): Promise<void> }>;
+  getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  renderBrowserPage?: (sessionId: string, url: string, options: { timeoutMs: number }) =>
+    Promise<{ url: string; html: string }>;
+  captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }) => Promise<FixtureSummary>;
+  schedulingPolicy?: SchedulingPolicy<DiscoveryInput>;
+}
 
 export class SelectorDiscoveryService {
   private readonly inFlightHosts = new Set<string>();
@@ -88,46 +357,23 @@ export class SelectorDiscoveryService {
     adapter: IComicAdapter;
   }) => Promise<FixtureSummary>;
   private readonly scheduler: TaskScheduler<DiscoveryInput>;
+  private readonly adapterCatalog: AdapterCatalog;
 
   constructor(
     private readonly storage: IStorage,
     private readonly adapterRegistry: AdapterRegistry,
-    bundleManagerOrOptions?: SelectorDiscoveryBundleManager | {
-      bundleManager?: SelectorDiscoveryBundleManager;
-      getBrowserConfig?: (sessionId?: string) => BrowserConfig | Promise<BrowserConfig>;
-      acquireBrowserSession?: (input: { job: SelectorDiscoveryJob; browserTarget?: DiscoveryInput['browserTarget'] }) => Promise<{ sessionId: string; release(): Promise<void> }>;
-      getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
-      renderBrowserPage?: (
-        sessionId: string,
-        url: string,
-        options: { timeoutMs: number }
-      ) => Promise<{ url: string; html: string }>;
-      captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }) => Promise<FixtureSummary>;
-      schedulingPolicy?: SchedulingPolicy<DiscoveryInput>;
-    }
+    bundleManagerOrOptions?: SelectorDiscoveryBundleManager | SelectorDiscoveryServiceOptions
   ) {
-    if (bundleManagerOrOptions instanceof SelectorDiscoveryBundleManager) {
-      this.bundleManager = bundleManagerOrOptions;
-    } else {
-      this.bundleManager = bundleManagerOrOptions?.bundleManager ?? new SelectorDiscoveryBundleManager();
-      this.getBrowserConfig = bundleManagerOrOptions?.getBrowserConfig;
-      this.acquireBrowserSession = bundleManagerOrOptions?.acquireBrowserSession;
-      this.getNetworkConfig = bundleManagerOrOptions?.getNetworkConfig;
-      this.renderBrowserPage = bundleManagerOrOptions?.renderBrowserPage;
-      this.captureApprovalFixture = bundleManagerOrOptions?.captureApprovalFixture;
-    }
-    const schedulingPolicy = bundleManagerOrOptions instanceof SelectorDiscoveryBundleManager
-      ? undefined
-      : bundleManagerOrOptions?.schedulingPolicy;
-    this.scheduler = new TaskScheduler(
-      (task) => this.executeScheduledDiscovery(task),
-      { autoStart: true, concurrency: 1 },
-      schedulingPolicy ?? new ConcurrentSchedulingPolicy({
-        maxConcurrency: 2,
-        maxConcurrencyPerGroup: 1,
-        groupBy: (task) => new URL(task.data.url).hostname,
-      })
-    );
+    const options = normalizeServiceOptions(bundleManagerOrOptions);
+    this.adapterCatalog = options.adapterCatalog ?? new AdapterCatalog(storage);
+    this.bundleManager = options.bundleManager ?? new SelectorDiscoveryBundleManager();
+    this.getBrowserConfig = options.getBrowserConfig;
+    this.acquireBrowserSession = options.acquireBrowserSession;
+    this.getNetworkConfig = options.getNetworkConfig;
+    this.renderBrowserPage = options.renderBrowserPage;
+    this.captureApprovalFixture = options.captureApprovalFixture;
+    this.scheduler = createDiscoveryScheduler(
+      (task) => this.executeScheduledDiscovery(task), options.schedulingPolicy);
   }
 
   async initializeScheduler(): Promise<void> {
@@ -151,101 +397,41 @@ export class SelectorDiscoveryService {
   }
 
   async create(input: DiscoveryInput): Promise<SelectorDiscoveryJob> {
-    const browserSessionId = input.browserSessionId;
-    const boundInput = browserSessionId === input.browserSessionId
-      ? input
-      : { ...input, browserSessionId };
-    const normalizedUrl = normalizeAndValidateUrl(input.url);
-    const parsedUrl = new URL(normalizedUrl);
-    const matchedAdapter = this.adapterRegistry.findByUrl(normalizedUrl);
-    const domainMatchedAdapter = matchedAdapter ?? this.adapterRegistry.findByUrlDomain(normalizedUrl);
-    const target = input.target ?? 'full';
-    const canAugmentMatchedAdapter = Boolean(
-      domainMatchedAdapter &&
-      target === 'full' &&
-      !adapterSupportsDiscoveryTarget(domainMatchedAdapter, target) &&
-      getAdapterCapabilities(domainMatchedAdapter).chapterImages
-    );
-    const now = new Date().toISOString();
-
-    if (matchedAdapter && !input.forceDiscovery && adapterSupportsDiscoveryTarget(matchedAdapter, target)) {
-      const job: SelectorDiscoveryJob = {
-        id: this.createJobId(),
-        url: input.url,
-        normalizedUrl,
-        hostname: parsedUrl.hostname,
-        status: 'known_adapter',
-          target,
-          promotionMode: 'create',
-          adapterId: matchedAdapter.id,
-        adapterName: matchedAdapter.name,
-        phase: 'known_adapter',
-        createdAt: now,
-        updatedAt: now,
-        ownerUserId: input.ownerUserId,
-        browserTarget: input.browserTarget,
-        browserSessionId,
-      };
-      await this.saveJob(job);
-      return job;
-    }
-
-    const existing = (await this.list()).find((job) =>
-      job.hostname === parsedUrl.hostname
-      && job.ownerUserId === input.ownerUserId
-      && ['queued', 'running'].includes(job.status)
-    );
+    const context = createDiscoveryContext(input, this.adapterRegistry);
+    const known = await this.createKnownAdapterJob(input, context);
+    if (known) return known;
+    const existing = (await this.list()).find((job) => job.hostname === context.hostname
+      && job.ownerUserId === input.ownerUserId && ['queued', 'running'].includes(job.status));
     if (existing) return existing;
-
-    const settingsStore = new SelectorDiscoverySettingsStore(this.storage);
-    const hasInlineConfiguration = Boolean(input.providerDocument && input.aoBaseUrl && input.model);
-    if (!hasInlineConfiguration) {
-      const settings = await settingsStore.getSummary();
-      if (!settings.configured) {
-        const job: SelectorDiscoveryJob = {
-          id: this.createJobId(),
-          url: input.url,
-          normalizedUrl,
-          hostname: parsedUrl.hostname,
-          status: 'configuration_required',
-          target,
-          promotionMode: canAugmentMatchedAdapter ? 'augment' : 'create',
-          baseAdapterId: canAugmentMatchedAdapter ? domainMatchedAdapter?.id : undefined,
-          error: 'Selector discovery is not configured. Configure AO URL, provider JSON, and model in Settings before this adapter build task can run.',
-          createdAt: now,
-          updatedAt: now,
-          ownerUserId: input.ownerUserId,
-          browserTarget: input.browserTarget,
-          browserSessionId,
-        };
-        await this.saveJob(job);
-        return job;
-      }
-    }
-
-    const job: SelectorDiscoveryJob = {
-      id: this.createJobId(),
-      url: input.url,
-      normalizedUrl,
-      hostname: parsedUrl.hostname,
-      status: 'queued',
-      target,
-      promotionMode: canAugmentMatchedAdapter ? 'augment' : 'create',
-      baseAdapterId: canAugmentMatchedAdapter ? domainMatchedAdapter?.id : undefined,
-      model: input.model,
-      aoBaseUrl: input.aoBaseUrl,
-      stopAfterStage: input.stopAfterStage,
-      inputSource: input.htmlSnapshot ? 'html-snapshot' : 'live-fetch',
-      createdAt: now,
-      updatedAt: now,
-      ownerUserId: input.ownerUserId,
-      browserTarget: input.browserTarget,
-      browserSessionId,
-    };
+    const configurationRequired = await this.createConfigurationRequiredJob(input, context);
+    if (configurationRequired) return configurationRequired;
+    const job = createQueuedDiscoveryJob(this.createJobId(), input, context);
     await this.saveJob(job);
+    await this.scheduleDiscovery(job, input);
+    return job;
+  }
 
-    await this.scheduleDiscovery(job, boundInput);
+  private async createKnownAdapterJob(
+    input: DiscoveryInput, context: DiscoveryCreateContext
+  ): Promise<SelectorDiscoveryJob | undefined> {
+    const adapter = context.matchedAdapter;
+    if (!adapter || input.forceDiscovery || !adapterSupportsDiscoveryTarget(adapter, context.target)) return undefined;
+    const job = createBaseDiscoveryJob(this.createJobId(), input, context, 'known_adapter');
+    Object.assign(job, { promotionMode: 'create', adapterId: adapter.id,
+      adapterName: adapter.name, phase: 'known_adapter' });
+    await this.saveJob(job);
+    return job;
+  }
 
+  private async createConfigurationRequiredJob(
+    input: DiscoveryInput, context: DiscoveryCreateContext
+  ): Promise<SelectorDiscoveryJob | undefined> {
+    if (input.providerDocument && input.aoBaseUrl && input.model) return undefined;
+    const settings = await new SelectorDiscoverySettingsStore(this.storage).getSummary();
+    if (settings.configured) return undefined;
+    const job = createBaseDiscoveryJob(this.createJobId(), input, context, 'configuration_required');
+    job.error = 'Selector discovery is not configured. Configure AO URL, provider JSON, and model in Settings before this adapter build task can run.';
+    await this.saveJob(job);
     return job;
   }
 
@@ -268,54 +454,9 @@ export class SelectorDiscoveryService {
     return (await this.get(replacement.id)) ?? replacement;
   }
 
-  async loadActiveDynamicAdapters(): Promise<void> {
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    const retainedManifests: DynamicSiteAdapterManifest[] = [];
-    for (const manifest of manifests) {
-      const existingDomainAdapter = this.findRegisteredAdapterByDomains(manifest.domains);
-      if (this.adapterRegistry.has(manifest.adapterId)) {
-        retainedManifests.push(manifest);
-        continue;
-      }
-      if (existingDomainAdapter && existingDomainAdapter.id !== manifest.adapterId) {
-        continue;
-      }
-      this.adapterRegistry.register(new DynamicSiteAdapter(manifest));
-      retainedManifests.push(manifest);
-    }
-    if (retainedManifests.length !== manifests.length) {
-      await this.storage.write(ACTIVE_DYNAMIC_ADAPTERS_KEY, retainedManifests);
-    }
-
-    const implementationRecords = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    const retainedImplementationRecords: ActiveImplementationAdapterRecord[] = [];
-    for (const record of implementationRecords) {
-      try {
-        const adapter = instantiateAdapterImplementationDraft(record.adapterImplementationTs);
-        const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
-        if (this.adapterRegistry.has(adapter.id)) {
-          retainedImplementationRecords.push(record);
-          continue;
-        }
-        if (existingDomainAdapter && existingDomainAdapter.id !== adapter.id) {
-          continue;
-        }
-        this.adapterRegistry.register(adapter);
-        retainedImplementationRecords.push({
-          ...record,
-          adapterId: adapter.id,
-          name: adapter.name,
-          domains: adapter.domains,
-          parseMode: adapter.parseMode,
-          capabilities: getAdapterCapabilities(adapter),
-        });
-      } catch {
-        continue;
-      }
-    }
-    if (retainedImplementationRecords.length !== implementationRecords.length) {
-      await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, retainedImplementationRecords);
-    }
+  async loadActiveAdapters(): Promise<void> {
+    await this.adapterCatalog.initialize();
+    await loadCatalogAdapters(this.adapterCatalog, this.adapterRegistry);
   }
 
   async promote(id: string): Promise<SelectorDiscoveryPromotionResult> {
@@ -336,34 +477,13 @@ export class SelectorDiscoveryService {
     currentSource?: string;
   }): Promise<SelectorDiscoveryJob> {
     const job = await this.getRequiredJob(input.id);
-    const source = input.currentSource?.trim() || job.adapterImplementationTs?.trim();
-    if (!source) {
-      throw new Error('Discovery job has no TypeScript implementation draft to revise.');
-    }
-    if (!input.instruction.trim()) {
-      throw new Error('Revision instruction is required.');
-    }
-    const now = new Date().toISOString();
-    const revisionTask = {
-      id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      parentDiscoveryId: job.id,
-      functionId: input.functionId,
-      instruction: input.instruction.trim(),
-      status: 'queued' as const,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const source = requireRevisionSource(input.currentSource, job);
+    if (!input.instruction.trim()) throw new Error('Revision instruction is required.');
+    const revisionTask = createRevisionTask(job, input.functionId, input.instruction);
     await this.updateJob(job.id, {
       functionRevisionTasks: [...(job.functionRevisionTasks ?? []), revisionTask],
     });
-    void this.runFunctionRevision(job.id, revisionTask.id, source).catch(async (error) => {
-      const latest = await this.get(job.id);
-      if (!latest) return;
-      await this.updateFunctionRevisionTask(latest, revisionTask.id, {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+    this.startFunctionRevision(job.id, revisionTask.id, source);
     return this.getRequiredJob(job.id);
   }
 
@@ -375,31 +495,25 @@ export class SelectorDiscoveryService {
   }): Promise<SelectorDiscoveryJob> {
     const job = await this.getRequiredJob(input.id);
     const revisionTask = job.functionRevisionTasks?.find((task) => task.id === input.revisionTaskId);
-    if (!revisionTask) {
-      throw new Error(`Function revision task "${input.revisionTaskId}" was not found.`);
-    }
-    if (revisionTask.status === 'running') {
+    if (!revisionTask) throw new Error(`Function revision task "${input.revisionTaskId}" was not found.`);
+    if (revisionTask.status === 'running')
       throw new Error(`Function revision task "${input.revisionTaskId}" is already running.`);
-    }
-    const source = input.currentSource?.trim() || job.adapterImplementationTs?.trim();
-    if (!source) {
-      throw new Error('Discovery job has no TypeScript implementation draft to revise.');
-    }
-    await this.updateFunctionRevisionTask(job, input.revisionTaskId, {
-      status: 'queued',
-      error: undefined,
-    });
-    void this.runFunctionRevision(job.id, input.revisionTaskId, source, {
-      modelMode: input.modelMode ?? 'current-settings',
-    }).catch(async (error) => {
-      const latest = await this.get(job.id);
-      if (!latest) return;
-      await this.updateFunctionRevisionTask(latest, input.revisionTaskId, {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+    const source = requireRevisionSource(input.currentSource, job);
+    await this.updateFunctionRevisionTask(job, input.revisionTaskId, { status: 'queued', error: undefined });
+    this.startFunctionRevision(job.id, input.revisionTaskId, source,
+      { modelMode: input.modelMode ?? 'current-settings' });
     return this.getRequiredJob(job.id);
+  }
+
+  private startFunctionRevision(
+    jobId: string, taskId: string, source: string,
+    options: { modelMode?: 'current-settings' | 'previous-task' } = {}
+  ): void {
+    void this.runFunctionRevision(jobId, taskId, source, options).catch(async (error) => {
+      const latest = await this.get(jobId);
+      if (latest) await this.updateFunctionRevisionTask(latest, taskId, { status: 'failed',
+        error: error instanceof Error ? error.message : String(error) });
+    });
   }
 
   async get(id: string): Promise<SelectorDiscoveryJob | null> {
@@ -427,94 +541,71 @@ export class SelectorDiscoveryService {
     this.inFlightHosts.add(job.hostname);
     try {
       await this.updateJob(job.id, { status: 'running', phase: 'phase1' });
-      const settingsStore = new SelectorDiscoverySettingsStore(this.storage);
-      const configured = input.providerDocument && input.aoBaseUrl && input.model
-        ? {
-            settings: {
-              aoBaseUrl: input.aoBaseUrl,
-              model: input.model,
-              providerFingerprint: 'transient',
-              providerIds: [],
-              modelIds: [],
-              configuredAt: new Date().toISOString(),
-            },
-            providerDocument: input.providerDocument,
-          }
-        : await settingsStore.getRequired();
-
-      const aoBaseUrl = input.aoBaseUrl ?? configured.settings.aoBaseUrl;
-      const model = input.model ?? configured.settings.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL;
-      const providerDocument = input.providerDocument ?? configured.providerDocument;
-      const safeFetchOptions = await this.getSafeFetchOptions(input.browserSessionId);
-      if (input.htmlSnapshot) {
-        await this.runFromHtmlSnapshot(job, input, {
-          aoBaseUrl,
-          model,
-          providerDocument,
-        });
-        return;
-      }
-      const client = new AoClient(aoBaseUrl);
-      const bundle = await this.bundleManager.loadActive(providerDocument, model);
-      if (job.target === 'chapter-only') {
-        const chapterFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
-        await this.runChapterOnlyDiscovery(job, {
-          client,
-          bundle,
-          model,
-          aoBaseUrl,
-          chapterFetch,
-          phase1Markdown: createChapterOnlyPhase1Markdown(chapterFetch.finalUrl),
-        });
-        return;
-      }
-      const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetchOptions);
-      const existingAdapterContext = await this.createExistingAdapterContext(job);
-      const phase1OutputPath = 'outputs/phase1-output.md';
-      const phase1 = await this.runAoPhase(client, bundle, model, createPhase1TaskMarkdown({
-        url: job.normalizedUrl,
-        metadataFetch,
-        existingAdapter: existingAdapterContext,
-      }), phase1OutputPath, {
-        validate: validatePhase1Markdown,
-      });
-      const phase1Validation = validatePhase1Markdown(phase1);
-      if (!phase1Validation.valid) {
-        await this.updateJob(job.id, {
-          status: 'invalid',
-          phase: 'complete',
-          phase1Markdown: phase1,
-          model,
-          aoBaseUrl,
-          error: formatAoPhaseFailureError({
-            outputPath: phase1OutputPath,
-            model,
-            errors: phase1Validation.errors,
-            emptyOutput: !phase1.trim(),
-          }),
-        });
-        return;
-      }
-
-      await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2', model, aoBaseUrl });
-      const chapterUrl = tryExtractRepresentativeChapterUrl(phase1, metadataFetch.finalUrl)
-        ?? extractFallbackChapterUrlFromHtml(metadataFetch.html, metadataFetch.finalUrl);
-      if (!chapterUrl) {
-        throw new Error('Phase 1 output did not include a Representative Chapter URL and no fallback chapter link was found.');
-      }
-      const chapterFetch = await fetchSafeHtml(chapterUrl, safeFetchOptions);
-      const phase2TaskMarkdown = createPhase2TaskMarkdown({
-        url: job.normalizedUrl,
-        phase1Markdown: phase1,
-        chapterFetch,
-        existingAdapter: existingAdapterContext,
-      });
-      const implementation = await this.runAoImplementationPhase(job, client, bundle, model, phase2TaskMarkdown, input.stopAfterStage);
-
-      await this.finalizeImplementationDraft(job, implementation);
+      const configuration = await this.resolveRunConfiguration(input);
+      if (input.htmlSnapshot) await this.runFromHtmlSnapshot(job, input, configuration);
+      else await this.runLiveDiscovery(job, input, configuration);
     } finally {
       this.inFlightHosts.delete(job.hostname);
     }
+  }
+
+  private async resolveRunConfiguration(input: DiscoveryInput): Promise<DiscoveryRunConfiguration> {
+    if (input.providerDocument && input.aoBaseUrl && input.model)
+      return { aoBaseUrl: input.aoBaseUrl, model: input.model, providerDocument: input.providerDocument };
+    const configured = await new SelectorDiscoverySettingsStore(this.storage).getRequired();
+    return { aoBaseUrl: input.aoBaseUrl ?? configured.settings.aoBaseUrl,
+      model: input.model ?? configured.settings.model ?? DEFAULT_SELECTOR_DISCOVERY_MODEL,
+      providerDocument: input.providerDocument ?? configured.providerDocument };
+  }
+
+  private async runLiveDiscovery(
+    job: SelectorDiscoveryJob, input: DiscoveryInput, configuration: DiscoveryRunConfiguration
+  ): Promise<void> {
+    const safeFetch = await this.getSafeFetchOptions(input.browserSessionId);
+    const client = new AoClient(configuration.aoBaseUrl);
+    const bundle = await this.bundleManager.loadActive(configuration.providerDocument, configuration.model);
+    if (job.target === 'chapter-only') {
+      const chapterFetch = await fetchSafeHtml(job.normalizedUrl, safeFetch);
+      return this.runChapterOnlyDiscovery(job, { client, bundle, model: configuration.model,
+        aoBaseUrl: configuration.aoBaseUrl, chapterFetch,
+        phase1Markdown: createChapterOnlyPhase1Markdown(chapterFetch.finalUrl) });
+    }
+    await this.runFullDiscovery(job, input, configuration, client, bundle, safeFetch);
+  }
+
+  private async runFullDiscovery(
+    job: SelectorDiscoveryJob, input: DiscoveryInput, config: DiscoveryRunConfiguration,
+    client: AoClient, bundle: DiscoveryBundle, safeFetch: SafeFetchOptions
+  ): Promise<void> {
+    const metadataFetch = await fetchSafeHtml(job.normalizedUrl, safeFetch);
+    const existingAdapter = await this.createExistingAdapterContext(job);
+    const task = createPhase1TaskMarkdown({ url: job.normalizedUrl, metadataFetch, existingAdapter });
+    const phase1 = await this.runAoPhase(client, bundle, config.model, task,
+      'outputs/phase1-output.md', { validate: validatePhase1Markdown });
+    if (!await this.acceptPhase1(job, phase1, config)) return;
+    const chapterUrl = findRepresentativeChapterUrl(phase1, metadataFetch);
+    const chapterFetch = await fetchSafeHtml(chapterUrl, safeFetch);
+    const phase2 = createPhase2TaskMarkdown({ url: job.normalizedUrl, phase1Markdown: phase1,
+      chapterFetch, existingAdapter });
+    const output = await this.runAoImplementationPhase(job, client, bundle, config.model,
+      phase2, input.stopAfterStage);
+    await this.finalizeImplementationDraft(job, output);
+  }
+
+  private async acceptPhase1(
+    job: SelectorDiscoveryJob, phase1: string, config: DiscoveryRunConfiguration
+  ): Promise<boolean> {
+    const validation = validatePhase1Markdown(phase1);
+    if (validation.valid) {
+      await this.updateJob(job.id, { phase1Markdown: phase1, phase: 'phase2',
+        model: config.model, aoBaseUrl: config.aoBaseUrl });
+      return true;
+    }
+    await this.updateJob(job.id, { status: 'invalid', phase: 'complete', phase1Markdown: phase1,
+      model: config.model, aoBaseUrl: config.aoBaseUrl,
+      error: formatAoPhaseFailureError({ outputPath: 'outputs/phase1-output.md', model: config.model,
+        errors: validation.errors, emptyOutput: !phase1.trim() }) });
+    return false;
   }
 
   private async scheduleDiscovery(job: SelectorDiscoveryJob, input: DiscoveryInput): Promise<void> {
@@ -531,72 +622,58 @@ export class SelectorDiscoveryService {
     let acquired: { sessionId: string; release(): Promise<void> } | undefined;
     try {
       const job = await this.getRequiredJob(task.id);
-      acquired = task.data.htmlSnapshot ? undefined : await this.acquireBrowserSession?.({
-        job,
-        browserTarget: task.data.browserTarget,
-      });
-      await this.run(task.id, acquired ? { ...task.data, browserSessionId: acquired.sessionId } : task.data);
+      acquired = task.data.htmlSnapshot ? undefined : await this.acquireBrowserSession?.(
+        { job, browserTarget: task.data.browserTarget });
+      const input = acquired ? { ...task.data, browserSessionId: acquired.sessionId } : task.data;
+      await this.run(task.id, input);
     } catch (error) {
-      const failed = await this.get(task.id);
-      if (failed) {
-        failed.status = 'failed';
-        failed.error = error instanceof Error ? error.message : String(error);
-        failed.updatedAt = new Date().toISOString();
-        await this.saveJob(failed);
-      }
+      await this.markScheduledDiscoveryFailed(task.id, error);
       throw error;
     } finally {
       await acquired?.release();
     }
   }
 
+  private async markScheduledDiscoveryFailed(id: string, error: unknown): Promise<void> {
+    const failed = await this.get(id);
+    if (!failed) return;
+    failed.status = 'failed';
+    failed.error = error instanceof Error ? error.message : String(error);
+    failed.updatedAt = new Date().toISOString();
+    await this.saveJob(failed);
+  }
+
   private async runAoPhase(
-    client: AoClient,
-    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
-    model: string,
-    taskMarkdown: string,
-    outputPath: string,
-    options: {
-      validate?: (markdown: string) => { valid: boolean; errors: string[] };
-    } = {}
+    client: AoClient, bundle: DiscoveryBundle, model: string, taskMarkdown: string,
+    outputPath: string, options: AoPhaseOptions = {}
   ): Promise<string> {
     let lastOutput = '';
     let retryFeedback = '';
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const conversationId = await client.createConversation();
-      try {
-        await this.bundleManager.upload(client, conversationId, bundle);
-        await client.uploadFile(conversationId, 'task.md', taskMarkdown);
-        await client.start(conversationId);
-        const response = await client.message(
-          conversationId,
-          `${taskMarkdown}
-
-## Required AO Output
-
-Write the full Markdown result to ${outputPath}.
-
-Also return the same Markdown result in your chat response. Do not only summarize. Do not output JSON.
-
-Use the exact Markdown headings required by the referenced contract file. Do not rename, decorate, or add parenthetical suffixes to required headings. If this is the final candidate, the first required section must be exactly "## Adapter Identity".
-${retryFeedback}`,
-          model,
-          DEFAULT_SELECTOR_DISCOVERY_AGENT
-        );
-        const output = await client.readFile(conversationId, outputPath).catch(() => '');
-        lastOutput = output.trim() || response.text?.trim() || '';
-        const validation = options.validate?.(lastOutput);
-        if (!options.validate || validation?.valid) {
-          return lastOutput;
-        }
-        if (attempt < 2 && validation) {
-          retryFeedback = createAoPhaseRetryFeedback(outputPath, lastOutput, validation.errors);
-        }
-      } finally {
-        await client.deleteConversation(conversationId).catch(() => undefined);
-      }
+      lastOutput = await this.runAoPhaseAttempt(client, bundle, model, taskMarkdown,
+        outputPath, retryFeedback);
+      const validation = options.validate?.(lastOutput);
+      if (!options.validate || validation?.valid) return lastOutput;
+      if (attempt < 2 && validation)
+        retryFeedback = createAoPhaseRetryFeedback(outputPath, lastOutput, validation.errors);
     }
     return lastOutput;
+  }
+
+  private async runAoPhaseAttempt(
+    client: AoClient, bundle: DiscoveryBundle, model: string, task: string,
+    outputPath: string, feedback: string
+  ): Promise<string> {
+    const conversationId = await client.createConversation();
+    try {
+      await this.bundleManager.upload(client, conversationId, bundle);
+      await client.uploadFile(conversationId, 'task.md', task);
+      await client.start(conversationId);
+      const response = await client.message(conversationId,
+        createAoPhaseMessage(task, outputPath, feedback), model, DEFAULT_SELECTOR_DISCOVERY_AGENT);
+      const output = await client.readFile(conversationId, outputPath).catch(() => '');
+      return output.trim() || response.text?.trim() || '';
+    } finally { await client.deleteConversation(conversationId).catch(() => undefined); }
   }
 
   private async runAoImplementationPhase(
@@ -613,31 +690,11 @@ ${retryFeedback}`,
       await this.updateJob(job.id, { phase: draft.stage, capabilityDrafts });
       const capabilityDraft = await this.runAoCapabilityPhaseWithRetries(client, bundle, model, taskMarkdown, draft, job, job.target);
       capabilityDrafts.push(capabilityDraft);
-      const latest = capabilityDrafts.at(-1);
-      if (!latest) {
-        continue;
-      }
-      if (latest?.validation && !latest.validation.valid) {
-        return {
-          adapterImplementationTs: '',
-          reviewNotesMarkdown: formatCapabilityDraftFailureReview(capabilityDrafts),
-          capabilityDrafts,
-        };
-      }
-      if (stopAfterStage === latest.stage) {
-        return {
-          adapterImplementationTs: '',
-          reviewNotesMarkdown: formatCapabilityStageSmokeReview(capabilityDrafts),
-          capabilityDrafts,
-        };
-      }
+      const early = capabilityStageResult(capabilityDrafts, stopAfterStage);
+      if (early) return early;
     }
     await this.updateJob(job.id, { phase: 'compose', capabilityDrafts });
-    const composed = composeAdapterShellFromCapabilities(job, capabilityDrafts);
-    return {
-      ...composed,
-      capabilityDrafts,
-    };
+    return { ...composeAdapterShellFromCapabilities(job, capabilityDrafts), capabilityDrafts };
   }
 
   private async runAoCapabilityPhaseWithRetries(
@@ -662,98 +719,20 @@ ${retryFeedback}`,
   }
 
   private async runAoCapabilityPhase(
-    client: AoClient,
-    bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>,
-    model: string,
-    taskMarkdown: string,
+    client: AoClient, bundle: DiscoveryBundle, model: string, taskMarkdown: string,
     draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
-    job: SelectorDiscoveryJob,
-    target?: 'full' | 'chapter-only',
-    retryFeedback?: string
+    job: SelectorDiscoveryJob, target?: 'full' | 'chapter-only', retryFeedback?: string
   ): Promise<SelectorDiscoveryCapabilityDraft> {
     const conversationId = await client.createConversation();
     try {
       await this.bundleManager.upload(client, conversationId, bundle);
       await client.uploadFile(conversationId, 'task.md', taskMarkdown);
       await client.start(conversationId);
-      const concreteCommonVerificationSkeleton = draft.stage === 'common-verification'
-        ? createCommonVerificationSkeleton(job.normalizedUrl, job.hostname)
-        : '';
-      const concreteMetadataSkeleton = draft.stage === 'metadata'
-        ? createMetadataSkeleton(job.hostname)
-        : '';
-      const templateInstruction = draft.stage === 'common-verification'
-        ? `
-
-Copy this skeleton. Change URL matching and challenge signals only. Keep its
-imports, classes, and methods; include hostname ${job.hostname} and remove all
-example placeholders.
-
-\`\`\`ts
-${concreteCommonVerificationSkeleton}
-\`\`\``
-        : draft.stage === 'metadata'
-          ? `
-
-Copy this skeleton. Replace every placeholder selector and throw with evidence
-from task.md. Keep one MetadataCapability subclass. Follow ChapterInfo rules in
-adapter-base-api.md and return the complete supplied catalog.
-
-\`\`\`ts
-${concreteMetadataSkeleton}
-\`\`\``
-        : '';
-      const response = await client.message(
-        conversationId,
-        `# Capability Stage Task
-
-Read task.md plus the named contracts. Produce only stage \`${draft.stage}\`:
-
-- TypeScript: ${draft.sourcePath}
-- Markdown review: ${draft.reviewPath}
-
-Use exact capability signatures. Keep source out of review notes and chat. Do
-not output JSON, import Markdown contracts, write the AdapterBase shell, or mix
-capabilities. The supplied DOM is prepared Playwright output; capability code
-extracts from it and does not perform browser actions.
-${templateInstruction}
-${retryFeedback ? `
-## Retry Feedback
-
-${retryFeedback}
-` : ''}
-
-After writing both files, reply with one short confirmation sentence.`,
-        model,
-        DEFAULT_SELECTOR_DISCOVERY_AGENT
-      );
-      const [sourceTs, reviewMarkdown] = await Promise.all([
-        client.readFile(conversationId, draft.sourcePath).catch(() => ''),
-        client.readFile(conversationId, draft.reviewPath).catch(() => ''),
-      ]);
-      const reviewText = reviewMarkdown.trim();
-      const chatText = response.text?.trim() || '';
-      const trimmedSource = sourceTs.trim()
-        || extractFirstTypeScriptFence(reviewText)
-        || extractFirstTypeScriptFence(chatText);
-      const validation = validateCapabilityDraft(trimmedSource, { stage: draft.stage, target });
-      if (draft.stage === 'common-verification' && trimmedSource && !trimmedSource.includes(job.hostname)) {
-        validation.errors.push(`Common/verification draft must include target hostname "${job.hostname}".`);
-        validation.valid = false;
-      }
-      if (draft.stage === 'metadata' && trimmedSource) {
-        const evidenceErrors = validateMetadataSelectorEvidence(trimmedSource, taskMarkdown);
-        if (evidenceErrors.length > 0) {
-          validation.errors.push(...evidenceErrors);
-          validation.valid = false;
-        }
-      }
-      return {
-        ...draft,
-        sourceTs: trimmedSource,
-        reviewMarkdown: reviewText || chatText,
-        validation,
-      };
+      const response = await client.message(conversationId,
+        createCapabilityMessage(draft, job, retryFeedback), model, DEFAULT_SELECTOR_DISCOVERY_AGENT);
+      const output = await readCapabilityOutput(client, conversationId, draft, response.text);
+      const validation = validateCapabilityOutput(draft, job, taskMarkdown, output.sourceTs, target);
+      return { ...draft, ...output, validation };
     } finally {
       await client.deleteConversation(conversationId).catch(() => undefined);
     }
@@ -768,95 +747,27 @@ After writing both files, reply with one short confirmation sentence.`,
       providerDocument: NonNullable<DiscoveryInput['providerDocument']>;
     }
   ): Promise<void> {
-    if (job.target !== 'chapter-only') {
-      throw new Error('HTML snapshot discovery currently supports chapter-only targets.');
-    }
-    const snapshot = input.htmlSnapshot;
-    if (!snapshot?.html?.trim()) {
-      throw new Error('HTML snapshot is required.');
-    }
-    if (snapshot.html.length > 2_000_000) {
-      throw new Error('HTML snapshot is too large. Maximum size is 2,000,000 characters.');
-    }
-    if (looksLikeAntiBotChallenge(snapshot.html)) {
-      throw new Error('HTML snapshot still looks like an anti-bot challenge or blocked page. Open the real chapter page after verification, then capture the rendered comic DOM.');
-    }
-
+    const snapshot = validateHtmlSnapshot(job, input);
     const finalUrl = normalizeAndValidateUrl(snapshot.finalUrl ?? job.normalizedUrl);
-    const chapterFetch: SafeHtmlFetchResult = {
-      url: job.normalizedUrl,
-      finalUrl,
-      redirectChain: [],
-      html: snapshot.html,
-      contentType: 'text/html; source=user-snapshot',
-    };
-    const phase1 = `# Phase 1 Result
-
-## Site Decision
-
-- Snapshot source: user-provided rendered chapter HTML.
-- Discovery target: chapter-only adapter.
-
-## Title Extraction
-
-- Not required for chapter-only discovery.
-
-## Chapter List Extraction
-
-- Not required for chapter-only discovery.
-
-## Representative Chapter URL
-
-${finalUrl}
-
-## Evidence
-
-- The user supplied a verified browser HTML snapshot for the target chapter page.
-- Backend rejected challenge/blocked snapshots before AO analysis.
-
-## Uncertainty
-
-- Metadata and chapter list extraction are intentionally out of scope for chapter-only discovery.
-`;
+    const chapterFetch = createSnapshotFetch(job.normalizedUrl, finalUrl, snapshot.html);
     const client = new AoClient(configured.aoBaseUrl);
     const bundle = await this.bundleManager.loadActive(configured.providerDocument, configured.model);
     await this.runChapterOnlyDiscovery(job, {
-      client,
-      bundle,
-      model: configured.model,
-      aoBaseUrl: configured.aoBaseUrl,
-      chapterFetch,
-      phase1Markdown: phase1,
+      client, bundle, model: configured.model, aoBaseUrl: configured.aoBaseUrl, chapterFetch,
+      phase1Markdown: createSnapshotPhase1(finalUrl),
     });
   }
 
   private async runChapterOnlyDiscovery(
     job: SelectorDiscoveryJob,
-    input: {
-      client: AoClient;
-      bundle: Awaited<ReturnType<SelectorDiscoveryBundleManager['loadActive']>>;
-      model: string;
-      aoBaseUrl: string;
-      chapterFetch: SafeHtmlFetchResult;
-      phase1Markdown: string;
-    }
+    input: ChapterOnlyDiscoveryInput
   ): Promise<void> {
     await this.updateJob(job.id, {
-      phase1Markdown: input.phase1Markdown,
-      phase: 'phase2',
-      model: input.model,
-      aoBaseUrl: input.aoBaseUrl,
+      phase1Markdown: input.phase1Markdown, phase: 'phase2', model: input.model, aoBaseUrl: input.aoBaseUrl,
     });
+    const task = createChapterOnlyTaskMarkdown({ url: job.normalizedUrl, chapterFetch: input.chapterFetch });
     const implementation = await this.runAoImplementationPhase(
-      job,
-      input.client,
-      input.bundle,
-      input.model,
-      createChapterOnlyTaskMarkdown({
-        url: job.normalizedUrl,
-        chapterFetch: input.chapterFetch,
-      })
-    );
+      job, input.client, input.bundle, input.model, task);
     await this.finalizeImplementationDraft(job, implementation);
   }
 
@@ -868,28 +779,14 @@ ${finalUrl}
       .flatMap((draft) => draft.validation?.valid === false
         ? draft.validation.errors.map((error) => `${draft.stage}: ${error}`)
         : []);
-    const stageSmokeComplete = Boolean(job.stopAfterStage && output.capabilityDrafts?.some((draft) => draft.stage === job.stopAfterStage));
-    const implementationValidation = stageSmokeComplete
-      ? { valid: capabilityErrors.length === 0, errors: [], warnings: [], syntaxValid: true }
-      : validateAdapterImplementationDraft(output.adapterImplementationTs, {
-          target: job.target,
-        });
+    const implementationValidation = createImplementationValidation(job, output, capabilityErrors);
     const valid = capabilityErrors.length === 0 && implementationValidation.valid;
-    await this.updateJob(job.id, {
-      status: valid ? 'awaiting_review' : 'invalid',
-      phase: 'complete',
-      reviewNotesMarkdown: output.reviewNotesMarkdown,
-      capabilityDrafts: output.capabilityDrafts,
-      adapterImplementationTs: output.adapterImplementationTs,
-      implementationValidation,
-      error: valid ? undefined : [...capabilityErrors, ...implementationValidation.errors].join('; '),
-    });
-    await this.storage.write(`selector-discovery-implementation-${job.id}`, {
-      reviewNotesMarkdown: output.reviewNotesMarkdown,
-      capabilityDrafts: output.capabilityDrafts,
-      adapterImplementationTs: output.adapterImplementationTs,
-      implementationValidation,
-    });
+    const saved = { reviewNotesMarkdown: output.reviewNotesMarkdown,
+      capabilityDrafts: output.capabilityDrafts, adapterImplementationTs: output.adapterImplementationTs,
+      implementationValidation };
+    await this.updateJob(job.id, { status: valid ? 'awaiting_review' : 'invalid', phase: 'complete', ...saved,
+      error: valid ? undefined : [...capabilityErrors, ...implementationValidation.errors].join('; ') });
+    await this.storage.write(`selector-discovery-implementation-${job.id}`, saved);
   }
 
   private async getRequiredJob(id: string): Promise<SelectorDiscoveryJob> {
@@ -917,89 +814,76 @@ ${finalUrl}
   }
 
   private async runFunctionRevision(
-    jobId: string,
-    revisionTaskId: string,
-    source: string,
+    jobId: string, revisionTaskId: string, source: string,
     options: { modelMode?: 'current-settings' | 'previous-task' } = {}
   ): Promise<void> {
-    let job = await this.getRequiredJob(jobId);
-    const revisionTask = job.functionRevisionTasks?.find((task) => task.id === revisionTaskId);
-    if (!revisionTask) {
-      throw new Error(`Function revision task "${revisionTaskId}" was not found.`);
-    }
-    await this.updateFunctionRevisionTask(job, revisionTaskId, { status: 'running', error: undefined });
-    job = await this.getRequiredJob(jobId);
-
-    const settingsStore = new SelectorDiscoverySettingsStore(this.storage);
-    const { settings: storedSettings, providerDocument } = await settingsStore.getRequired();
-    const settings = options.modelMode === 'previous-task' && revisionTask.model && revisionTask.aoBaseUrl
-      ? { ...storedSettings, model: revisionTask.model, aoBaseUrl: revisionTask.aoBaseUrl }
-      : storedSettings;
-    await this.updateFunctionRevisionTask(job, revisionTaskId, {
-      model: settings.model,
-      aoBaseUrl: settings.aoBaseUrl,
-    });
-    job = await this.getRequiredJob(jobId);
-    const client = new AoClient(settings.aoBaseUrl);
+    const { job, revisionTask } = await this.beginFunctionRevision(jobId, revisionTaskId);
+    const runtime = await this.prepareRevisionRuntime(job, revisionTask, options.modelMode);
     let conversationId: string | undefined;
-    const outputPath = 'outputs/revised-adapter-implementation.ts';
-    const reviewPath = 'outputs/function-revision-review.md';
-    const selfCheckPath = 'outputs/function-revision-self-check.md';
     try {
-      const bundle = await this.bundleManager.loadActive(providerDocument, settings.model);
-      conversationId = await client.createConversation();
-      await this.updateFunctionRevisionTask(job, revisionTaskId, { conversationId });
-      job = await this.getRequiredJob(jobId);
-      await this.bundleManager.upload(client, conversationId, bundle);
-      await client.uploadFile(conversationId, 'adapter-implementation.ts', source);
-      await client.uploadFile(conversationId, 'revision-task.md', createFunctionRevisionTaskMarkdown(job, revisionTask, source));
-      await client.start(conversationId);
-      const revisionResult = await runAoFunctionRevisionWithRetry({
-        client,
-        conversationId,
-        model: settings.model,
-        revisionTask,
-        outputPath,
-        reviewPath,
-        selfCheckPath,
-      });
-      const validation = validateAdapterImplementationDraft(revisionResult.revisedSource, {
-        target: job.target ?? 'full',
-      });
-      job = await this.getRequiredJob(jobId);
-      await this.saveJob({
-        ...job,
-        adapterImplementationTs: revisionResult.revisedSource,
-        reviewNotesMarkdown: [
-          job.reviewNotesMarkdown,
-          '',
-          `# Function Revision ${revisionTask.id}`,
-          '',
-          revisionResult.reviewNotes,
-        ].filter(Boolean).join('\n'),
-        implementationValidation: validation,
-        status: validation.valid ? 'awaiting_review' : 'invalid',
-        error: validation.valid ? undefined : validation.errors.join('; '),
-        functionRevisionTasks: (job.functionRevisionTasks ?? []).map((task) => (
-          task.id === revisionTaskId
-            ? {
-                ...task,
-                status: validation.valid ? 'awaiting_review' : 'failed',
-                error: validation.valid ? undefined : validation.errors.join('; '),
-                selfCheckMarkdown: revisionResult.selfCheckMarkdown,
-                updatedAt: new Date().toISOString(),
-              }
-            : task
-        )),
-        updatedAt: new Date().toISOString(),
-      });
+      conversationId = await runtime.client.createConversation();
+      await this.updateFunctionRevisionTask(runtime.job, revisionTaskId, { conversationId });
+      const latest = await this.getRequiredJob(jobId);
+      const result = await this.executeFunctionRevision(runtime, conversationId, latest, revisionTask, source);
+      await this.saveFunctionRevisionResult(jobId, revisionTaskId, result);
     } catch (error) {
-      throw new Error(formatAoFunctionRevisionFailure(error, settings, providerDocument));
+      throw new Error(formatAoFunctionRevisionFailure(error, runtime.settings, runtime.providerDocument));
     } finally {
-      if (conversationId) {
-        await client.deleteConversation(conversationId).catch(() => undefined);
-      }
+      if (conversationId) await runtime.client.deleteConversation(conversationId).catch(() => undefined);
     }
+  }
+
+  private async beginFunctionRevision(jobId: string, taskId: string) {
+    const job = await this.getRequiredJob(jobId);
+    const revisionTask = job.functionRevisionTasks?.find((task) => task.id === taskId);
+    if (!revisionTask) throw new Error(`Function revision task "${taskId}" was not found.`);
+    await this.updateFunctionRevisionTask(job, taskId, { status: 'running', error: undefined });
+    return { job, revisionTask };
+  }
+
+  private async prepareRevisionRuntime(
+    job: SelectorDiscoveryJob, task: RevisionTask, modelMode?: 'current-settings' | 'previous-task'
+  ): Promise<RevisionRuntime> {
+    const stored = await new SelectorDiscoverySettingsStore(this.storage).getRequired();
+    const settings = modelMode === 'previous-task' && task.model && task.aoBaseUrl
+      ? { ...stored.settings, model: task.model, aoBaseUrl: task.aoBaseUrl } : stored.settings;
+    await this.updateFunctionRevisionTask(job, task.id,
+      { model: settings.model, aoBaseUrl: settings.aoBaseUrl });
+    return { job: await this.getRequiredJob(job.id), settings,
+      providerDocument: stored.providerDocument, client: new AoClient(settings.aoBaseUrl) };
+  }
+
+  private async executeFunctionRevision(
+    runtime: RevisionRuntime, conversationId: string, job: SelectorDiscoveryJob,
+    task: RevisionTask, source: string
+  ) {
+    const bundle = await this.bundleManager.loadActive(runtime.providerDocument, runtime.settings.model);
+    await this.bundleManager.upload(runtime.client, conversationId, bundle);
+    await runtime.client.uploadFile(conversationId, 'adapter-implementation.ts', source);
+    await runtime.client.uploadFile(conversationId, 'revision-task.md',
+      createFunctionRevisionTaskMarkdown(job, task, source));
+    await runtime.client.start(conversationId);
+    return runAoFunctionRevisionWithRetry({ client: runtime.client, conversationId,
+      model: runtime.settings.model, revisionTask: task,
+      outputPath: 'outputs/revised-adapter-implementation.ts',
+      reviewPath: 'outputs/function-revision-review.md',
+      selfCheckPath: 'outputs/function-revision-self-check.md' });
+  }
+
+  private async saveFunctionRevisionResult(
+    jobId: string, taskId: string,
+    result: Awaited<ReturnType<typeof runAoFunctionRevisionWithRetry>>
+  ): Promise<void> {
+    const job = await this.getRequiredJob(jobId);
+    const validation = validateAdapterImplementationDraft(result.revisedSource, { target: job.target ?? 'full' });
+    const error = validation.valid ? undefined : validation.errors.join('; ');
+    const tasks = (job.functionRevisionTasks ?? []).map((task) => task.id === taskId
+      ? { ...task, status: validation.valid ? 'awaiting_review' as const : 'failed' as const,
+        error, selfCheckMarkdown: result.selfCheckMarkdown, updatedAt: new Date().toISOString() } : task);
+    await this.saveJob({ ...job, adapterImplementationTs: result.revisedSource,
+      reviewNotesMarkdown: appendRevisionNotes(job.reviewNotesMarkdown, taskId, result.reviewNotes),
+      implementationValidation: validation, status: validation.valid ? 'awaiting_review' : 'invalid',
+      error, functionRevisionTasks: tasks, updatedAt: new Date().toISOString() });
   }
 
   private async saveJob(job: SelectorDiscoveryJob): Promise<void> {
@@ -1031,68 +915,39 @@ ${finalUrl}
     return { browser, network, renderFirst: true, renderPage };
   }
 
-  private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<ActiveImplementationAdapterRecord> {
-    if (job.status !== 'awaiting_review') {
-      throw new Error('Only awaiting_review discovery jobs can be promoted.');
-    }
-    if (!job.adapterImplementationTs?.trim()) {
-      throw new Error('Discovery job has no adapter implementation draft.');
-    }
-    if (!job.implementationValidation?.valid) {
-      const errors = job.implementationValidation?.errors?.join('; ') || 'implementation validation did not pass';
-      throw new Error(`Adapter implementation draft is invalid: ${errors}`);
-    }
-
+  private async promoteImplementationDraft(job: SelectorDiscoveryJob): Promise<AdapterPackageManifest> {
+    validatePromotionJob(job);
     const adapter = instantiateAdapterImplementationDraft(job.adapterImplementationTs);
-    const adapterId = adapter.id;
-    if (job.promotionMode === 'augment' && job.baseAdapterId && adapterId !== job.baseAdapterId) {
-      throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapterId}".`);
-    }
-
-    const registeredAdapter = this.adapterRegistry.get(adapterId);
-    if (registeredAdapter && !(job.promotionMode === 'augment' && job.baseAdapterId === adapterId)) {
-      throw new Error(`Adapter "${adapterId}" is already registered.`);
-    }
-    const existingDomainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
-    if (!registeredAdapter && existingDomainAdapter && existingDomainAdapter.id !== adapterId) {
-      throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
-    }
-
+    const registeredAdapter = this.validatePromotionTarget(job, adapter);
     const approvalFixture = this.captureApprovalFixture
-      ? await this.captureApprovalFixture({ job, adapter })
-      : undefined;
+      ? await this.captureApprovalFixture({ job, adapter }) : undefined;
+    const document = createAdapterPackage({ adapter, implementationTs: job.adapterImplementationTs,
+      origin: 'local-generated', sourceDiscoveryId: job.id, approvalFixture,
+      validation: job.implementationValidation });
+    await this.adapterCatalog.installApproved(document);
+    if (registeredAdapter) this.adapterRegistry.replace(adapter);
+    else this.adapterRegistry.register(adapter);
+    await this.persistPromotedAdapter(job, document.manifest);
+    return document.manifest;
+  }
 
-    if (registeredAdapter) {
-      this.adapterRegistry.replace(adapter);
-    } else {
-      this.adapterRegistry.register(adapter);
-    }
+  private validatePromotionTarget(job: SelectorDiscoveryJob, adapter: IComicAdapter) {
+    const registered = this.adapterRegistry.get(adapter.id);
+    if (job.promotionMode === 'augment' && job.baseAdapterId && adapter.id !== job.baseAdapterId)
+      throw new Error(`Capability supplement must keep existing adapter id "${job.baseAdapterId}", got "${adapter.id}".`);
+    if (registered && !(job.promotionMode === 'augment' && job.baseAdapterId === adapter.id))
+      throw new Error(`Adapter "${adapter.id}" is already registered.`);
+    const domainAdapter = this.findRegisteredAdapterByDomains(adapter.domains);
+    if (!registered && domainAdapter && domainAdapter.id !== adapter.id)
+      throw new Error(`Domain conflict detected for ${adapter.domains.join(', ')}.`);
+    return registered;
+  }
 
-    const record: ActiveImplementationAdapterRecord = {
-      adapterId,
-      name: adapter.name,
-      domains: adapter.domains,
-      urlPatterns: adapter.domains.map((domain) => `https://${domain}/*`),
-      parseMode: adapter.parseMode,
-      capabilities: getAdapterCapabilities(adapter),
-      sourceDiscoveryId: job.id,
-      adapterImplementationTs: job.adapterImplementationTs,
-      promotedAt: new Date().toISOString(),
-      approvalFixture,
-    };
-    const records = (await this.storage.read<ActiveImplementationAdapterRecord[]>(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY)) ?? [];
-    await this.storage.write(ACTIVE_IMPLEMENTATION_ADAPTERS_KEY, [
-      ...records.filter((item) => item.adapterId !== adapterId),
-      record,
-    ]);
-    await this.updateJob(job.id, {
-      adapterId,
-      adapterName: adapter.name,
-      status: 'promoted',
-      phase: 'complete',
-      error: undefined,
-    });
-    return record;
+  private async persistPromotedAdapter(
+    job: SelectorDiscoveryJob, manifest: AdapterPackageManifest
+  ): Promise<void> {
+    await this.updateJob(job.id, { adapterId: manifest.adapterId, adapterName: manifest.name,
+      status: 'promoted', phase: 'complete', error: undefined });
   }
 
   private findRegisteredAdapterByDomains(domains: string[]): ReturnType<AdapterRegistry['getAll']>[number] | undefined {
@@ -1107,13 +962,10 @@ ${finalUrl}
     if (!adapter) {
       return undefined;
     }
-    const manifests = (await this.storage.read<DynamicSiteAdapterManifest[]>(ACTIVE_DYNAMIC_ADAPTERS_KEY)) ?? [];
-    const manifest = manifests.find((item) => item.adapterId === job.baseAdapterId);
     return {
       adapterId: adapter.id,
       name: adapter.name,
       capabilities: getAdapterCapabilities(adapter),
-      imageSelectors: manifest?.selectors.images,
       note: 'This is a capability supplement job. Keep the same adapter identity and only add metadata/chapter-list selectors unless image selectors are explicitly revalidated.',
     };
   }

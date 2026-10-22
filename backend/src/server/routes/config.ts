@@ -6,86 +6,77 @@ import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 export function setupConfigRoutes(app: FastifyInstance, configManager: ConfigManager): void {
-  app.get('/api/config', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const config = await configManager.get();
-    reply.send({ data: config });
-  });
+  app.get('/api/config', (_request, reply) => getConfig(reply, configManager));
+  app.put('/api/config', (request, reply) => updateConfig(request, reply, configManager));
+  app.post('/api/config/reset', (_request, reply) => resetConfig(reply, configManager));
+  app.post('/api/config/download-directory/browse', (_request, reply) => browseDirectory(reply));
+  app.post('/api/config/download-directory/open', (request, reply) => openDirectory(request, reply, configManager));
+  app.get('/api/config/sites', (_request, reply) => listSites(reply, configManager));
+  app.get('/api/config/sites/:adapterId', (request, reply) => getSite(request, reply, configManager));
+  app.put('/api/config/sites/:adapterId', (request, reply) => updateSite(request, reply, configManager));
+  app.get('/api/config/blacklist', (_request, reply) => listBlacklist(reply, configManager));
+  app.post('/api/config/blacklist', (request, reply) => addBlacklist(request, reply, configManager));
+  app.delete('/api/config/blacklist/:id', (request, reply) => removeBlacklist(request, reply, configManager));
+}
 
-  app.put('/api/config', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const body = request.body as Record<string, unknown>;
-      const updated = await configManager.update(body);
-      reply.send({ data: updated });
-    } catch (error) {
-      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
+async function getConfig(reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  reply.send({ data: await manager.get() });
+}
 
-  app.post('/api/config/reset', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const config = await configManager.reset();
-    reply.send({ data: config });
-  });
+async function updateConfig(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  try { reply.send({ data: await manager.update(request.body as Record<string, unknown>) }); }
+  catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
+}
 
-  app.post('/api/config/download-directory/browse', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const directory = await browseDownloadDirectory();
-    reply.send({ data: { directory } });
-  });
+async function resetConfig(reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  reply.send({ data: await manager.reset() });
+}
 
-  app.post('/api/config/download-directory/open', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as { directory?: string } | undefined;
-    const config = await configManager.get();
-    const directory = body?.directory?.trim() || config.download.directory;
-    await openDownloadDirectory(directory);
-    reply.send({ data: { directory: resolve(directory) } });
-  });
+async function browseDirectory(reply: FastifyReply): Promise<void> {
+  reply.send({ data: { directory: await browseDownloadDirectory() } });
+}
 
-  app.get('/api/config/sites', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const sites = await configManager.getAllSiteConfigs();
-    reply.send({ data: sites });
-  });
+async function openDirectory(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  const body = request.body as { directory?: string } | undefined;
+  const directory = body?.directory?.trim() || (await manager.get()).download.directory;
+  await openDownloadDirectory(directory);
+  reply.send({ data: { directory: resolve(directory) } });
+}
 
-  app.get('/api/config/sites/:adapterId', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { adapterId } = request.params as { adapterId: string };
-    const site = await configManager.getSiteConfig(adapterId);
+async function listSites(reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  reply.send({ data: await manager.getAllSiteConfigs() });
+}
 
-    if (!site) {
-      reply.code(404).send({ error: 'Site config not found' });
-      return;
-    }
+async function getSite(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  const site = await manager.getSiteConfig(routeParam(request, 'adapterId'));
+  if (!site) return void reply.code(404).send({ error: 'Site config not found' });
+  reply.send({ data: site });
+}
 
-    reply.send({ data: site });
-  });
+async function updateSite(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  const adapterId = routeParam(request, 'adapterId');
+  await manager.setSiteConfig(adapterId, { adapterId, enabled: true,
+    ...(request.body as Record<string, unknown>) } as any);
+  reply.send({ data: { message: 'Site config updated' } });
+}
 
-  app.put('/api/config/sites/:adapterId', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { adapterId } = request.params as { adapterId: string };
-    const body = request.body as Record<string, unknown>;
+async function listBlacklist(reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  reply.send({ data: await manager.getBlacklist() });
+}
 
-    await configManager.setSiteConfig(adapterId, {
-      adapterId,
-      enabled: true,
-      ...body,
-    } as any);
+async function addBlacklist(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  const body = request.body as { id: string; type: 'chapter' | 'tag'; pattern: string; adapterId?: string };
+  await manager.addBlacklistRule(body);
+  reply.code(201).send({ data: { message: 'Blacklist rule added' } });
+}
 
-    reply.send({ data: { message: 'Site config updated' } });
-  });
+async function removeBlacklist(request: FastifyRequest, reply: FastifyReply, manager: ConfigManager): Promise<void> {
+  await manager.removeBlacklistRule(routeParam(request, 'id'));
+  reply.send({ data: { message: 'Blacklist rule removed' } });
+}
 
-  app.get('/api/config/blacklist', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const rules = await configManager.getBlacklist();
-    reply.send({ data: rules });
-  });
-
-  app.post('/api/config/blacklist', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as { id: string; type: 'chapter' | 'tag'; pattern: string; adapterId?: string };
-
-    await configManager.addBlacklistRule(body);
-    reply.code(201).send({ data: { message: 'Blacklist rule added' } });
-  });
-
-  app.delete('/api/config/blacklist/:id', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { id } = request.params as { id: string };
-    await configManager.removeBlacklistRule(id);
-    reply.send({ data: { message: 'Blacklist rule removed' } });
-  });
+function routeParam(request: FastifyRequest, key: string): string {
+  return (request.params as Record<string, string>)[key]!;
 }
 
 async function browseDownloadDirectory(): Promise<string | null> {
@@ -93,7 +84,7 @@ async function browseDownloadDirectory(): Promise<string | null> {
     throw new Error('Folder browsing is currently only available on Windows. Enter the download directory manually.');
   }
 
-  const script = `
+  return runFolderPicker(`
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
 $dialog.Description = 'Select ComicCrawler download directory'
@@ -102,30 +93,27 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   Write-Output $dialog.SelectedPath
 }
-`;
+`);
+}
 
+function runFolderPicker(script: string): Promise<string | null> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
-      windowsHide: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: false, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
     child.once('error', reject);
-    child.once('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `Folder picker exited with code ${code}.`));
-        return;
-      }
-      resolvePromise(stdout.trim() || null);
-    });
+    child.once('close', (code) => completeFolderPicker(code, stdout, stderr, resolvePromise, reject));
   });
+}
+
+function completeFolderPicker(code: number | null, stdout: string, stderr: string,
+  resolvePromise: (value: string | null) => void, reject: (error: Error) => void): void {
+  if (code !== 0) return reject(new Error(stderr.trim() || `Folder picker exited with code ${code}.`));
+  resolvePromise(stdout.trim() || null);
 }
 
 async function openDownloadDirectory(directory: string): Promise<void> {
@@ -134,21 +122,15 @@ async function openDownloadDirectory(directory: string): Promise<void> {
     await mkdir(resolved, { recursive: true });
   }
 
-  const command = process.platform === 'win32'
-    ? 'explorer.exe'
-    : process.platform === 'darwin'
-      ? 'open'
-      : 'xdg-open';
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(command, [resolved], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-    });
+  const command = process.platform === 'win32' ? 'explorer.exe'
+    : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  await spawnDirectoryOpener(command, resolved);
+}
+
+function spawnDirectoryOpener(command: string, directory: string): Promise<void> {
+  return new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(command, [directory], { detached: true, stdio: 'ignore', windowsHide: false });
     child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolvePromise();
-    });
+    child.once('spawn', () => { child.unref(); resolvePromise(); });
   });
 }

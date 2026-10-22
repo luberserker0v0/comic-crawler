@@ -9,6 +9,8 @@ import type { MaintenanceService } from '../maintenance/service';
 import type { TerminalUI } from './ui';
 import type { FixtureCaptureService } from '../fixtures/fixture-capture-service';
 import type { IStorage } from '../storage/types';
+import type { AdapterCatalog } from '../adapter/catalog';
+import type { OfficialAdapterRegistryService } from '../adapter/official-registry';
 
 export interface CliOptions {
   configManager: ConfigManager;
@@ -20,6 +22,8 @@ export interface CliOptions {
   maintenanceService?: MaintenanceService;
   fixtureCaptureService?: FixtureCaptureService;
   storage?: IStorage;
+  adapterCatalog?: AdapterCatalog;
+  officialAdapterRegistry?: OfficialAdapterRegistryService;
 }
 
 export interface CliCommandContext {

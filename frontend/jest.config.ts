@@ -19,7 +19,7 @@ const config: Config = {
     '!src/**/*.d.ts',
     '!src/main.tsx',
   ],
-  coverageDirectory: 'coverage',
+  coverageDirectory: '<rootDir>/../.artifacts/coverage/frontend',
 };
 
 export default config;

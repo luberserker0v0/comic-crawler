@@ -77,27 +77,9 @@ class KuronaviMetadataCapability extends MetadataCapability {
   }
 
   private async extractMetadataDocument(document: unknown, sourceUrl: string): Promise<ComicMetadata> {
-    const context: ExtractionContext = {
-      $: this.adapter.asCheerio(document),
-      baseUrl: sourceUrl,
-      selectors: KURONAVI_SELECTORS,
-      pageType: 'metadata',
-    };
+    const context = extractionContext(this.adapter, document, sourceUrl, 'metadata');
     const result = await this.orchestrator.execute(context);
-    if (!result.metadata) {
-      throw new ComicError(
-        `Metadata extraction returned no result for ${sourceUrl}`,
-        ErrorType.PARSING_ERROR,
-        false,
-        buildExtractionFailureContext({
-          adapterId: this.adapter.id,
-          manifest: KURONAVI_SITE_MANIFEST,
-          pageType: 'metadata',
-          url: sourceUrl,
-          message: `Metadata extraction returned no result for ${sourceUrl}`,
-        })
-      );
-    }
+    if (!result.metadata) throw extractionError(this.adapter.id, sourceUrl, 'metadata');
     return result.metadata;
   }
 }
@@ -110,45 +92,34 @@ class KuronaviChapterImagesCapability extends ChapterImagesCapability {
   private readonly orchestrator = createDefaultExtractionOrchestrator();
 
   async extractChapterImageUrls(document: unknown, sourceUrl: string): Promise<string[]> {
-    const context: ExtractionContext = {
-      $: this.adapter.asCheerio(document),
-      baseUrl: sourceUrl,
-      selectors: KURONAVI_SELECTORS,
-      pageType: 'images',
-    };
+    const context = extractionContext(this.adapter, document, sourceUrl, 'images');
     try {
       const images = await this.orchestrator.getStrategy('dom')?.extractImages(context);
       return images?.map((image) => image.url) ?? [];
     } catch (error) {
-      if (error instanceof ComicError) {
-        throw new ComicError(
-          error.message,
-          error.type,
-          error.recoverable,
-          buildExtractionFailureContext({
-            adapterId: this.adapter.id,
-            manifest: KURONAVI_SITE_MANIFEST,
-            pageType: 'images',
-            selector: typeof error.context.selector === 'string' ? error.context.selector : undefined,
-            selectorName: typeof error.context.selectorName === 'string' ? error.context.selectorName : undefined,
-            url: sourceUrl,
-            message: error.message,
-          })
-        );
-      }
-
-      throw new ComicError(
-        error instanceof Error ? error.message : String(error),
-        ErrorType.PARSING_ERROR,
-        false,
-        buildExtractionFailureContext({
-          adapterId: this.adapter.id,
-          manifest: KURONAVI_SITE_MANIFEST,
-          pageType: 'images',
-          url: sourceUrl,
-          message: error instanceof Error ? error.message : String(error),
-        })
-      );
+      throw wrapExtractionError(this.adapter.id, sourceUrl, error);
     }
   }
+}
+
+function extractionContext(adapter: AdapterBase, document: unknown, baseUrl: string,
+  pageType: 'metadata' | 'images'): ExtractionContext {
+  return { $: adapter.asCheerio(document), baseUrl, selectors: KURONAVI_SELECTORS, pageType };
+}
+
+function extractionError(adapterId: string, url: string, pageType: 'metadata' | 'images', message?: string): ComicError {
+  const detail = message ?? `Metadata extraction returned no result for ${url}`;
+  return new ComicError(detail, ErrorType.PARSING_ERROR, false, buildExtractionFailureContext({
+    adapterId, manifest: KURONAVI_SITE_MANIFEST, pageType, url, message: detail,
+  }));
+}
+
+function wrapExtractionError(adapterId: string, url: string, error: unknown): ComicError {
+  if (!(error instanceof ComicError)) return extractionError(adapterId, url, 'images', error instanceof Error ? error.message : String(error));
+  return new ComicError(error.message, error.type, error.recoverable, buildExtractionFailureContext({
+    adapterId, manifest: KURONAVI_SITE_MANIFEST, pageType: 'images',
+    selector: typeof error.context.selector === 'string' ? error.context.selector : undefined,
+    selectorName: typeof error.context.selectorName === 'string' ? error.context.selectorName : undefined,
+    url, message: error.message,
+  }));
 }

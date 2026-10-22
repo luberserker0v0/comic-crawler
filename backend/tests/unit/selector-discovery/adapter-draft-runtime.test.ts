@@ -2,8 +2,29 @@ import { instantiateAdapterImplementationDraft } from '../../../src/selector-dis
 import type { AdapterBase } from '../../../src/adapter/base';
 
 describe('instantiateAdapterImplementationDraft', () => {
-  it('loads a system-composed AdapterBase implementation draft', () => {
-    const adapter = instantiateAdapterImplementationDraft(`
+  instantiateAdapterImplementationDraftTestGroup1();
+});
+
+function instantiateAdapterImplementationDraftTestGroup1(): void {
+  it('loads a system-composed AdapterBase implementation draft', instantiateAdapterImplementationDraftTestLoadsASystemComposedAdapterBaseImplementationDraft);
+  it('rejects unexpected imports', instantiateAdapterImplementationDraftTestRejectsUnexpectedImports);
+}
+
+function instantiateAdapterImplementationDraftTestLoadsASystemComposedAdapterBaseImplementationDraft() {
+    const adapter = instantiateAdapterImplementationDraft(ADAPTER_DRAFT_SOURCE) as AdapterBase;
+    const sourceUrl = 'https://demo.test/manga/title';
+    const document = adapter.parseHtml('<h1>Demo Title</h1><a href="/manga/title/chapter-1">Chapter 1</a><div id="reader"><img src="/1.webp"></div>');
+    expect(adapter.id).toBe('demo');
+    expect(adapter.matchUrl(sourceUrl)).toBe(true);
+    expect(adapter.detectVerificationRequired('<html>ok</html>')).toBe(false);
+    expect(adapter.extractTitle(document, sourceUrl)).toBe('Demo Title');
+    expect(adapter.extractChapterList(document, sourceUrl)).toEqual([
+        { id: 'chapter-1', title: 'Chapter 1', url: 'https://demo.test/manga/title/chapter-1' },
+    ]);
+    expect(adapter.extractChapterImageUrls(document, sourceUrl)).toEqual(['https://demo.test/1.webp']);
+}
+
+const ADAPTER_DRAFT_SOURCE = `
 import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
 import {
   AdapterBase,
@@ -59,25 +80,11 @@ class DemoChapterImagesCapability extends ChapterImagesCapability {
     return $('#reader img').map((_, element) => this.adapter.resolveUrl(sourceUrl, $(element).attr('src') ?? '')).get();
   }
 }
-`) as AdapterBase;
+`;
 
-    const sourceUrl = 'https://demo.test/manga/title';
-    const document = adapter.parseHtml('<h1>Demo Title</h1><a href="/manga/title/chapter-1">Chapter 1</a><div id="reader"><img src="/1.webp"></div>');
-
-    expect(adapter.id).toBe('demo');
-    expect(adapter.matchUrl(sourceUrl)).toBe(true);
-    expect(adapter.detectVerificationRequired('<html>ok</html>')).toBe(false);
-    expect(adapter.extractTitle(document, sourceUrl)).toBe('Demo Title');
-    expect(adapter.extractChapterList(document, sourceUrl)).toEqual([
-      { id: 'chapter-1', title: 'Chapter 1', url: 'https://demo.test/manga/title/chapter-1' },
-    ]);
-    expect(adapter.extractChapterImageUrls(document, sourceUrl)).toEqual(['https://demo.test/1.webp']);
-  });
-
-  it('rejects unexpected imports', () => {
+function instantiateAdapterImplementationDraftTestRejectsUnexpectedImports() {
     expect(() => instantiateAdapterImplementationDraft(`
 const fs = require('node:fs');
 export class Bad {}
 `)).toThrow('not allowed');
-  });
-});
+}

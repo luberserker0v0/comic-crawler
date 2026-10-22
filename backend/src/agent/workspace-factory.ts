@@ -41,38 +41,20 @@ export class WorkspaceFactory {
 
   async createSessionWorkspace(options: CreateSessionWorkspaceOptions): Promise<SessionWorkspace> {
     const rootDir = join(this.workspacePath, options.adapterId, options.sessionId);
-    const sourceDir = join(rootDir, 'source');
-    const attemptsDir = join(rootDir, 'attempts');
-    const validationDir = join(rootDir, 'validation');
+    const paths = workspacePaths(rootDir);
+    await Promise.all([paths.sourceDir, paths.attemptsDir, paths.validationDir].map((path) => fs.mkdir(path, { recursive: true })));
+    await this.writeInputs(rootDir, options);
+    const sourceVersion = await this.populateSource(options.manifest, paths.sourceDir, options.adapterId);
+    return createWorkspace(options.sessionId, rootDir, paths, sourceVersion);
+  }
 
-    await fs.mkdir(sourceDir, { recursive: true });
-    await fs.mkdir(attemptsDir, { recursive: true });
-    await fs.mkdir(validationDir, { recursive: true });
-
-    const sourceVersion = await this.populateSource(options.manifest, sourceDir, options.adapterId);
+  private async writeInputs(rootDir: string, options: CreateSessionWorkspaceOptions): Promise<void> {
     const errorContextPath = join(rootDir, 'error-context.json');
     const manifestPath = join(rootDir, 'manifest.json');
-    const sessionPath = join(rootDir, 'session.json');
-
-    await fs.writeFile(errorContextPath, JSON.stringify(options.errorContext, null, 2), 'utf-8');
-    await fs.writeFile(manifestPath, JSON.stringify(options.manifest, null, 2), 'utf-8');
-
-    return {
-      sessionId: options.sessionId,
-      rootDir,
-      sourceDir,
-      attemptsDir,
-      validationDir,
-      errorContextPath,
-      manifestPath,
-      sessionPath,
-      sourceFiles: {
-        selectorsPath: join(sourceDir, 'selectors.ts'),
-        parserPath: join(sourceDir, 'parser.ts'),
-        transformsPath: join(sourceDir, 'transforms.ts'),
-      },
-      sourceVersion,
-    };
+    await Promise.all([
+      fs.writeFile(errorContextPath, JSON.stringify(options.errorContext, null, 2), 'utf-8'),
+      fs.writeFile(manifestPath, JSON.stringify(options.manifest, null, 2), 'utf-8'),
+    ]);
   }
 
   private async populateSource(
@@ -84,16 +66,7 @@ export class WorkspaceFactory {
     if (activeVersion) {
       const versionSource = await this.versionManager.readVersionSource(adapterId, activeVersion.version);
       if (versionSource) {
-        await fs.writeFile(join(sourceDir, 'selectors.ts'), versionSource.selectorsContent, 'utf-8');
-
-        if (versionSource.parserContent) {
-          await fs.writeFile(join(sourceDir, 'parser.ts'), versionSource.parserContent, 'utf-8');
-        }
-
-        if (versionSource.transformsContent) {
-          await fs.writeFile(join(sourceDir, 'transforms.ts'), versionSource.transformsContent, 'utf-8');
-        }
-
+        await writeVersionSource(sourceDir, versionSource);
         return activeVersion.version;
       }
     }
@@ -106,4 +79,25 @@ export class WorkspaceFactory {
 
     return null;
   }
+}
+
+function workspacePaths(rootDir: string) {
+  return { sourceDir: join(rootDir, 'source'), attemptsDir: join(rootDir, 'attempts'), validationDir: join(rootDir, 'validation') };
+}
+
+function createWorkspace(sessionId: string, rootDir: string, paths: ReturnType<typeof workspacePaths>,
+  sourceVersion: string | null): SessionWorkspace {
+  return {
+    sessionId, rootDir, ...paths, errorContextPath: join(rootDir, 'error-context.json'),
+    manifestPath: join(rootDir, 'manifest.json'), sessionPath: join(rootDir, 'session.json'), sourceVersion,
+    sourceFiles: { selectorsPath: join(paths.sourceDir, 'selectors.ts'), parserPath: join(paths.sourceDir, 'parser.ts'),
+      transformsPath: join(paths.sourceDir, 'transforms.ts') },
+  };
+}
+
+async function writeVersionSource(sourceDir: string,
+  source: NonNullable<Awaited<ReturnType<VersionManager['readVersionSource']>>>): Promise<void> {
+  await fs.writeFile(join(sourceDir, 'selectors.ts'), source.selectorsContent, 'utf-8');
+  if (source.parserContent) await fs.writeFile(join(sourceDir, 'parser.ts'), source.parserContent, 'utf-8');
+  if (source.transformsContent) await fs.writeFile(join(sourceDir, 'transforms.ts'), source.transformsContent, 'utf-8');
 }

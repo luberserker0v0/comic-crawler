@@ -2,8 +2,26 @@ import { describe, expect, it } from '@jest/globals';
 import { loadChallengeStrategyFromSource, validateChallengeStrategySource } from '../../../src/challenge';
 
 describe('challenge strategy loader', () => {
-  it('loads a constrained TypeScript strategy candidate', async () => {
-    const source = `
+  challengeStrategyLoaderTestGroup1();
+});
+
+function challengeStrategyLoaderTestGroup1(): void {
+  it('loads a constrained TypeScript strategy candidate', challengeStrategyLoaderTestLoadsAConstrainedTypeScriptStrategyCandidate);
+  it('rejects forbidden browser automation and imports', challengeStrategyLoaderTestRejectsForbiddenBrowserAutomationAndImports);
+}
+
+async function challengeStrategyLoaderTestLoadsAConstrainedTypeScriptStrategyCandidate() {
+    const strategy = loadChallengeStrategyFromSource(validStrategySource());
+    expect(strategy.id).toBe('fixture-challenge');
+    expect(strategy.domains).toEqual(['example.com']);
+    await expect(strategy.verifyReady({
+        hasSelector: async () => true,
+        ready: (evidence?: string[]) => ({ status: 'ready', evidence }),
+    } as any)).resolves.toMatchObject({ status: 'ready' });
+}
+
+function validStrategySource(): string {
+  return `
       export const strategy = {
         id: 'fixture-challenge',
         domains: ['example.com'],
@@ -19,17 +37,9 @@ describe('challenge strategy loader', () => {
         },
       };
     `;
+}
 
-    const strategy = loadChallengeStrategyFromSource(source);
-    expect(strategy.id).toBe('fixture-challenge');
-    expect(strategy.domains).toEqual(['example.com']);
-    await expect(strategy.verifyReady({
-      hasSelector: async () => true,
-      ready: (evidence?: string[]) => ({ status: 'ready', evidence }),
-    } as any)).resolves.toMatchObject({ status: 'ready' });
-  });
-
-  it('rejects forbidden browser automation and imports', () => {
+function challengeStrategyLoaderTestRejectsForbiddenBrowserAutomationAndImports() {
     const validation = validateChallengeStrategySource(`
       import fs from 'node:fs';
       export const strategy = {
@@ -40,9 +50,7 @@ describe('challenge strategy loader', () => {
         verifyReady(ctx) { return ctx.ready(); }
       };
     `);
-
     expect(validation.valid).toBe(false);
     expect(validation.errors.join(' ')).toContain('Imports are not allowed');
     expect(validation.errors.join(' ')).toContain('Direct page.evaluate() is not allowed');
-  });
-});
+}

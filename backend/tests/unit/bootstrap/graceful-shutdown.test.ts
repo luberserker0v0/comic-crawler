@@ -11,48 +11,50 @@ function createLoggerMock() {
 }
 
 describe('createGracefulShutdownManager', () => {
-  it('should stop the server, dispose storage, flush logs, and exit', async () => {
+  createGracefulShutdownManagerTestGroup1();
+});
+
+function createGracefulShutdownManagerTestGroup1(): void {
+  it('should stop the server, dispose storage, flush logs, and exit', createGracefulShutdownManagerTestShouldStopTheServerDisposeStorageFlushLogsAndExit);
+  it('should only execute shutdown once when called concurrently', createGracefulShutdownManagerTestShouldOnlyExecuteShutdownOnceWhenCalledConcurrently);
+  it('should log fatal details for fatal process events', createGracefulShutdownManagerTestShouldLogFatalDetailsForFatalProcessEvents);
+}
+
+async function createGracefulShutdownManagerTestShouldStopTheServerDisposeStorageFlushLogsAndExit() {
     const server = { stop: jest.fn(async () => undefined) };
     const storage = { dispose: jest.fn(async () => undefined) };
     const logger = createLoggerMock();
     const exit = jest.fn(() => undefined as never);
     const manager = createGracefulShutdownManager({ server, storage, logger, exit });
-
     await manager.shutdown({ reason: 'SIGTERM received', signal: 'SIGTERM', exitCode: 0 });
-
     expect(server.stop).toHaveBeenCalledTimes(1);
     expect(storage.dispose).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalled();
     expect(logger.flush).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(0);
-  });
+}
 
-  it('should only execute shutdown once when called concurrently', async () => {
+async function createGracefulShutdownManagerTestShouldOnlyExecuteShutdownOnceWhenCalledConcurrently() {
     const server = { stop: jest.fn(async () => undefined) };
     const storage = { dispose: jest.fn(async () => undefined) };
     const logger = createLoggerMock();
     const exit = jest.fn(() => undefined as never);
     const manager = createGracefulShutdownManager({ server, storage, logger, exit });
-
     await Promise.all([
-      manager.shutdown({ reason: 'SIGINT received', signal: 'SIGINT', exitCode: 0 }),
-      manager.shutdown({ reason: 'SIGTERM received', signal: 'SIGTERM', exitCode: 0 }),
+        manager.shutdown({ reason: 'SIGINT received', signal: 'SIGINT', exitCode: 0 }),
+        manager.shutdown({ reason: 'SIGTERM received', signal: 'SIGTERM', exitCode: 0 }),
     ]);
-
     expect(server.stop).toHaveBeenCalledTimes(1);
     expect(storage.dispose).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledTimes(1);
-  });
+}
 
-  it('should log fatal details for fatal process events', async () => {
+async function createGracefulShutdownManagerTestShouldLogFatalDetailsForFatalProcessEvents() {
     const server = { stop: jest.fn(async () => undefined) };
     const logger = createLoggerMock();
     const exit = jest.fn(() => undefined as never);
     const manager = createGracefulShutdownManager({ server, logger, exit });
-
     await manager.shutdown({ reason: 'uncaughtException', error: new Error('boom'), exitCode: 1 });
-
     expect(logger.fatal).toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
-  });
-});
+}

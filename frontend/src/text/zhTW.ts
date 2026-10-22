@@ -436,7 +436,6 @@ export const uiText = {
     attemptSummary: '第 {current} / {max} 次嘗試',
     implementationKinds: {
       'project-source': 'TypeScript source',
-      'selector-manifest': 'Selector manifest',
       'ts-implementation': 'Generated TypeScript',
       summary: '摘要',
       'generated-draft': 'Generated draft',

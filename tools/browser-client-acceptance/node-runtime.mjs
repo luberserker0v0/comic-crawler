@@ -52,29 +52,35 @@ export class TemporaryProfileDirectoryAccess {
     assertNotAborted(input.signal);
     await assertProfileUnlocked(input.sourceUserDataRoot);
     const sourceProfilePath = join(input.sourceUserDataRoot, input.sourceProfile);
-    const sourceStat = await lstat(sourceProfilePath).catch(() => undefined);
-    if (!sourceStat?.isDirectory()) {
-      throw new Error(`Chrome Profile does not exist: ${sourceProfilePath}`);
-    }
-
+    await requireProfileDirectory(sourceProfilePath);
     const targetProfilePath = join(input.targetUserDataRoot, input.sourceProfile);
     const excluded = new Set(input.excludedNames);
-    await cp(sourceProfilePath, targetProfilePath, {
-      recursive: true,
-      force: false,
-      errorOnExist: true,
-      filter: (source) => {
-        assertNotAborted(input.signal);
-        return !excluded.has(basename(source));
-      },
-    });
-
-    const localState = join(input.sourceUserDataRoot, 'Local State');
-    if (await exists(localState)) {
-      await copyFile(localState, join(input.targetUserDataRoot, 'Local State'));
-    }
+    await copyProfileDirectory(sourceProfilePath, targetProfilePath, excluded, input.signal);
+    await copyLocalState(input.sourceUserDataRoot, input.targetUserDataRoot);
     assertNotAborted(input.signal);
   }
+}
+
+async function requireProfileDirectory(path) {
+  const sourceStat = await lstat(path).catch(() => undefined);
+  if (!sourceStat?.isDirectory()) throw new Error(`Chrome Profile does not exist: ${path}`);
+}
+
+async function copyProfileDirectory(source, target, excluded, signal) {
+  await cp(source, target, {
+    recursive: true,
+    force: false,
+    errorOnExist: true,
+    filter: (entry) => {
+      assertNotAborted(signal);
+      return !excluded.has(basename(entry));
+    },
+  });
+}
+
+async function copyLocalState(sourceRoot, targetRoot) {
+  const source = join(sourceRoot, 'Local State');
+  if (await exists(source)) await copyFile(source, join(targetRoot, 'Local State'));
 }
 
 export const nodeWebSocketFactory = {

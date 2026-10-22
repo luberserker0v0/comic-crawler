@@ -89,7 +89,7 @@ export interface AdapterListItem {
   capabilities: AdapterCapabilities;
   activeVersionLabel: string;
   versionCount: number;
-  implementationKind?: 'project-source' | 'selector-manifest' | 'ts-implementation' | 'summary' | 'generated-draft';
+  implementationKind?: 'project-source' | 'ts-implementation' | 'summary' | 'generated-draft';
   sourcePath?: string;
   sourceWillBeDeleted?: boolean;
   sourceDiscoveryId?: string;
@@ -117,14 +117,11 @@ export interface DeleteAdapterResponse {
   message: string;
   implementationKind?: AdapterListItem['implementationKind'];
   registryRemoved: boolean;
+  catalogDeactivated: boolean;
   deletedMarkerWritten: boolean;
   sourcePath?: string;
   sourceDirectory?: string;
   sourceDeleted: boolean;
-  runtimeRecordsRemoved: {
-    selectorManifest: boolean;
-    tsImplementation: boolean;
-  };
 }
 
 export interface RestoreAdapterResponse {
@@ -153,7 +150,7 @@ export interface AdapterCapabilityDetailResponse {
   functions: AdapterFunctionDescriptor[];
 }
 
-export type AdapterImplementationSourceType = 'project-source' | 'dynamic' | 'summary' | 'generated-draft';
+export type AdapterImplementationSourceType = 'project-source' | 'catalog-package' | 'dynamic' | 'summary' | 'generated-draft';
 export type AdapterImplementationSymbolKind = 'class' | 'method' | 'helper' | 'manifest-section';
 
 export interface AdapterImplementationSymbol {

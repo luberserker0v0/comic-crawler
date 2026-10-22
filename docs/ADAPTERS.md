@@ -95,11 +95,10 @@ All registered site adapters are managed at the same product level. The WebUI
 does not expose a separate adapter class such as "project provided" versus
 "generated" to users.
 
-Deleting an adapter is a real removal operation:
+Deleting an adapter changes its active state:
 
-- Generated TypeScript or selector-manifest adapters are removed from runtime
-  storage and unregistered immediately. Their runtime record is copied into the
-  deleted adapter marker so they can be restored from the WebUI.
+- Catalog-managed TypeScript adapters are deactivated and unregistered
+  immediately. Their immutable approved versions remain in the Adapter Catalog.
 - Project TypeScript adapters are unregistered and their source directory under
   `backend/src/adapter/sites/<adapter-id>/` is deleted.
 - A deleted marker is stored so a removed adapter is not registered again on the
@@ -111,10 +110,14 @@ status` before committing or pushing.
 
 The deleted adapter list shows whether an adapter can be restored:
 
-- Generated adapters can be restored when their runtime backup is still present.
+- Catalog-managed adapters can be restored from their last approved version.
 - Project TypeScript adapters can only be restored after their source directory
   has been restored with git.
 - ComicCrawler does not recreate missing TypeScript source files.
+
+Catalog-managed adapters may also be rolled back to an earlier approved version
+through `POST /api/adapters/:id/rollback`. See
+[Adapter Packages](ADAPTER_PACKAGES.md) for the version and storage contract.
 
 ## Drafts
 

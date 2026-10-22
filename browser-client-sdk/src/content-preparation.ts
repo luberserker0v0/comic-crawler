@@ -1,111 +1,119 @@
-/**
- * Runs inside the controlled page. Keep this function self-contained so both
- * Playwright and WebExtension scripting can serialize it without closures.
- */
-export async function scrollThroughDocument(timeoutMs: number): Promise<void> {
-  const startY = window.scrollY;
+export type BrowserScriptExecutor = <Argument, Result>(
+  script: (argument: Argument) => Result | Promise<Result>,
+  argument: Argument
+) => Promise<Result>;
+
+export async function prepareScrollableContent(execute: BrowserScriptExecutor, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const capturedByPage = new Map<string, string>();
-  const scrollPositions = new Map<Element, { top: number; left: number }>();
-  const pageCandidates = Array.from(document.querySelectorAll<HTMLElement>('[data-page]'));
-  const lazyImageCandidates = Array.from(document.querySelectorAll<HTMLElement>(
-    'img[loading="lazy"], img[data-src], img[data-lazy-src], img[data-original]'
-  ));
-  const candidates = pageCandidates.length > 1 ? pageCandidates : lazyImageCandidates;
+  const candidateCount = await execute(initializeScrollPreparation, undefined);
+  try {
+    await execute(captureLoadedImageUrls, undefined);
+    await prepareCandidates(execute, candidateCount, deadline);
+    await prepareDocumentBottom(execute, deadline);
+  } finally {
+    await execute(finishScrollPreparation, undefined);
+    await execute(captureLoadedImageUrls, undefined);
+    await execute(clearScrollPreparation, undefined);
+  }
+}
 
-  const imageUrl = (image: HTMLImageElement): string | undefined => {
-    const srcset = image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0];
-    const values = [
-      image.getAttribute('data-comiccrawler-src'),
-      image.getAttribute('data-src'),
-      image.getAttribute('data-lazy-src'),
-      image.getAttribute('data-original'),
-      image.currentSrc,
-      image.getAttribute('src'),
-      srcset,
-    ];
-    return values.find((value) => {
-      const normalized = value?.trim().toLowerCase();
-      return normalized && !normalized.startsWith('data:') && !normalized.startsWith('blob:');
-    })?.trim();
-  };
+async function prepareCandidates(
+  execute: BrowserScriptExecutor,
+  count: number,
+  deadline: number
+): Promise<void> {
+  for (let index = 0; index < count && Date.now() < deadline; index += 1) {
+    const waitMs = Math.min(800, deadline - Date.now());
+    await execute(scrollPreparationCandidate, { index, waitMs });
+    await execute(captureLoadedImageUrls, undefined);
+  }
+}
 
-  const captureLoadedImages = (): void => {
-    for (const image of Array.from(document.querySelectorAll<HTMLImageElement>('img'))) {
-      const url = imageUrl(image);
-      if (!url) continue;
-      image.setAttribute('data-comiccrawler-src', url);
-      const page = image.closest<HTMLElement>('[data-page]');
-      if (!page) continue;
-      page.setAttribute('data-comiccrawler-image-url', url);
-      const pageId = page.getAttribute('data-page');
-      if (pageId) capturedByPage.set(pageId, url);
-    }
-  };
+async function prepareDocumentBottom(execute: BrowserScriptExecutor, deadline: number): Promise<void> {
+  let done = false;
+  while (!done && Date.now() < deadline) {
+    done = await execute(scrollPreparationBottomStep, undefined);
+    await execute(captureLoadedImageUrls, undefined);
+  }
+}
 
-  const restoreCapturedPageUrls = (): void => {
-    for (const page of Array.from(document.querySelectorAll<HTMLElement>('[data-page]'))) {
-      const pageId = page.getAttribute('data-page');
-      const url = pageId ? capturedByPage.get(pageId) : undefined;
-      if (url) page.setAttribute('data-comiccrawler-image-url', url);
-    }
-  };
-
-  const rememberScrollableAncestors = (element: Element): void => {
-    for (let current = element.parentElement; current; current = current.parentElement) {
-      if (current.scrollHeight <= current.clientHeight && current.scrollWidth <= current.clientWidth) continue;
-      if (!scrollPositions.has(current)) {
-        scrollPositions.set(current, { top: current.scrollTop, left: current.scrollLeft });
+export function initializeScrollPreparation(_unused: undefined): number {
+  const root = document.documentElement;
+  const pages = Array.from(document.querySelectorAll<HTMLElement>('[data-page]'));
+  const lazy = Array.from(document.querySelectorAll<HTMLElement>('img[loading="lazy"], img[data-src], img[data-lazy-src], img[data-original]'));
+  const candidates = pages.length > 1 ? pages : lazy;
+  root.setAttribute('data-comiccrawler-preparation-state', JSON.stringify({ startY: window.scrollY, captured: {}, previousHeight: 0, stable: 0 }));
+  for (const candidate of candidates) {
+    for (let current = candidate.parentElement; current; current = current.parentElement) {
+      const scrollable = current.scrollHeight > current.clientHeight || current.scrollWidth > current.clientWidth;
+      if (scrollable && !current.hasAttribute('data-comiccrawler-scroll-position')) {
+        current.setAttribute('data-comiccrawler-scroll-position', JSON.stringify({ top: current.scrollTop, left: current.scrollLeft }));
       }
     }
-  };
+  }
+  return candidates.length;
+}
 
-  const candidateHasImageUrl = (candidate: HTMLElement): boolean => {
-    if (candidate.hasAttribute('data-comiccrawler-image-url')) return true;
-    if (candidate instanceof HTMLImageElement) return Boolean(imageUrl(candidate));
-    return Array.from(candidate.querySelectorAll<HTMLImageElement>('img')).some((image) => Boolean(imageUrl(image)));
-  };
+export function captureLoadedImageUrls(_unused: undefined): void {
+  const root = document.documentElement;
+  const state = JSON.parse(root.getAttribute('data-comiccrawler-preparation-state') ?? '{}') as { captured?: Record<string, string> };
+  const captured = state.captured ?? {};
+  for (const image of Array.from(document.querySelectorAll<HTMLImageElement>('img'))) {
+    const srcset = image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0];
+    const values = [image.getAttribute('data-comiccrawler-src'), image.getAttribute('data-src'), image.getAttribute('data-lazy-src'), image.getAttribute('data-original'), image.currentSrc, image.getAttribute('src'), srcset];
+    const url = values.find((value) => value && !/^(?:data|blob):/i.test(value.trim()))?.trim();
+    if (!url) continue;
+    image.setAttribute('data-comiccrawler-src', url);
+    const page = image.closest<HTMLElement>('[data-page]');
+    const pageId = page?.getAttribute('data-page');
+    if (page && pageId) { page.setAttribute('data-comiccrawler-image-url', url); captured[pageId] = url; }
+  }
+  state.captured = captured;
+  root.setAttribute('data-comiccrawler-preparation-state', JSON.stringify(state));
+}
 
-  captureLoadedImages();
-  for (const candidate of candidates) rememberScrollableAncestors(candidate);
+export async function scrollPreparationCandidate(input: { index: number; waitMs: number }): Promise<void> {
+  const pages = Array.from(document.querySelectorAll<HTMLElement>('[data-page]'));
+  const lazy = Array.from(document.querySelectorAll<HTMLElement>('img[loading="lazy"], img[data-src], img[data-lazy-src], img[data-original]'));
+  const candidates = pages.length > 1 ? pages : lazy;
+  candidates[input.index]?.scrollIntoView({ block: 'center', inline: 'nearest' });
+  await new Promise((resolve) => setTimeout(resolve, input.waitMs));
+}
 
-  try {
-    for (const candidate of candidates) {
-      if (Date.now() >= deadline) break;
-      candidate.scrollIntoView({ block: 'center', inline: 'nearest' });
-      const candidateDeadline = Math.min(deadline, Date.now() + 800);
-      do {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        captureLoadedImages();
-        if (candidateHasImageUrl(candidate)) break;
-      } while (Date.now() < candidateDeadline);
-    }
+export async function scrollPreparationBottomStep(_unused: undefined): Promise<boolean> {
+  const root = document.documentElement;
+  const state = JSON.parse(root.getAttribute('data-comiccrawler-preparation-state') ?? '{}') as { previousHeight?: number; stable?: number };
+  const height = Math.max(document.body?.scrollHeight ?? 0, root.scrollHeight ?? 0);
+  const bottom = Math.max(0, height - window.innerHeight);
+  const nextY = Math.min(bottom, window.scrollY + Math.max(600, Math.floor(window.innerHeight * 0.8)));
+  window.scrollTo(0, nextY);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const atBottom = window.scrollY >= bottom;
+  state.stable = atBottom && height === state.previousHeight ? (state.stable ?? 0) + 1 : 0;
+  state.previousHeight = height;
+  root.setAttribute('data-comiccrawler-preparation-state', JSON.stringify(state));
+  return state.stable >= 3;
+}
 
-    let previousHeight = 0;
-    let stableBottomChecks = 0;
-    while (Date.now() < deadline) {
-      const height = Math.max(
-        document.body?.scrollHeight ?? 0,
-        document.documentElement?.scrollHeight ?? 0
-      );
-      const bottom = Math.max(0, height - window.innerHeight);
-      const nextY = Math.min(bottom, window.scrollY + Math.max(600, Math.floor(window.innerHeight * 0.8)));
-      window.scrollTo(0, nextY);
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      captureLoadedImages();
-      const atBottom = window.scrollY >= bottom;
-      stableBottomChecks = atBottom && height === previousHeight ? stableBottomChecks + 1 : 0;
-      previousHeight = height;
-      if (stableBottomChecks >= 3) break;
-    }
-  } finally {
-    for (const [element, position] of scrollPositions) {
-      element.scrollTop = position.top;
-      element.scrollLeft = position.left;
-    }
-    window.scrollTo(0, startY);
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    captureLoadedImages();
-    restoreCapturedPageUrls();
+export async function finishScrollPreparation(_unused: undefined): Promise<void> {
+  const root = document.documentElement;
+  const state = JSON.parse(root.getAttribute('data-comiccrawler-preparation-state') ?? '{}') as { startY?: number; captured?: Record<string, string> };
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-comiccrawler-scroll-position]'))) {
+    const position = JSON.parse(element.getAttribute('data-comiccrawler-scroll-position') ?? '{}') as { top?: number; left?: number };
+    element.scrollTop = position.top ?? 0;
+    element.scrollLeft = position.left ?? 0;
+  }
+  window.scrollTo(0, state.startY ?? 0);
+  for (const page of Array.from(document.querySelectorAll<HTMLElement>('[data-page]'))) {
+    const url = state.captured?.[page.getAttribute('data-page') ?? ''];
+    if (url) page.setAttribute('data-comiccrawler-image-url', url);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 120));
+}
+
+export function clearScrollPreparation(_unused: undefined): void {
+  document.documentElement.removeAttribute('data-comiccrawler-preparation-state');
+  for (const element of Array.from(document.querySelectorAll<HTMLElement>('[data-comiccrawler-scroll-position]'))) {
+    element.removeAttribute('data-comiccrawler-scroll-position');
   }
 }

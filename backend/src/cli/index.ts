@@ -8,6 +8,8 @@ import { setupConfigCommand, setupDownloadCommand, setupSearchCommand, setupStat
 import { setupDiscoverCommand } from './discovery-command';
 import { setupMaintenanceCommand } from './maintenance-command';
 import { setupFixtureCommand } from './fixture-command';
+import { setupAdapterPackageCommand } from './adapter-package-command';
+import { setupAdapterRegistryCommand } from './adapter-registry-command';
 import { COMICCRAWLER_VERSION } from '../version';
 
 export { TerminalUI } from './ui';
@@ -38,10 +40,12 @@ export class ComicCrawlerCli {
     setupAgentCommand(this.ctx);
     setupMaintenanceCommand(this.ctx);
     setupFixtureCommand(this.ctx);
+    setupAdapterPackageCommand(this.ctx);
+    setupAdapterRegistryCommand(this.ctx);
   }
 
-  parse(args: string[]): Command {
-    return this.program.parse(args);
+  parse(args: string[]): Promise<Command> {
+    return this.program.parseAsync(args);
   }
 
   getProgram(): Command {

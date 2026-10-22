@@ -42,33 +42,23 @@ export class BrowserClientRegistry {
     validateCapabilities(request.capabilities);
     const name = request.name?.trim();
     if (name && name.length > 200) throw new Error('Browser Client name must not exceed 200 characters.');
-    const registeredCount = [...this.records.values()].filter((record) =>
-      record.ownerUserId === principal.userId && !record.revokedAt).length;
-    if (principal.limits.maxRegisteredBrowserClients !== undefined
-      && registeredCount >= principal.limits.maxRegisteredBrowserClients) {
-      throw new Error('The maximum number of registered Browser Clients has been reached.');
-    }
-
+    this.assertEnrollmentAvailable(principal);
     const clientId = `bc_${randomUUID()}`;
     const issued = issueCredential();
     const registeredAt = new Date().toISOString();
-    this.records.set(clientId, {
-      clientId,
-      ownerUserId: principal.userId,
-      name: name || `Browser Client ${clientId.slice(-6)}`,
-      credentialId: issued.credentialId,
-      credentialHash: issued.credentialHash,
-      registeredCapabilities: request.capabilities,
-      registeredAt,
-    });
+    this.records.set(clientId, createClientRecord(principal, request, issued, clientId, registeredAt, name));
     await this.persist();
     this.emitChange();
-    return {
-      clientId,
-      credentialId: issued.credentialId,
-      credential: issued.credential,
-      registeredAt,
-    };
+    return { clientId, credentialId: issued.credentialId, credential: issued.credential, registeredAt };
+  }
+
+  private assertEnrollmentAvailable(principal: ApiPrincipal): void {
+    const count = [...this.records.values()].filter((record) =>
+      record.ownerUserId === principal.userId && !record.revokedAt).length;
+    const maximum = principal.limits.maxRegisteredBrowserClients;
+    if (maximum !== undefined && count >= maximum) {
+      throw new Error('The maximum number of registered Browser Clients has been reached.');
+    }
   }
 
   list(ownerUserId?: string): Array<Record<string, unknown>> {
@@ -140,6 +130,16 @@ export class BrowserClientRegistry {
   private emitChange(): void {
     for (const listener of [...this.changeListeners]) listener();
   }
+}
+
+function createClientRecord(principal: ApiPrincipal, request: BrowserClientEnrollmentRequest,
+  issued: ReturnType<typeof issueCredential>, clientId: string, registeredAt: string,
+  name: string | undefined): BrowserClientRecord {
+  return {
+    clientId, ownerUserId: principal.userId, name: name || `Browser Client ${clientId.slice(-6)}`,
+    credentialId: issued.credentialId, credentialHash: issued.credentialHash,
+    registeredCapabilities: request.capabilities, registeredAt,
+  };
 }
 
 function publicRecord(record: BrowserClientRecord): Record<string, unknown> {

@@ -35,34 +35,14 @@ export class SelectorDiscoverySettingsStore {
   }
 
   async save(input: { aoBaseUrl: string; model: string; providerDocument?: unknown }): Promise<SelectorDiscoverySettingsSummary> {
-    if (!input.aoBaseUrl?.trim()) {
-      throw new Error('AO URL is required.');
-    }
-    if (!input.model?.trim()) {
-      throw new Error('Model is required.');
-    }
-
+    validateSettingsInput(input);
     const existingProviderDocument = await this.storage.read<ProviderDocument>(PROVIDER_KEY);
     const providerDocument = input.providerDocument === undefined
       ? existingProviderDocument
       : validateProviderDocument(input.providerDocument);
-    if (!providerDocument) {
-      throw new Error('Provider document is required.');
-    }
+    if (!providerDocument) throw new Error('Provider document is required.');
     assertModelExists(providerDocument, input.model);
-    const { providerIds, modelIds } = listProviderModelIds(providerDocument);
-    const selectedModel = input.model.trim();
-    const selectedProviderId = parseProviderModelId(selectedModel).providerId;
-    const settings: SelectorDiscoverySettings = {
-      aoBaseUrl: input.aoBaseUrl.trim().replace(/\/+$/, ''),
-      model: selectedModel,
-      providerFingerprint: fingerprintProviderDocument(providerDocument),
-      providerIds: Array.from(new Set([...providerIds, selectedProviderId])),
-      modelIds: Array.from(new Set([...modelIds, selectedModel])),
-      configuredAt: new Date().toISOString(),
-      warnings: diagnoseProviderDocument(providerDocument),
-    };
-
+    const settings = createSettings(input, providerDocument);
     await this.storage.write(PROVIDER_KEY, providerDocument);
     await this.storage.write(SETTINGS_KEY, settings);
     return this.getSummary();
@@ -73,4 +53,22 @@ export class SelectorDiscoverySettingsStore {
     await this.storage.delete(SETTINGS_KEY);
     return this.getSummary();
   }
+}
+
+function validateSettingsInput(input: { aoBaseUrl: string; model: string }): void {
+  if (!input.aoBaseUrl?.trim()) throw new Error('AO URL is required.');
+  if (!input.model?.trim()) throw new Error('Model is required.');
+}
+
+function createSettings(input: { aoBaseUrl: string; model: string }, document: ProviderDocument): SelectorDiscoverySettings {
+  const { providerIds, modelIds } = listProviderModelIds(document);
+  const selectedModel = input.model.trim();
+  const selectedProviderId = parseProviderModelId(selectedModel).providerId;
+  return {
+    aoBaseUrl: input.aoBaseUrl.trim().replace(/\/+$/, ''), model: selectedModel,
+    providerFingerprint: fingerprintProviderDocument(document),
+    providerIds: Array.from(new Set([...providerIds, selectedProviderId])),
+    modelIds: Array.from(new Set([...modelIds, selectedModel])), configuredAt: new Date().toISOString(),
+    warnings: diagnoseProviderDocument(document),
+  };
 }

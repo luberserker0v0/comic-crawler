@@ -11,6 +11,7 @@ import {
   MetadataCapability,
   VerificationCapability,
 } from '../adapter/base';
+import { ComicError, ErrorType } from '../error/types';
 
 export function instantiateAdapterImplementationDraft(source: string): IComicAdapter {
   return instantiateDraftModule(source, 'adapter-implementation.ts', createDraftRequire());
@@ -18,39 +19,36 @@ export function instantiateAdapterImplementationDraft(source: string): IComicAda
 
 export function instantiateProjectAdapterDraft(source: string, sourcePath: string): IComicAdapter {
   const absoluteSourcePath = resolve(sourcePath);
-  const moduleCache = new Map<string, Record<string, unknown>>();
   const hostRequire = createRequire(absoluteSourcePath);
-  const loadLocalModule = (requestedPath: string): unknown => {
-    const resolvedPath = resolveLocalModulePath(requestedPath);
-    if (isAdapterBasePath(resolvedPath)) {
-      return {
-        AdapterBase,
-        CommonCapability,
-        VerificationCapability,
-        MetadataCapability,
-        ChapterImagesCapability,
-      };
-    }
-    if (extname(resolvedPath) === '.json') return hostRequire(resolvedPath);
-    if (extname(resolvedPath) === '.js') return hostRequire(resolvedPath);
-    const cached = moduleCache.get(resolvedPath);
-    if (cached) return cached;
-    const exports: Record<string, unknown> = {};
-    moduleCache.set(resolvedPath, exports);
-    const loaded = evaluateTypeScriptModule(
-      readFileSync(resolvedPath, 'utf-8'),
-      resolvedPath,
-      createProjectRequire(resolvedPath, hostRequire, loadLocalModule),
-      exports
-    );
-    moduleCache.set(resolvedPath, loaded);
-    return loaded;
-  };
-  return instantiateDraftModule(
-    source,
-    absoluteSourcePath,
-    createProjectRequire(absoluteSourcePath, hostRequire, loadLocalModule)
-  );
+  const loadLocalModule = createLocalModuleLoader(hostRequire);
+  return instantiateDraftModule(source, absoluteSourcePath,
+    createProjectRequire(absoluteSourcePath, hostRequire, loadLocalModule));
+}
+
+function createLocalModuleLoader(hostRequire: NodeJS.Require): (path: string) => unknown {
+  const cache = new Map<string, Record<string, unknown>>();
+  const loader = (path: string) => loadLocalModule(path, hostRequire, cache, loader);
+  return loader;
+}
+
+function loadLocalModule(requestedPath: string, hostRequire: NodeJS.Require,
+  cache: Map<string, Record<string, unknown>>, loader: (path: string) => unknown): unknown {
+  const path = resolveLocalModulePath(requestedPath);
+  if (isAdapterBasePath(path)) return adapterBaseExports();
+  if (extname(path) === '.json' || extname(path) === '.js') return hostRequire(path);
+  const cached = cache.get(path);
+  if (cached) return cached;
+  const exports: Record<string, unknown> = {};
+  cache.set(path, exports);
+  const loaded = evaluateTypeScriptModule(readFileSync(path, 'utf-8'), path,
+    createProjectRequire(path, hostRequire, loader), exports);
+  cache.set(path, loaded);
+  return loaded;
+}
+
+function adapterBaseExports() {
+  return { AdapterBase, CommonCapability, VerificationCapability, MetadataCapability,
+    ChapterImagesCapability, ComicError, ErrorType };
 }
 
 function instantiateDraftModule(source: string, fileName: string, draftRequire: (id: string) => unknown): IComicAdapter {
@@ -72,55 +70,41 @@ function evaluateTypeScriptModule(
   draftRequire: (id: string) => unknown,
   initialExports: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  const output = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2020,
-      module: ts.ModuleKind.CommonJS,
-      esModuleInterop: true,
-      strict: true,
-    },
-    fileName,
-    reportDiagnostics: true,
-  });
+  const output = transpileDraft(source, fileName);
+  ensureNoSyntaxErrors(output.diagnostics);
+  const sandbox = createSandbox(fileName, draftRequire, initialExports);
+  vm.runInNewContext(output.outputText, sandbox,
+    { filename: fileName.replace(/\.ts$/, '.js'), timeout: 1000 });
+  return { ...sandbox.exports, ...(sandbox.module.exports as Record<string, unknown>) };
+}
 
-  const syntaxErrors = (output.diagnostics ?? []).filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (syntaxErrors.length > 0) {
-    throw new Error(`Adapter draft TypeScript syntax error: ${syntaxErrors
+function transpileDraft(source: string, fileName: string) {
+  return ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS,
+      esModuleInterop: true, strict: true,
+    },
+    fileName, reportDiagnostics: true,
+  });
+}
+
+function ensureNoSyntaxErrors(diagnostics: readonly ts.Diagnostic[] | undefined): void {
+  const errors = (diagnostics ?? []).filter((item) => item.category === ts.DiagnosticCategory.Error);
+  if (errors.length) throw new Error(`Adapter draft TypeScript syntax error: ${errors
       .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
       .join('; ')}`);
-  }
+}
 
-  const sandbox = {
-    exports: initialExports,
-    module: { exports: initialExports },
-    require: draftRequire,
-    URL,
-    console,
-    __filename: fileName,
-    __dirname: dirname(fileName),
-  };
-
-  vm.runInNewContext(output.outputText, sandbox, {
-    filename: fileName.replace(/\.ts$/, '.js'),
-    timeout: 1000,
-  });
-
-  return {
-    ...sandbox.exports,
-    ...(sandbox.module.exports as Record<string, unknown>),
-  };
+function createSandbox(fileName: string, draftRequire: (id: string) => unknown,
+  exports: Record<string, unknown>) {
+  return { exports, module: { exports }, require: draftRequire, URL, console,
+    __filename: fileName, __dirname: dirname(fileName) };
 }
 
 function createDraftRequire(): (id: string) => unknown {
   return (id: string): unknown => {
     if (id === '../../base' || id.endsWith('/base')) {
-      return {
-        AdapterBase,
-        CommonCapability,
-        VerificationCapability,
-        MetadataCapability,
-        ChapterImagesCapability,
-      };
+      return adapterBaseExports();
     }
     if (id === '@comiccrawler/shared') {
       return {};

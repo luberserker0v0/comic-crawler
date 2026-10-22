@@ -190,21 +190,25 @@ function validateSecrets(secrets: SecretDocument): void {
   unique(secrets.users.map((user) => user.id), 'user ID');
   unique(secrets.users.map((user) => hash(user.token)), 'user token');
   const roleIds = new Set(secrets.roles.map((role) => role.id));
-  for (const role of secrets.roles) {
-    if (role.id !== 'admin' && role.limits && Object.values(role.limits).some((value) => value === null)) {
-      throw new Error(`Unlimited Browser Client limits are reserved for the admin role; role "${role.id}" contains null.`);
-    }
-    for (const permission of role.permissions) {
-      if (permission === '*' && role.id !== 'admin') throw new Error('The * permission is reserved for the admin role.');
-      if (permission !== '*' && !API_PERMISSIONS.includes(permission as typeof API_PERMISSIONS[number])) {
-        throw new Error(`Unknown API permission "${permission}" in role "${role.id}".`);
-      }
+  for (const role of secrets.roles) validateRole(role);
+  for (const user of secrets.users) validateUserRoles(user, roleIds);
+}
+
+function validateRole(role: SecretDocument['roles'][number]): void {
+  if (role.id !== 'admin' && role.limits && Object.values(role.limits).some((value) => value === null)) {
+    throw new Error(`Unlimited Browser Client limits are reserved for the admin role; role "${role.id}" contains null.`);
+  }
+  for (const permission of role.permissions) {
+    if (permission === '*' && role.id !== 'admin') throw new Error('The * permission is reserved for the admin role.');
+    if (permission !== '*' && !API_PERMISSIONS.includes(permission as typeof API_PERMISSIONS[number])) {
+      throw new Error(`Unknown API permission "${permission}" in role "${role.id}".`);
     }
   }
-  for (const user of secrets.users) {
-    for (const roleId of user.roles) {
-      if (!roleIds.has(roleId)) throw new Error(`User "${user.id}" references unknown role "${roleId}".`);
-    }
+}
+
+function validateUserRoles(user: SecretDocument['users'][number], roleIds: Set<string>): void {
+  for (const roleId of user.roles) {
+    if (!roleIds.has(roleId)) throw new Error(`User "${user.id}" references unknown role "${roleId}".`);
   }
 }
 

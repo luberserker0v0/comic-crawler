@@ -19,6 +19,7 @@ export interface RuntimeConfig {
   agentWorkspacePath: string;
   dataLayout: DataDirectoryLayout;
   staticDir?: string;
+  adapterTrustStorePath: string;
 }
 
 export const ENV_KEYS = {
@@ -27,6 +28,7 @@ export const ENV_KEYS = {
   dataPath: 'COMICCRAWLER_DATA_PATH',
   agentWorkspacePath: 'AGENT_WORKSPACE_PATH',
   staticDir: 'STATIC_DIR',
+  adapterTrustStorePath: 'COMICCRAWLER_ADAPTER_TRUST_STORE_PATH',
   maintenanceEnabled: 'COMICCRAWLER_MAINTENANCE_ENABLED',
   maintenanceIntervalHours: 'COMICCRAWLER_MAINTENANCE_INTERVAL_HOURS',
   maintenanceTasksRetainDays: 'COMICCRAWLER_MAINTENANCE_TASKS_RETAIN_DAYS',
@@ -44,15 +46,12 @@ export function resolveRuntimeConfig(config?: Pick<GlobalConfig, 'server'>): Run
   const dataLayout = resolveDataDirectoryLayout(dataPath, readEnv(ENV_KEYS.agentWorkspacePath));
   const agentWorkspacePath = dataLayout.agentWorkspacePath;
   const staticDir = readEnv(ENV_KEYS.staticDir);
+  const adapterTrustStorePath = resolveAdapterTrustStorePath(dataLayout);
+  return { host, port, dataPath, agentWorkspacePath, dataLayout, staticDir, adapterTrustStorePath };
+}
 
-  return {
-    host,
-    port,
-    dataPath,
-    agentWorkspacePath,
-    dataLayout,
-    staticDir,
-  };
+function resolveAdapterTrustStorePath(layout: DataDirectoryLayout): string {
+  return readEnv(ENV_KEYS.adapterTrustStorePath) ?? join(layout.configPath, 'adapter-registries.json');
 }
 
 export function resolveDataDirectoryLayout(dataPath = readEnv(ENV_KEYS.dataPath) ?? defaultDataPath(), agentWorkspacePath = readEnv(ENV_KEYS.agentWorkspacePath)): DataDirectoryLayout {

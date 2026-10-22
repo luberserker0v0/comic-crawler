@@ -58,112 +58,162 @@ export class BrowserExecutorContractError extends Error {
 export async function runBrowserExecutorContract(
   contract: BrowserExecutorContractCase
 ): Promise<BrowserExecutorContractResult> {
-  const executor = await contract.createExecutor();
-  const checks: BrowserExecutorContractCheck[] = [];
-  let session: Awaited<ReturnType<BrowserExecutor['openSession']>> | undefined;
-
+  const context = await createHarnessContext(contract);
   try {
-    const capabilities = await checked('capabilities', () => executor.describe());
-    assertModeMatchesSource(capabilities, contract.request);
-    checks.push('capabilities');
-
-    if (contract.resource) {
-      if (!executor.registerResource) {
-        throw new BrowserExecutorContractError(
-          'resource-registration',
-          'the contract provides a resource but the executor cannot register it'
-        );
-      }
-      await checked('resource-registration', () => executor.registerResource!(
-        contract.resource!.descriptor,
-        contract.resource!.localHandle
-      ));
-      checks.push('resource-registration');
-    }
-
-    session = await checked('session-open', () => executor.openSession(
-      contract.request,
-      new AbortController().signal
-    ));
-    checks.push('session-open');
-
-    const currentUrl = await checked('current-url', () => session!.execute(
-      { type: 'page.get-url' },
-      new AbortController().signal
-    ));
-    assertResultType('current-url', currentUrl, 'page.get-url');
-    assertUrl('current-url', currentUrl.url, contract.expectedInitialUrl);
-    checks.push('current-url');
-
-    const content = await checked('rendered-dom', () => session!.execute(
-      { type: 'page.get-content' },
-      new AbortController().signal
-    ));
-    assertResultType('rendered-dom', content, 'page.get-content');
-    assertUrl('rendered-dom', content.url, contract.expectedInitialUrl);
-    if (content.html !== contract.expectedInitialHtml) {
-      throw new BrowserExecutorContractError('rendered-dom', 'returned HTML does not match the expected rendered DOM');
-    }
-    checks.push('rendered-dom');
-
-    const ready = await checked('ready-state', () => session!.execute(
-      { type: 'page.wait-for-ready', timeoutMs: 1_000 },
-      new AbortController().signal
-    ));
-    assertResultType('ready-state', ready, 'page.wait-for-ready');
-    checks.push('ready-state');
-
-    const prepared = await checked('content-preparation', () => session!.execute(
-      { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 1_000 },
-      new AbortController().signal
-    ));
-    assertResultType('content-preparation', prepared, 'page.prepare-content');
-    checks.push('content-preparation');
-
-    const focus = await checked('focus', () => session!.execute(
-      { type: 'page.focus' },
-      new AbortController().signal
-    ));
-    assertResultType('focus', focus, 'page.focus');
-    await checked('focus', async () => contract.afterFocus?.());
-    checks.push('focus');
-
-    const navigation = await checked('navigation', () => session!.execute(
-      { type: 'page.navigate', url: contract.navigationUrl },
-      new AbortController().signal
-    ));
-    assertResultType('navigation', navigation, 'page.navigate');
-    assertUrl('navigation', navigation.url, contract.expectedNavigationUrl ?? contract.navigationUrl);
-    checks.push('navigation');
-
-    await checked('session-close', () => session!.close());
-    await checked('session-close', async () => contract.afterSessionClose?.());
-    checks.push('session-close');
-
-    await expectRejected('closed-session-rejection', () => session!.execute(
-      { type: 'page.get-url' },
-      new AbortController().signal
-    ));
-    checks.push('closed-session-rejection');
-    session = undefined;
-
-    if (contract.resource) {
-      if (!executor.revokeResource) {
-        throw new BrowserExecutorContractError(
-          'resource-revocation',
-          'the contract provides a resource but the executor cannot revoke it'
-        );
-      }
-      await checked('resource-revocation', () => executor.revokeResource!(contract.resource!.descriptor.resourceId));
-      checks.push('resource-revocation');
-    }
-
-    return { capabilities, checks };
+    const capabilities = await verifyCapabilities(context);
+    await prepareHarness(context);
+    await verifyCurrentUrl(context);
+    await verifyRenderedDom(context);
+    await verifyReadyState(context);
+    await verifyContentPreparation(context);
+    await verifyFocus(context);
+    await verifyNavigation(context);
+    await closeAndRejectSession(context);
+    await revokeResource(context);
+    return { capabilities, checks: context.checks };
   } finally {
-    await session?.close().catch(() => undefined);
-    await checked('executor-close', () => executor.close());
-    checks.push('executor-close');
+    await closeHarness(context);
   }
+}
+
+async function prepareHarness(context: HarnessContext): Promise<void> {
+  await registerResource(context);
+  await openSession(context);
+}
+
+interface HarnessContext {
+  contract: BrowserExecutorContractCase;
+  executor: BrowserExecutor;
+  checks: BrowserExecutorContractCheck[];
+  session?: Awaited<ReturnType<BrowserExecutor['openSession']>>;
+}
+
+async function createHarnessContext(contract: BrowserExecutorContractCase): Promise<HarnessContext> {
+  return { contract, executor: await contract.createExecutor(), checks: [] };
+}
+
+async function verifyCapabilities(context: HarnessContext): Promise<BrowserCapabilities> {
+  const capabilities = await checked('capabilities', () => context.executor.describe());
+  assertModeMatchesSource(capabilities, context.contract.request);
+  context.checks.push('capabilities');
+  return capabilities;
+}
+
+async function registerResource(context: HarnessContext): Promise<void> {
+  const resource = context.contract.resource;
+  if (!resource) return;
+  const register = context.executor.registerResource;
+  if (!register) throw missingResourceOperation('resource-registration');
+  await checked('resource-registration', () => register.call(
+    context.executor,
+    resource.descriptor,
+    resource.localHandle
+  ));
+  context.checks.push('resource-registration');
+}
+
+async function openSession(context: HarnessContext): Promise<void> {
+  context.session = await checked('session-open', () => context.executor.openSession(
+    context.contract.request,
+    new AbortController().signal
+  ));
+  context.checks.push('session-open');
+}
+
+async function verifyCurrentUrl(context: HarnessContext): Promise<void> {
+  const result = await execute(context, 'current-url', { type: 'page.get-url' });
+  assertResultType('current-url', result, 'page.get-url');
+  assertUrl('current-url', result.url, context.contract.expectedInitialUrl);
+  context.checks.push('current-url');
+}
+
+async function verifyRenderedDom(context: HarnessContext): Promise<void> {
+  const result = await execute(context, 'rendered-dom', { type: 'page.get-content' });
+  assertResultType('rendered-dom', result, 'page.get-content');
+  assertUrl('rendered-dom', result.url, context.contract.expectedInitialUrl);
+  if (result.html !== context.contract.expectedInitialHtml) {
+    throw new BrowserExecutorContractError('rendered-dom', 'returned HTML does not match the expected rendered DOM');
+  }
+  context.checks.push('rendered-dom');
+}
+
+async function verifyReadyState(context: HarnessContext): Promise<void> {
+  const command = { type: 'page.wait-for-ready' as const, timeoutMs: 1_000 };
+  const result = await execute(context, 'ready-state', command);
+  assertResultType('ready-state', result, 'page.wait-for-ready');
+  context.checks.push('ready-state');
+}
+
+async function verifyContentPreparation(context: HarnessContext): Promise<void> {
+  const command = { type: 'page.prepare-content' as const, strategy: 'scroll-through' as const, timeoutMs: 1_000 };
+  const result = await execute(context, 'content-preparation', command);
+  assertResultType('content-preparation', result, 'page.prepare-content');
+  context.checks.push('content-preparation');
+}
+
+async function verifyFocus(context: HarnessContext): Promise<void> {
+  const result = await execute(context, 'focus', { type: 'page.focus' });
+  assertResultType('focus', result, 'page.focus');
+  await checked('focus', async () => context.contract.afterFocus?.());
+  context.checks.push('focus');
+}
+
+async function verifyNavigation(context: HarnessContext): Promise<void> {
+  const result = await execute(context, 'navigation', {
+    type: 'page.navigate',
+    url: context.contract.navigationUrl,
+  });
+  assertResultType('navigation', result, 'page.navigate');
+  const expected = context.contract.expectedNavigationUrl ?? context.contract.navigationUrl;
+  assertUrl('navigation', result.url, expected);
+  context.checks.push('navigation');
+}
+
+async function closeAndRejectSession(context: HarnessContext): Promise<void> {
+  const session = requireHarnessSession(context);
+  await checked('session-close', () => session.close());
+  await checked('session-close', async () => context.contract.afterSessionClose?.());
+  context.checks.push('session-close');
+  await expectRejected('closed-session-rejection', () => session.execute(
+    { type: 'page.get-url' },
+    new AbortController().signal
+  ));
+  context.checks.push('closed-session-rejection');
+  context.session = undefined;
+}
+
+async function revokeResource(context: HarnessContext): Promise<void> {
+  const resource = context.contract.resource;
+  if (!resource) return;
+  const revoke = context.executor.revokeResource;
+  if (!revoke) throw missingResourceOperation('resource-revocation');
+  await checked('resource-revocation', () => revoke.call(context.executor, resource.descriptor.resourceId));
+  context.checks.push('resource-revocation');
+}
+
+async function closeHarness(context: HarnessContext): Promise<void> {
+  await context.session?.close().catch(() => undefined);
+  await checked('executor-close', () => context.executor.close());
+  context.checks.push('executor-close');
+}
+
+async function execute(
+  context: HarnessContext,
+  check: BrowserExecutorContractCheck,
+  command: Parameters<NonNullable<HarnessContext['session']>['execute']>[0]
+): Promise<BrowserCommandResult> {
+  const session = requireHarnessSession(context);
+  return checked(check, () => session.execute(command, new AbortController().signal));
+}
+
+function requireHarnessSession(context: HarnessContext): NonNullable<HarnessContext['session']> {
+  if (!context.session) throw new BrowserExecutorContractError('session-open', 'session is unavailable');
+  return context.session;
+}
+
+function missingResourceOperation(check: 'resource-registration' | 'resource-revocation'): BrowserExecutorContractError {
+  const operation = check === 'resource-registration' ? 'register' : 'revoke';
+  return new BrowserExecutorContractError(check, `the contract provides a resource but the executor cannot ${operation} it`);
 }
 
 function assertModeMatchesSource(

@@ -20,79 +20,85 @@ class MockAdapter implements IComicAdapter {
   }
 }
 
-describe('AdapterRegistry', () => {
-  let registry: AdapterRegistry;
-  let eventBus: EventBus;
+let registry: AdapterRegistry;
 
-  beforeEach(() => {
+let eventBus: EventBus;
+
+describe('AdapterRegistry', () => {
+  AdapterRegistryTestGroup1();
+});
+
+function AdapterRegistryTestGroup1(): void {
+  beforeEach(AdapterRegistryTestScenario1);
+  it('should register an adapter', AdapterRegistryTestShouldRegisterAnAdapter);
+  it('should throw when registering duplicate adapter', AdapterRegistryTestShouldThrowWhenRegisteringDuplicateAdapter);
+  it('should unregister an adapter', AdapterRegistryTestShouldUnregisterAnAdapter);
+  it('should get adapter by id', AdapterRegistryTestShouldGetAdapterById);
+  it('should find adapter by URL', AdapterRegistryTestShouldFindAdapterByURL);
+  it('should list all adapters', AdapterRegistryTestShouldListAllAdapters);
+  it('should emit event on register', AdapterRegistryTestShouldEmitEventOnRegister);
+  it('should clear all adapters', AdapterRegistryTestShouldClearAllAdapters);
+}
+
+function AdapterRegistryTestScenario1() {
     eventBus = new EventBus();
     registry = new AdapterRegistry(eventBus);
-  });
+}
 
-  it('should register an adapter', () => {
+function AdapterRegistryTestShouldRegisterAnAdapter() {
     const adapter = new MockAdapter('test', 'Test', ['test.com']);
     registry.register(adapter);
-
     expect(registry.has('test')).toBe(true);
     expect(registry.size).toBe(1);
-  });
+}
 
-  it('should throw when registering duplicate adapter', () => {
+function AdapterRegistryTestShouldThrowWhenRegisteringDuplicateAdapter() {
     const adapter = new MockAdapter('test', 'Test', ['test.com']);
     registry.register(adapter);
-
     expect(() => registry.register(adapter)).toThrow();
-  });
+}
 
-  it('should unregister an adapter', () => {
+function AdapterRegistryTestShouldUnregisterAnAdapter() {
     const adapter = new MockAdapter('test', 'Test', ['test.com']);
     registry.register(adapter);
     registry.unregister('test');
-
     expect(registry.has('test')).toBe(false);
     expect(registry.size).toBe(0);
-  });
+}
 
-  it('should get adapter by id', () => {
+function AdapterRegistryTestShouldGetAdapterById() {
     const adapter = new MockAdapter('test', 'Test', ['test.com']);
     registry.register(adapter);
-
     expect(registry.get('test')).toBe(adapter);
     expect(registry.get('non-existent')).toBeUndefined();
-  });
+}
 
-  it('should find adapter by URL', () => {
+function AdapterRegistryTestShouldFindAdapterByURL() {
     const adapter = new MockAdapter('test', 'Test', ['test.com']);
     registry.register(adapter);
-
     expect(registry.findByUrl('https://test.com/comic/1')).toBe(adapter);
     expect(registry.findByUrl('https://other.com/comic/1')).toBeUndefined();
-  });
+}
 
-  it('should list all adapters', () => {
+function AdapterRegistryTestShouldListAllAdapters() {
     registry.register(new MockAdapter('a', 'A', ['a.com']));
     registry.register(new MockAdapter('b', 'B', ['b.com']));
-
     const list = registry.list();
     expect(list).toHaveLength(2);
     expect(list.map((l) => l.id)).toContain('a');
     expect(list.map((l) => l.id)).toContain('b');
-  });
+}
 
-  it('should emit event on register', () => {
+function AdapterRegistryTestShouldEmitEventOnRegister() {
     const handler = jest.fn();
     eventBus.on('adapter:registered', handler);
-
     registry.register(new MockAdapter('test', 'Test', ['test.com']));
-
     expect(handler).toHaveBeenCalledWith({ adapterId: 'test' });
-  });
+}
 
-  it('should clear all adapters', () => {
+function AdapterRegistryTestShouldClearAllAdapters() {
     registry.register(new MockAdapter('a', 'A', ['a.com']));
     registry.register(new MockAdapter('b', 'B', ['b.com']));
     registry.clear();
-
     expect(registry.size).toBe(0);
-  });
-});
+}

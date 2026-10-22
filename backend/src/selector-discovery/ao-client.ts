@@ -153,34 +153,27 @@ export class AoClient {
     const path = `/api/conversations/${encodeURIComponent(conversationId)}/message`;
     const body = JSON.stringify({ text, model, agent });
     let lastError: unknown;
-    let transientProviderFailures = 0;
-
+    const retryState = { providerFailures: 0 };
     for (let attempt = 0; attempt < 90; attempt++) {
       try {
-        return await this.request<AoMessageResponse>(path, {
-          method: 'POST',
-          body,
-        });
+        return await this.request<AoMessageResponse>(path, { method: 'POST', body });
       } catch (error) {
         lastError = error;
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes('SESSION_NOT_READY')) {
-          await sleep(2000);
-          continue;
-        }
-        if (isTransientProviderFetchFailure(message) && transientProviderFailures < 2) {
-          transientProviderFailures += 1;
-          await sleep(this.messageRetryBaseDelayMs * transientProviderFailures);
-          continue;
-        }
-        if (!message.includes('SESSION_NOT_READY')) {
-          throw error;
-        }
-        await sleep(2000);
+        if (!await this.retryMessage(error, retryState)) throw error;
       }
     }
-
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private async retryMessage(error: unknown, state: { providerFailures: number }): Promise<boolean> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('SESSION_NOT_READY')) { await sleep(2000); return true; }
+    if (isTransientProviderFetchFailure(message) && state.providerFailures < 2) {
+      state.providerFailures += 1;
+      await sleep(this.messageRetryBaseDelayMs * state.providerFailures);
+      return true;
+    }
+    return false;
   }
 
   async deleteConversation(conversationId: string): Promise<void> {
@@ -193,20 +186,8 @@ export class AoClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          ...(init.body && !(init.body instanceof Buffer) ? { 'content-type': 'application/json' } : {}),
-          ...init.headers,
-        },
-      } as any);
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`AO ${init.method} ${path} failed with HTTP ${response.status}: ${text}`);
-      }
-      if (!text) return undefined as T;
-      return JSON.parse(text) as T;
+      const response = await this.fetchRequest(path, init, controller.signal);
+      return await parseResponse<T>(response, init.method, path);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`AO ${init.method} ${path} timed out after ${this.requestTimeoutMs}ms`);
@@ -216,6 +197,22 @@ export class AoClient {
       clearTimeout(timeout);
     }
   }
+
+  private fetchRequest(path: string, init: { method: string; body?: any; headers?: Record<string, string> }, signal: AbortSignal) {
+    return fetch(`${this.baseUrl}${path}`, {
+      ...init, signal,
+      headers: {
+        ...(init.body && !(init.body instanceof Buffer) ? { 'content-type': 'application/json' } : {}),
+        ...init.headers,
+      },
+    } as any);
+  }
+}
+
+async function parseResponse<T>(response: Awaited<ReturnType<typeof fetch>>, method: string, path: string): Promise<T> {
+  const text = await response.text();
+  if (!response.ok) throw new Error(`AO ${method} ${path} failed with HTTP ${response.status}: ${text}`);
+  return text ? JSON.parse(text) as T : undefined as T;
 }
 
 function sleep(ms: number): Promise<void> {

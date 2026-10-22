@@ -18,43 +18,22 @@ export class SearchEngine {
   }
 
   async search(adapter: AdapterBase, query: string, options?: SearchOptions & SearchEngineOptions): Promise<SearchResult[]> {
-    if (adapter.search) {
-      return adapter.search(query, options);
-    }
-
-    const searchUrl = options?.searchUrlTemplate?.replace('{query}', encodeURIComponent(query));
-    if (!searchUrl) {
-      throw new ComicError(
-        `Adapter "${adapter.id}" does not support search and no searchUrlTemplate provided`,
-        ErrorType.ADAPTER_ERROR
-      );
-    }
-
+    if (adapter.search) return adapter.search(query, options);
+    const searchUrl = requireSearchUrl(adapter, query, options);
     const html = await adapter.fetchHtml(searchUrl);
     const $ = this.parser.parse(html);
-
     const resultSelector = options?.resultSelector ?? '.search-result';
     const titleSelector = options?.titleSelector ?? '.title';
     const urlSelector = options?.urlSelector ?? 'a';
-
     const results: SearchResult[] = [];
-    const items = $(resultSelector);
-
-    items.each((i, el) => {
+    $(resultSelector).each((i, el) => {
       const $el = $(el);
       const title = $el.find(titleSelector).first().text().trim();
       const url = $el.find(urlSelector).first().attr('href');
-
       if (title && url) {
-        results.push({
-          id: `search-${i}`,
-          title,
-          url,
-          coverUrl: $el.find('img').first().attr('src'),
-        });
+        results.push({ id: `search-${i}`, title, url, coverUrl: $el.find('img').first().attr('src') });
       }
     });
-
     return results;
   }
 
@@ -72,4 +51,13 @@ export class SearchEngine {
     await Promise.all(searchPromises);
     return results;
   }
+}
+
+function requireSearchUrl(adapter: AdapterBase, query: string, options?: SearchEngineOptions): string {
+  const url = options?.searchUrlTemplate?.replace('{query}', encodeURIComponent(query));
+  if (url) return url;
+  throw new ComicError(
+    `Adapter "${adapter.id}" does not support search and no searchUrlTemplate provided`,
+    ErrorType.ADAPTER_ERROR
+  );
 }

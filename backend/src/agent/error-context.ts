@@ -26,14 +26,13 @@ export function buildExtractionFailureContext(options: {
   html?: string;
   message: string;
 }): ExtractionFailureContext {
-  const { adapterId, manifest, pageType, selector, selectorName, url, html, message } = options;
-  const fixtureRefs = [
-    manifest.maintenance.metadataFixture?.htmlFile,
-    manifest.maintenance.metadataFixture?.expectedFile,
-    manifest.maintenance.imageFixture?.htmlFile,
-    manifest.maintenance.imageFixture?.expectedFile,
-  ].filter((value): value is string => Boolean(value));
+  return composeFailureContext(options, collectFixtureRefs(options.manifest));
+}
 
+function composeFailureContext(
+  options: Parameters<typeof buildExtractionFailureContext>[0], fixtureRefs: string[]
+): ExtractionFailureContext {
+  const { adapterId, manifest, pageType, selector, selectorName, url, html, message } = options;
   return {
     adapterId,
     parseMode: manifest.parseMode,
@@ -48,4 +47,11 @@ export function buildExtractionFailureContext(options: {
     htmlSample: html ? html.slice(0, 10_240) : undefined,
     message,
   };
+}
+
+function collectFixtureRefs(manifest: SiteManifest): string[] {
+  return [
+    manifest.maintenance.metadataFixture?.htmlFile, manifest.maintenance.metadataFixture?.expectedFile,
+    manifest.maintenance.imageFixture?.htmlFile, manifest.maintenance.imageFixture?.expectedFile,
+  ].filter((value): value is string => Boolean(value));
 }

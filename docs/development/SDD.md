@@ -17,6 +17,7 @@ flowchart LR
     Runtime --> Render[Browser Render Service]
     Render --> Gateway
     Runtime --> Store[Runtime State / Fixtures / Downloads]
+    Runtime --> Catalog[Adapter Catalog]
   end
 
   subgraph Device[User Device]
@@ -49,6 +50,7 @@ state; it does not expose arbitrary Playwright operations.
 | Task Scheduler | Orders crawl and adapter jobs by policy. |
 | Crawler Engine | Runs adapters and downloads image URLs. |
 | Selector Discovery | Produces reviewable adapter drafts. |
+| Adapter Catalog | Stores immutable approved packages and active versions. |
 | Challenge Discovery | Retains the session for human verification. |
 | Browser Client SDK | Implements enrollment, connection, heartbeat, and dispatch. |
 | BrowserExecutor | Consumer adapter for extension, CDP, or Playwright runtime. |
@@ -65,6 +67,7 @@ classDiagram
   class CrawlerEngine
   class SelectorDiscoveryService
   class ChallengeDiscoveryService
+  class AdapterCatalog
 
   BrowserSessionGateway --> BrowserClientRegistry
   BrowserWorkerLeaseCoordinator --> BrowserSessionGateway
@@ -73,6 +76,8 @@ classDiagram
   CrawlerEngine --> BrowserRenderService
   SelectorDiscoveryService --> BrowserRenderService
   ChallengeDiscoveryService --> BrowserRenderService
+  SelectorDiscoveryService --> AdapterCatalog
+  AdapterCatalog --> CrawlerEngine
 ```
 
 ## 4. Browser Client framework
@@ -212,7 +217,9 @@ session command is checked against Worker, session, and lease identity.
 
 ## 10. Persistence boundary
 
-Durable Server state includes Client records, tasks, checkpoints, adapters, and
-fixtures. Live sockets, Workers, leases, and sessions are process memory only.
+Durable Server state includes Client records, tasks, checkpoints, adapter
+packages, catalog pointers, and fixtures. Approved package content is immutable.
+Activation, rollback, and deletion update only catalog metadata. Live sockets,
+Workers, leases, and sessions are process memory only.
 Browser profile state belongs to the consumer and is never persisted by the
 Server.

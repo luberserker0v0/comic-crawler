@@ -21,118 +21,12 @@ const READER_HTML = `
     <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
   </body></html>`;
 
+const apps: Array<ReturnType<typeof fastify>> = [];
+
+const services: ChallengeDiscoveryService[] = [];
+
 describe('Integration: chapter-images existing-tab verification handoff', () => {
-  const apps: Array<ReturnType<typeof fastify>> = [];
-  const services: ChallengeDiscoveryService[] = [];
-
-  afterEach(async () => {
-    await Promise.all(services.splice(0).map((service) => service.dispose()));
-    await Promise.all(apps.splice(0).map((app) => app.close()));
-  });
-
-  it('retains the selected tab and retries the same handoff after verification', async () => {
-    const app = fastify();
-    apps.push(app);
-    const storage = new MemoryStorage();
-    const registry = new AdapterRegistry();
-    registry.register(new ComixAdapter());
-    let html = CHALLENGE_HTML;
-    let operationLeaseActive = false;
-    const releaseChallengeLease = jest.fn(async () => undefined);
-    const acquireBrowserSession = jest.fn(async (input: unknown) => {
-      await waitForCondition(() => !operationLeaseActive);
-      return { sessionId: 'challenge-session', release: releaseChallengeLease };
-    });
-    const renderService = new BrowserRenderService({
-      execute: async (_sessionId: string, command: BrowserCommand) => {
-        if (command.type === 'page.focus') return { type: command.type };
-        if (command.type === 'page.navigate') return { type: command.type, url: command.url };
-        if (command.type === 'page.get-content') return { type: command.type, url: CHAPTER_URL, html };
-        return { type: command.type, url: CHAPTER_URL };
-      },
-    });
-    const challengeService = new ChallengeDiscoveryService(storage, {
-      browserRenderService: renderService,
-      acquireBrowserSession,
-      getBrowserConfig: async () => ({
-        timeout: 1_000,
-        workerWaitTimeoutMs: 1_000,
-        postLoadDelayMs: 0,
-      }),
-    });
-    services.push(challengeService);
-    const withBrowserSession = jest.fn(async (
-      _request: unknown,
-      target: unknown,
-      _url: string,
-      _renderContext: unknown,
-      action: (sessionId: string) => Promise<unknown>
-    ) => {
-      expect(target).toEqual(TARGET);
-      operationLeaseActive = true;
-      try {
-        return await action('operation-session');
-      } finally {
-        operationLeaseActive = false;
-      }
-    });
-    setupAdaptersRoutes(app, registry, {
-      challengeDiscoveryService: challengeService,
-      browserRenderService: renderService,
-      withBrowserSession: withBrowserSession as any,
-    });
-
-    const challengedResponse = await app.inject({
-      method: 'POST',
-      url: '/api/adapters/chapter-images',
-      payload: { url: CHAPTER_URL, browserTarget: TARGET },
-    });
-    expect(challengedResponse.statusCode).toBe(409);
-    const challenged = challengedResponse.json();
-    expect(challenged.code).toBe('CHAPTER_IMAGES_VERIFICATION_REQUIRED');
-    expect(challenged.data).toMatchObject({
-      errorCode: 'CHAPTER_IMAGES_VERIFICATION_REQUIRED',
-      challengeStatus: 'queued',
-      retryableAfterVerification: true,
-      challenge: {
-        status: 'queued',
-        normalizedUrl: CHAPTER_URL,
-        retryableAfterVerification: true,
-        ownerUserId: 'public',
-        browserTarget: TARGET,
-      },
-    });
-
-    const challengeId = challenged.data.challengeDiscoveryId as string;
-    const required = await waitForJob(challengeService, challengeId, 'challenge_required');
-    expect(required).toMatchObject({
-      ownerUserId: 'public',
-      browserTarget: TARGET,
-      browserSessionId: 'challenge-session',
-    });
-    expect(acquireBrowserSession).toHaveBeenCalledWith(expect.objectContaining({
-      jobId: challengeId,
-      ownerUserId: 'public',
-      url: CHAPTER_URL,
-      browserTarget: TARGET,
-    }));
-
-    html = READER_HTML;
-    await expect(challengeService.completeHumanVerification(challengeId)).resolves.toMatchObject({ status: 'ready' });
-
-    const retryResponse = await app.inject({
-      method: 'POST',
-      url: '/api/adapters/chapter-images',
-      payload: { url: CHAPTER_URL, browserTarget: TARGET, challengeDiscoveryId: challengeId },
-    });
-    expect(retryResponse.statusCode).toBe(200);
-    expect(retryResponse.json().data.imageUrls).toEqual([
-      'https://cdn.example/page-1.jpg',
-      'https://cdn.example/page-2.jpg',
-    ]);
-    expect(await challengeService.list()).toHaveLength(1);
-    expect(acquireBrowserSession).toHaveBeenCalledTimes(1);
-  });
+  IntegrationChapterImagesExistingTabVerificationHandoffTestGroup1();
 });
 
 async function waitForJob(
@@ -173,4 +67,133 @@ class MemoryStorage implements IStorage {
   async exists(key: string): Promise<boolean> {
     return this.values.has(key);
   }
+}
+
+function IntegrationChapterImagesExistingTabVerificationHandoffTestGroup1(): void {
+  afterEach(IntegrationChapterImagesExistingTabVerificationHandoffTestScenario1);
+  it('retains the selected tab and retries the same handoff after verification', IntegrationChapterImagesExistingTabVerificationHandoffTestRetainsTheSelectedTabAndRetriesTheSameHandoffAfterVerification);
+}
+
+async function IntegrationChapterImagesExistingTabVerificationHandoffTestScenario1() {
+    await Promise.all(services.splice(0).map((service) => service.dispose()));
+    await Promise.all(apps.splice(0).map((app) => app.close()));
+}
+
+async function IntegrationChapterImagesExistingTabVerificationHandoffTestRetainsTheSelectedTabAndRetriesTheSameHandoffAfterVerification() {
+    const fixture = createHandoffFixture();
+    const challenged = await requestChallenge(fixture.app);
+    const challengeId = expectChallengeResponse(challenged);
+    await expectRequiredChallenge(fixture, challengeId);
+    fixture.page.html = READER_HTML;
+    await expect(fixture.challengeService.completeHumanVerification(challengeId))
+      .resolves.toMatchObject({ status: 'ready' });
+    await expectSuccessfulRetry(fixture, challengeId);
+}
+
+function createHandoffFixture() {
+    const app = fastify();
+    apps.push(app);
+    const storage = new MemoryStorage();
+    const registry = new AdapterRegistry();
+    registry.register(new ComixAdapter());
+    const page = { html: CHALLENGE_HTML };
+    const operationLease = { active: false };
+    const acquireBrowserSession = createChallengeAcquirer(operationLease);
+    const renderService = createRenderService(page);
+    const challengeService = createChallengeService(storage, renderService, acquireBrowserSession);
+    services.push(challengeService);
+    setupAdaptersRoutes(app, registry, {
+        challengeDiscoveryService: challengeService,
+        browserRenderService: renderService,
+        withBrowserSession: createOperationSession(operationLease) as any,
+    });
+    return { app, page, challengeService, acquireBrowserSession };
+}
+
+function createChallengeAcquirer(operationLease: { active: boolean }) {
+  const release = jest.fn(async () => undefined);
+  return jest.fn(async (_input: unknown) => {
+    await waitForCondition(() => !operationLease.active);
+    return { sessionId: 'challenge-session', release };
+  });
+}
+
+function createRenderService(page: { html: string }): BrowserRenderService {
+  return new BrowserRenderService({ execute: async (_sessionId: string, command: BrowserCommand) => {
+    if (command.type === 'page.focus') return { type: command.type };
+    if (command.type === 'page.navigate') return { type: command.type, url: command.url };
+    if (command.type === 'page.get-content') return { type: command.type, url: CHAPTER_URL, html: page.html };
+    return { type: command.type, url: CHAPTER_URL };
+  } });
+}
+
+function createChallengeService(storage: IStorage, browserRenderService: BrowserRenderService,
+  acquireBrowserSession: jest.Mock): ChallengeDiscoveryService {
+  return new ChallengeDiscoveryService(storage, { browserRenderService,
+    acquireBrowserSession: acquireBrowserSession as any,
+    getBrowserConfig: async () => ({ timeout: 1000, workerWaitTimeoutMs: 1000, postLoadDelayMs: 0 }) });
+}
+
+function createOperationSession(state: { active: boolean }) {
+  return jest.fn(async (_request: unknown, target: unknown, _url: string,
+    _context: unknown, action: (sessionId: string) => Promise<unknown>) => {
+    expect(target).toEqual(TARGET);
+    state.active = true;
+    try { return await action('operation-session'); }
+    finally { state.active = false; }
+  });
+}
+
+function requestChallenge(app: ReturnType<typeof fastify>) {
+  return app.inject({ method: 'POST', url: '/api/adapters/chapter-images',
+    payload: { url: CHAPTER_URL, browserTarget: TARGET } });
+}
+
+function expectChallengeResponse(response: Awaited<ReturnType<ReturnType<typeof fastify>['inject']>>): string {
+    expect(response.statusCode).toBe(409);
+    const challenged = response.json();
+    expect(challenged.code).toBe('CHAPTER_IMAGES_VERIFICATION_REQUIRED');
+    expect(challenged.data).toMatchObject({
+        errorCode: 'CHAPTER_IMAGES_VERIFICATION_REQUIRED',
+        challengeStatus: 'queued',
+        retryableAfterVerification: true,
+        challenge: {
+            status: 'queued',
+            normalizedUrl: CHAPTER_URL,
+            retryableAfterVerification: true,
+            ownerUserId: 'public',
+            browserTarget: TARGET,
+        },
+    });
+    return challenged.data.challengeDiscoveryId as string;
+}
+
+async function expectRequiredChallenge(fixture: ReturnType<typeof createHandoffFixture>, challengeId: string) {
+    const required = await waitForJob(fixture.challengeService, challengeId, 'challenge_required');
+    expect(required).toMatchObject({
+        ownerUserId: 'public',
+        browserTarget: TARGET,
+        browserSessionId: 'challenge-session',
+    });
+    expect(fixture.acquireBrowserSession).toHaveBeenCalledWith(expect.objectContaining({
+        jobId: challengeId,
+        ownerUserId: 'public',
+        url: CHAPTER_URL,
+        browserTarget: TARGET,
+    }));
+}
+
+async function expectSuccessfulRetry(fixture: ReturnType<typeof createHandoffFixture>, challengeId: string) {
+    const retryResponse = await fixture.app.inject({
+        method: 'POST',
+        url: '/api/adapters/chapter-images',
+        payload: { url: CHAPTER_URL, browserTarget: TARGET, challengeDiscoveryId: challengeId },
+    });
+    expect(retryResponse.statusCode).toBe(200);
+    expect(retryResponse.json().data.imageUrls).toEqual([
+        'https://cdn.example/page-1.jpg',
+        'https://cdn.example/page-2.jpg',
+    ]);
+    expect(await fixture.challengeService.list()).toHaveLength(1);
+    expect(fixture.acquireBrowserSession).toHaveBeenCalledTimes(1);
 }

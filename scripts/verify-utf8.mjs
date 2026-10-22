@@ -24,6 +24,7 @@ const skippedDirectories = new Set([
   'node_modules',
   'dist',
   'data',
+  '.artifacts',
   'playwright-report',
   'test-results',
   '.next',
@@ -57,58 +58,52 @@ const mojibakePatterns = [
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) await inspectEntry(dir, entry);
+}
 
-  for (const entry of entries) {
-    if (skippedDirectories.has(entry.name)) {
-      continue;
-    }
+async function inspectEntry(dir, entry) {
+  if (skippedDirectories.has(entry.name)) return;
+  const fullPath = path.join(dir, entry.name);
+  if (entry.isDirectory()) return walk(fullPath);
+  if (!textExtensions.has(path.extname(entry.name).toLowerCase())) return;
+  await inspectTextFile(fullPath);
+}
 
-    const fullPath = path.join(dir, entry.name);
+async function inspectTextFile(fullPath) {
+  const content = await readFile(fullPath);
+  const text = decodeText(content, fullPath);
+  if (text === undefined) return;
+  inspectBom(content, fullPath);
+  inspectMojibake(text, fullPath);
+}
 
-    if (entry.isDirectory()) {
-      await walk(fullPath);
-      continue;
-    }
-
-    if (!textExtensions.has(path.extname(entry.name).toLowerCase())) {
-      continue;
-    }
-
-    const content = await readFile(fullPath);
-
-    let text;
-    try {
-      text = decoder.decode(content);
-    } catch (error) {
-      suspiciousFiles.push({
-        path: path.relative(projectRoot, fullPath),
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      continue;
-    }
-
-    if (content.length >= 2) {
-      const hasUtf16LeBom = content[0] === 0xff && content[1] === 0xfe;
-      const hasUtf16BeBom = content[0] === 0xfe && content[1] === 0xff;
-      if (hasUtf16LeBom || hasUtf16BeBom) {
-        suspiciousFiles.push({
-          path: path.relative(projectRoot, fullPath),
-          reason: 'Detected UTF-16 BOM; expected UTF-8.',
-        });
-      }
-    }
-
-    for (const { pattern, reason } of mojibakePatterns) {
-      const match = pattern.exec(text);
-      if (match) {
-        suspiciousFiles.push({
-          path: path.relative(projectRoot, fullPath),
-          reason: `${reason} Matched "${match[0]}".`,
-        });
-        break;
-      }
-    }
+function decodeText(content, fullPath) {
+  try {
+    return decoder.decode(content);
+  } catch (error) {
+    recordSuspicious(fullPath, error instanceof Error ? error.message : String(error));
+    return undefined;
   }
+}
+
+function inspectBom(content, fullPath) {
+  if (content.length < 2) return;
+  const hasUtf16LeBom = content[0] === 0xff && content[1] === 0xfe;
+  const hasUtf16BeBom = content[0] === 0xfe && content[1] === 0xff;
+  if (hasUtf16LeBom || hasUtf16BeBom) recordSuspicious(fullPath, 'Detected UTF-16 BOM; expected UTF-8.');
+}
+
+function inspectMojibake(text, fullPath) {
+  for (const { pattern, reason } of mojibakePatterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    recordSuspicious(fullPath, `${reason} Matched "${match[0]}".`);
+    return;
+  }
+}
+
+function recordSuspicious(fullPath, reason) {
+  suspiciousFiles.push({ path: path.relative(projectRoot, fullPath), reason });
 }
 
 await walk(projectRoot);

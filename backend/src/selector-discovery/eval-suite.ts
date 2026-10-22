@@ -46,6 +46,17 @@ export interface SelectorDiscoveryEvalPolicyResult {
   };
 }
 
+interface EvalPolicyMetrics {
+  positiveRuns: SelectorDiscoveryEvalPolicyInput['runs'];
+  negativeRuns: SelectorDiscoveryEvalPolicyInput['runs'];
+  positivePassed: number;
+  negativePassed: number;
+  positiveFailed: number;
+  negativeFailed: number;
+  minPositivePasses: number;
+  maxPositiveFailures: number;
+}
+
 export async function loadSelectorDiscoveryEvalCases(input: {
   bundleRoot?: string;
   caseId?: string;
@@ -53,22 +64,26 @@ export async function loadSelectorDiscoveryEvalCases(input: {
   includeLiveNegative?: boolean;
 } = {}): Promise<SelectorDiscoveryEvalCase[]> {
   const roots = input.bundleRoot ? [input.bundleRoot] : resolveSelectorDiscoveryBundleRootCandidates();
-  let lastError: unknown;
-  for (const root of roots) {
-    try {
-      return await loadSelectorDiscoveryEvalCasesFromRoot(root, input);
-    } catch (error) {
-      lastError = error;
-      if (input.bundleRoot) break;
-    }
-  }
+  const result = await tryLoadEvalRoots(roots, input);
+  if (result.cases) return result.cases;
   const tried = roots.map((root) => `"${root}"`).join(' and ');
-  throw new Error(
-    `Selector-discovery AO bundle not found. Tried ${tried} (expected eval/cases under it). ` +
-      'Set AO_BUNDLE_PATH to the selector-discovery bundle directory (containing draft/, eval/, active.json), ' +
-      'or mount it into the container (for example, -v ./agent/ao/selector-discovery:/app/agent/ao/selector-discovery:ro). ' +
-      `Cause: ${lastError instanceof Error ? lastError.message : String(lastError)}`
-  );
+  throw new Error(evalLoadError(tried, result.error));
+}
+
+async function tryLoadEvalRoots(roots: string[], input: Parameters<typeof loadSelectorDiscoveryEvalCases>[0]) {
+  let error: unknown;
+  for (const root of roots) {
+    try { return { cases: await loadSelectorDiscoveryEvalCasesFromRoot(root, input ?? {}) }; }
+    catch (caught) { error = caught; if (input?.bundleRoot) break; }
+  }
+  return { cases: undefined, error };
+}
+
+function evalLoadError(tried: string, error: unknown): string {
+  return `Selector-discovery AO bundle not found. Tried ${tried} (expected eval/cases under it). ` +
+    'Set AO_BUNDLE_PATH to the selector-discovery bundle directory (containing draft/, eval/, active.json), ' +
+    'or mount it into the container (for example, -v ./agent/ao/selector-discovery:/app/agent/ao/selector-discovery:ro). ' +
+    `Cause: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 async function loadSelectorDiscoveryEvalCasesFromRoot(
@@ -99,38 +114,28 @@ export function evaluateSelectorDiscoveryEvalPolicy(input: SelectorDiscoveryEval
   const negativeFailed = negativeRuns.length - negativePassed;
   const minPositivePasses = input.minPositivePasses ?? positiveRuns.length;
   const maxPositiveFailures = input.maxPositiveFailures ?? 0;
+  const metrics = { positiveRuns, negativeRuns, positivePassed, negativePassed,
+    positiveFailed, negativeFailed, minPositivePasses, maxPositiveFailures };
+  const reasons = policyReasons(metrics);
+  return { passed: reasons.length === 0, reasons,
+    positive: { total: positiveRuns.length, passed: positivePassed, failed: positiveFailed,
+      minPasses: minPositivePasses, maxFailures: maxPositiveFailures },
+    negative: { total: negativeRuns.length, passed: negativePassed,
+      failed: negativeFailed, requiresAllPass: true } };
+}
+
+function policyReasons(metrics: EvalPolicyMetrics): string[] {
+  const { positiveRuns, positivePassed, positiveFailed, negativeRuns, negativeFailed,
+    minPositivePasses, maxPositiveFailures } = metrics;
   const reasons: string[] = [];
-
-  if (positiveRuns.length === 0) {
-    reasons.push('No positive eval runs were executed.');
-  }
-  if (positivePassed < minPositivePasses) {
-    reasons.push(`Positive eval passes ${positivePassed}/${positiveRuns.length} did not meet minimum ${minPositivePasses}.`);
-  }
-  if (positiveFailed > maxPositiveFailures) {
-    reasons.push(`Positive eval failures ${positiveFailed}/${positiveRuns.length} exceeded maximum ${maxPositiveFailures}.`);
-  }
-  if (negativeFailed > 0) {
-    reasons.push(`Negative eval failures ${negativeFailed}/${negativeRuns.length}; negative cases must pass 100%.`);
-  }
-
-  return {
-    passed: reasons.length === 0,
-    reasons,
-    positive: {
-      total: positiveRuns.length,
-      passed: positivePassed,
-      failed: positiveFailed,
-      minPasses: minPositivePasses,
-      maxFailures: maxPositiveFailures,
-    },
-    negative: {
-      total: negativeRuns.length,
-      passed: negativePassed,
-      failed: negativeFailed,
-      requiresAllPass: true,
-    },
-  };
+  if (!positiveRuns.length) reasons.push('No positive eval runs were executed.');
+  if (positivePassed < minPositivePasses) reasons.push(
+    `Positive eval passes ${positivePassed}/${positiveRuns.length} did not meet minimum ${minPositivePasses}.`);
+  if (positiveFailed > maxPositiveFailures) reasons.push(
+    `Positive eval failures ${positiveFailed}/${positiveRuns.length} exceeded maximum ${maxPositiveFailures}.`);
+  if (negativeFailed) reasons.push(
+    `Negative eval failures ${negativeFailed}/${negativeRuns.length}; negative cases must pass 100%.`);
+  return reasons;
 }
 
 
@@ -151,20 +156,10 @@ function normalizeEvalCase(value: unknown, fallbackId: string): SelectorDiscover
   }
 
   const record = value as Record<string, unknown>;
-  const id = typeof record.id === 'string' && record.id.trim() ? record.id.trim() : fallbackId;
-  const type = record.type === 'negative' ? 'negative' : 'positive';
-  const enabled = typeof record.enabled === 'boolean' ? record.enabled : true;
-  const live = record.live === true;
+  const basics = normalizeEvalBasics(record, fallbackId);
   const url = typeof record.url === 'string' ? record.url.trim() : '';
-  if (!url) {
-    throw new Error(`Eval case "${id}" is missing url.`);
-  }
-
-  return {
-    id,
-    type,
-    enabled,
-    live,
+  if (!url) throw new Error(`Eval case "${basics.id}" is missing url.`);
+  return { ...basics,
     description: typeof record.description === 'string' ? record.description : undefined,
     url,
     defaultRuns: typeof record.defaultRuns === 'number' && record.defaultRuns > 0 ? Math.floor(record.defaultRuns) : 1,
@@ -172,4 +167,11 @@ function normalizeEvalCase(value: unknown, fallbackId: string): SelectorDiscover
       ? record.expectations as SelectorDiscoveryEvalCase['expectations']
       : undefined,
   };
+}
+
+function normalizeEvalBasics(record: Record<string, unknown>, fallbackId: string) {
+  return { id: typeof record.id === 'string' && record.id.trim() ? record.id.trim() : fallbackId,
+    type: (record.type === 'negative' ? 'negative' : 'positive') as SelectorDiscoveryEvalCaseType,
+    enabled: typeof record.enabled === 'boolean' ? record.enabled : true,
+    live: record.live === true };
 }

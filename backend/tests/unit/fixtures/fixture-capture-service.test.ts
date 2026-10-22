@@ -29,66 +29,70 @@ class ChapterFixtureAdapter extends AdapterBase {
   }
 }
 
+const roots: string[] = [];
+
 describe('FixtureCaptureService approved adapter fixtures', () => {
-  const roots: string[] = [];
+  FixtureCaptureServiceApprovedAdapterFixturesTestGroup1();
+});
 
-  afterEach(async () => {
+function FixtureCaptureServiceApprovedAdapterFixturesTestGroup1(): void {
+  afterEach(FixtureCaptureServiceApprovedAdapterFixturesTestScenario1);
+  it('captures approved page input and golden output', FixtureCaptureServiceApprovedAdapterFixturesTestCapturesApprovedPageInputAndGoldenOutput);
+  it('replays an approved fixture against the current adapter', FixtureCaptureServiceApprovedAdapterFixturesTestReplaysAnApprovedFixtureAgainstTheCurrentAdapter);
+  it('rejects empty chapter image output', FixtureCaptureServiceApprovedAdapterFixturesTestRejectsEmptyChapterImageOutput);
+}
+
+async function FixtureCaptureServiceApprovedAdapterFixturesTestScenario1() {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  });
+}
 
-  it('captures approved page input and golden output', async () => {
+async function FixtureCaptureServiceApprovedAdapterFixturesTestCapturesApprovedPageInputAndGoldenOutput() {
     const root = await mkdtemp(join(tmpdir(), 'comiccrawler-fixture-'));
     roots.push(root);
     const service = new FixtureCaptureService({} as never, root);
     const adapter = new ChapterFixtureAdapter();
-
     const fixture = await service.captureApprovedAdapterFixture({
-      sourceDiscoveryId: 'disc-fixture',
-      adapter,
-      target: 'chapter-only',
-      url: 'https://example.com/chapter/1',
-      html: '<html><body><main id="reader"><img src="/1.webp"><img src="/2.webp"></main></body></html>',
+        sourceDiscoveryId: 'disc-fixture',
+        adapter,
+        target: 'chapter-only',
+        url: 'https://example.com/chapter/1',
+        html: '<html><body><main id="reader"><img src="/1.webp"><img src="/2.webp"></main></body></html>',
     });
-
     expect(await readFile(fixture.path, 'utf-8')).toContain('/1.webp');
     const expected = JSON.parse(await readFile(fixture.expectedPath!, 'utf-8'));
     expect(expected.results.extractChapterImageUrls.imageUrls).toEqual([
-      'https://example.com/1.webp',
-      'https://example.com/2.webp',
+        'https://example.com/1.webp',
+        'https://example.com/2.webp',
     ]);
     expect(fixture.functionIds).toEqual(['matchUrl', 'extractChapterImageUrls']);
-  });
+}
 
-  it('replays an approved fixture against the current adapter', async () => {
+async function FixtureCaptureServiceApprovedAdapterFixturesTestReplaysAnApprovedFixtureAgainstTheCurrentAdapter() {
     const root = await mkdtemp(join(tmpdir(), 'comiccrawler-fixture-'));
     roots.push(root);
     const service = new FixtureCaptureService({} as never, root);
     const adapter = new ChapterFixtureAdapter();
     const fixture = await service.captureApprovedAdapterFixture({
-      sourceDiscoveryId: 'disc-fixture',
-      adapter,
-      target: 'chapter-only',
-      url: 'https://example.com/chapter/1',
-      html: '<main id="reader"><img src="/1.webp"></main>',
+        sourceDiscoveryId: 'disc-fixture',
+        adapter,
+        target: 'chapter-only',
+        url: 'https://example.com/chapter/1',
+        html: '<main id="reader"><img src="/1.webp"></main>',
     });
-
     const result = await service.verifyApprovedAdapterFixture(fixture.domain, fixture.id, adapter);
-
     expect(result.passed).toBe(true);
     expect(result.actual).toEqual(result.expected);
-  });
+}
 
-  it('rejects empty chapter image output', async () => {
+async function FixtureCaptureServiceApprovedAdapterFixturesTestRejectsEmptyChapterImageOutput() {
     const root = await mkdtemp(join(tmpdir(), 'comiccrawler-fixture-'));
     roots.push(root);
     const service = new FixtureCaptureService({} as never, root);
-
     await expect(service.captureApprovedAdapterFixture({
-      sourceDiscoveryId: 'disc-empty',
-      adapter: new ChapterFixtureAdapter(),
-      target: 'chapter-only',
-      url: 'https://example.com/chapter/1',
-      html: '<main id="reader"></main>',
+        sourceDiscoveryId: 'disc-empty',
+        adapter: new ChapterFixtureAdapter(),
+        target: 'chapter-only',
+        url: 'https://example.com/chapter/1',
+        html: '<main id="reader"></main>',
     })).rejects.toThrow('page is not complete');
-  });
-});
+}

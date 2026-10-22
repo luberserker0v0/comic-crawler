@@ -1,4 +1,5 @@
 import eslint from '@eslint/js';
+import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
@@ -6,6 +7,7 @@ export default tseslint.config(
   {
     ignores: [
       '**/dist/**',
+      '**/.artifacts/**',
       '**/coverage/**',
       '**/node_modules/**',
       '**/playwright-report/**',
@@ -24,6 +26,15 @@ export default tseslint.config(
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      'max-lines-per-function': [
+        'error',
+        {
+          max: 20,
+          skipBlankLines: true,
+          skipComments: true,
+          IIFEs: true,
+        },
+      ],
     },
   },
   {
@@ -32,5 +43,22 @@ export default tseslint.config(
       'react-hooks': reactHooks,
     },
     rules: reactHooks.configs.flat.recommended.rules,
-  }
+  },
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      'max-lines-per-function': [
+        'error',
+        {
+          max: 20,
+          skipBlankLines: true,
+          skipComments: true,
+          IIFEs: true,
+        },
+      ],
+    },
+  },
 );

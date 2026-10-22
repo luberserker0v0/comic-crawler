@@ -40,39 +40,41 @@ export function renderBundleEvalDryRun(
     liveNegative?: boolean;
   }
 ): void {
-  const plannedRuns = cases.flatMap((testCase) =>
-    Array.from({ length: options.repeatOverride ?? testCase.defaultRuns }, () => ({
-      caseId: testCase.id,
-      type: testCase.type,
-      passed: true,
-    }))
-  );
-  const policy = evaluateSelectorDiscoveryEvalPolicy({
-    minPositivePasses: options.minPositivePasses === undefined
-      ? undefined
-      : parseNonNegativeInteger(options.minPositivePasses, '--min-positive-passes'),
-    maxPositiveFailures: options.maxPositiveFailures === undefined
-      ? undefined
-      : parseNonNegativeInteger(options.maxPositiveFailures, '--max-positive-failures'),
-    runs: plannedRuns,
-  });
-
+  const plannedRuns = createPlannedRuns(cases, options.repeatOverride);
+  const policy = evaluateSelectorDiscoveryEvalPolicy({ ...parsePolicyOptions(options), runs: plannedRuns });
   ui.renderSuccess('Bundle evaluation dry run. No AO discovery jobs were created.');
-  ui.renderStatus('cases', String(cases.length));
-  ui.renderStatus('planned runs', String(plannedRuns.length));
+  renderDryRunSummary(ui, cases.length, plannedRuns.length, policy, options);
+  ui.renderTable(['case', 'type', 'enabled', 'live', 'runs', 'url'], caseRows(cases, options.repeatOverride));
+}
+
+function createPlannedRuns(cases: SelectorDiscoveryEvalCase[], repeat?: number) {
+  return cases.flatMap((testCase) => Array.from({ length: repeat ?? testCase.defaultRuns }, () => ({
+    caseId: testCase.id, type: testCase.type, passed: true,
+  })));
+}
+
+function parsePolicyOptions(options: { minPositivePasses?: string; maxPositiveFailures?: string }) {
+  return {
+    minPositivePasses: options.minPositivePasses === undefined ? undefined
+      : parseNonNegativeInteger(options.minPositivePasses, '--min-positive-passes'),
+    maxPositiveFailures: options.maxPositiveFailures === undefined ? undefined
+      : parseNonNegativeInteger(options.maxPositiveFailures, '--max-positive-failures'),
+  };
+}
+
+function renderDryRunSummary(ui: TerminalUI, caseCount: number, runCount: number,
+  policy: SelectorDiscoveryEvalPolicyResult, options: { includeDisabled?: boolean; liveNegative?: boolean }): void {
+  ui.renderStatus('cases', String(caseCount));
+  ui.renderStatus('planned runs', String(runCount));
   ui.renderStatus('include disabled', String(Boolean(options.includeDisabled)));
   ui.renderStatus('include live negative', String(Boolean(options.liveNegative)));
   ui.renderStatus('policy positive', `${policy.positive.total} planned, min ${policy.positive.minPasses}, max failures ${policy.positive.maxFailures}`);
   ui.renderStatus('policy negative', `${policy.negative.total} planned, requires 100%`);
-  const rows = cases.map((testCase) => [
-    testCase.id,
-    testCase.type,
-    testCase.enabled ? 'yes' : 'no',
-    testCase.live ? 'yes' : 'no',
-    String(options.repeatOverride ?? testCase.defaultRuns),
-    testCase.url,
-  ]);
-  ui.renderTable(['case', 'type', 'enabled', 'live', 'runs', 'url'], rows);
+}
+
+function caseRows(cases: SelectorDiscoveryEvalCase[], repeat?: number): string[][] {
+  return cases.map((testCase) => [testCase.id, testCase.type, testCase.enabled ? 'yes' : 'no',
+    testCase.live ? 'yes' : 'no', String(repeat ?? testCase.defaultRuns), testCase.url]);
 }
 
 export function renderBundleEvalCaseInventory(
@@ -87,25 +89,22 @@ export function renderBundleEvalCaseInventory(
   const plannedRuns = cases.reduce((total, testCase) => total + testCase.defaultRuns, 0);
 
   ui.renderSuccess('Selector-discovery eval case inventory.');
-  ui.renderStatus('cases', String(cases.length));
-  ui.renderStatus('positive', String(positive.length));
-  ui.renderStatus('negative', String(negative.length));
-  ui.renderStatus('live', String(live.length));
-  ui.renderStatus('disabled included', String(disabled.length));
-  ui.renderStatus('default planned runs', String(plannedRuns));
+  renderInventorySummary(ui, { cases: cases.length, positive: positive.length, negative: negative.length,
+    live: live.length, disabled: disabled.length, plannedRuns }, options);
+  ui.renderTable(['case', 'type', 'enabled', 'live', 'defaultRuns', 'url'], caseRows(cases));
+}
+
+function renderInventorySummary(ui: TerminalUI,
+  counts: { cases: number; positive: number; negative: number; live: number; disabled: number; plannedRuns: number },
+  options: { includeDisabled?: boolean; liveNegative?: boolean }): void {
+  ui.renderStatus('cases', String(counts.cases));
+  ui.renderStatus('positive', String(counts.positive));
+  ui.renderStatus('negative', String(counts.negative));
+  ui.renderStatus('live', String(counts.live));
+  ui.renderStatus('disabled included', String(counts.disabled));
+  ui.renderStatus('default planned runs', String(counts.plannedRuns));
   ui.renderStatus('include disabled', String(Boolean(options.includeDisabled)));
   ui.renderStatus('include live negative', String(Boolean(options.liveNegative)));
-  ui.renderTable(
-    ['case', 'type', 'enabled', 'live', 'defaultRuns', 'url'],
-    cases.map((testCase) => [
-      testCase.id,
-      testCase.type,
-      testCase.enabled ? 'yes' : 'no',
-      testCase.live ? 'yes' : 'no',
-      String(testCase.defaultRuns),
-      testCase.url,
-    ])
-  );
 }
 
 export function evaluateBundleEvalPolicy(

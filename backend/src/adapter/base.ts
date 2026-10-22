@@ -15,6 +15,8 @@ import { ComicError, ErrorType } from '../error/types';
 import type { RetryHandler } from '../error/retry';
 import type { HtmlRenderer } from '../crawler/html-renderer';
 
+export { ComicError, ErrorType } from '../error/types';
+
 export abstract class AdapterBase implements IComicAdapter {
   abstract readonly id: string;
   abstract readonly name: string;

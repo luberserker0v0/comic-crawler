@@ -41,6 +41,7 @@ backend/    Fastify API, crawler engine, task queue, adapters
 shared/     shared TypeScript types and defaults
 agent/ao/   AO bundle drafts, agents, skills, contracts, eval cases
 docs/       user/contributor-facing docs
+registry/   reviewed package inputs for the signed official registry
 ```
 
 Runtime state such as `data/`, `backend/data/`, downloads, build output, test
@@ -145,15 +146,22 @@ Do not fake unsupported capabilities. A chapter-only adapter is valid, but it
 must not claim metadata support until metadata extraction has been implemented
 and verified.
 
-Site strategy must be visible in the adapter implementation or reviewed dynamic
-manifest. Runtime and Adapter Lab should not hide site-specific behavior behind
+Site strategy must be visible in the reviewed TypeScript adapter implementation.
+Runtime and Adapter Lab should not hide site-specific behavior behind
 generic pre-extraction button clicking or DOM preparation.
 
 Built-in adapters should include focused unit tests. Verified DOM fixtures may
 be captured from real browser sessions for local diagnosis, but hand-written
 fake site fixtures must not be used to imply live-site correctness. Generated
 adapters should come from reviewed selector drafts and should be promoted
-through the existing adapter review flow.
+through the existing adapter review flow into an immutable catalog package.
+
+To share a locally approved generated adapter, export its exact Catalog package
+with `adapter-packages export` and attach it to the contribution for review.
+Do not mark it official or sign it with an untrusted key. Project maintainers
+review the TypeScript and fixture provenance, then use the local-only
+`adapter-registry publish` command to build signed release artifacts. See
+[Official Adapter Registry](docs/ADAPTER_REGISTRY.md) for the release workflow.
 
 ## AO, selector discovery, and verification handoff
 
@@ -172,8 +180,8 @@ token paths, and API keys must not be logged or returned from read APIs.
 Before opening a PR or handing off local changes:
 
 - [ ] No runtime/generated files are staged.
-- [ ] `git add -n -A` does not include `data/`, `dist/`, `test-results/`,
-      `playwright-report/`, `backend/tests/**/__tmp__/`, or generated shared
+- [ ] `git add -n -A` does not include `data/`, `dist/`, `.artifacts/`,
+      legacy `test-results/`, `playwright-report/`, `backend/tests/**/__tmp__/`, or generated shared
       `.js/.d.ts` files.
 - [ ] Relevant verification gate passed.
 - [ ] `npm run verify:utf8` passed after doc/text changes.

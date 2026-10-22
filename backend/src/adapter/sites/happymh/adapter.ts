@@ -3,6 +3,9 @@ import * as cheerio from 'cheerio';
 import { AdapterBase, ChapterImagesCapability, CommonCapability, MetadataCapability } from '../../base';
 import { HAPPYMH_SELECTORS } from './selectors';
 
+const IMAGE_SELECTORS = ['#cp_image img', '#cp_img img', '.comicpage img', '.reader img',
+  '.read-content img', '.chapter-content img', 'img[data-original]', 'img[data-src]'];
+
 export class HappyMhAdapter extends AdapterBase {
   readonly id = 'happymh';
   readonly name = 'HappyMH';
@@ -73,49 +76,40 @@ class HappyMhMetadataCapability extends MetadataCapability {
 class HappyMhChapterImagesCapability extends ChapterImagesCapability {
   extractChapterImageUrls(document: unknown, chapterUrl: string): string[] {
     const $ = this.adapter.asCheerio(document);
-    const selectors = [
-      '#cp_image img',
-      '#cp_img img',
-      '.comicpage img',
-      '.reader img',
-      '.read-content img',
-      '.chapter-content img',
-      'img[data-original]',
-      'img[data-src]',
-    ];
     const seen = new Set<string>();
     const urls: string[] = [];
-
-    for (const selector of selectors) {
-      $(selector).each((_, element) => {
-        const node = $(element);
-        const raw = node.attr('data-original')
-          ?? node.attr('data-src')
-          ?? node.attr('data-url')
-          ?? node.attr('src')
-          ?? '';
-        const resolved = cleanImageUrl(this.adapter, raw, chapterUrl);
-        if (!resolved || seen.has(resolved) || !looksLikeComicImageUrl(resolved)) return;
-        seen.add(resolved);
-        urls.push(resolved);
-      });
-    }
-
-    for (const url of extractImageUrlsFromScripts(this.adapter, $.html(), chapterUrl)) {
-      if (seen.has(url) || !looksLikeComicImageUrl(url)) continue;
-      seen.add(url);
-      urls.push(url);
-    }
-
+    for (const selector of IMAGE_SELECTORS) $(selector).each((_, element) =>
+      appendImageUrl(this.adapter, $(element), chapterUrl, seen, urls));
+    for (const url of extractImageUrlsFromScripts(this.adapter, $.html(), chapterUrl))
+      appendUniqueComicImage(url, seen, urls);
     return urls;
   }
+}
+
+function appendImageUrl(adapter: AdapterBase, node: cheerio.Cheerio<any>, baseUrl: string,
+  seen: Set<string>, urls: string[]): void {
+  const raw = node.attr('data-original') ?? node.attr('data-src')
+    ?? node.attr('data-url') ?? node.attr('src') ?? '';
+  appendUniqueComicImage(cleanImageUrl(adapter, raw, baseUrl), seen, urls);
+}
+
+function appendUniqueComicImage(url: string, seen: Set<string>, urls: string[]): void {
+  if (!url || seen.has(url) || !looksLikeComicImageUrl(url)) return;
+  seen.add(url);
+  urls.push(url);
 }
 
 function extractChapters(adapter: AdapterBase, $: cheerio.CheerioAPI, baseUrl: string): ComicMetadata['chapters'] {
   const seen = new Set<string>();
   const chapters: ComicMetadata['chapters'] = [];
   const mangaSlug = extractMangaSlug(baseUrl);
-  const scopedLinks = [
+  const links = selectChapterLinks($, mangaSlug);
+  links.each((_, element) => appendChapter(adapter, $, element, baseUrl, mangaSlug, seen, chapters));
+  return chapters;
+}
+
+function selectChapterLinks($: cheerio.CheerioAPI, mangaSlug?: string): cheerio.Cheerio<any> {
+  const scoped = [
     '#detail-app a[href*="/mangaread/"]',
     '.chapter-list a[href*="/mangaread/"]',
     '.chapterList a[href*="/mangaread/"]',
@@ -124,32 +118,25 @@ function extractChapters(adapter: AdapterBase, $: cheerio.CheerioAPI, baseUrl: s
     '.mh-chapter-list a[href*="/mangaread/"]',
   ].join(', ');
   const sameMangaLinks = mangaSlug ? $(`a[href*="/mangaread/${mangaSlug}/"]`) : cheerio.load('').root();
-  const scopedCandidates = $(scopedLinks);
-  const links = sameMangaLinks.length > scopedCandidates.length
-    ? sameMangaLinks
-    : scopedCandidates.length > 0
-      ? scopedCandidates
-      : $(HAPPYMH_SELECTORS.chapters.item);
-  links.each((_, element) => {
-    const node = $(element);
-    const href = node.attr('href') ?? '';
-    if (!href) return;
-    const url = adapter.resolveUrl(baseUrl, href);
-    const pathname = new URL(url).pathname;
-    if (!/\/mangaread\/[^/]+\/[^/?#]+/i.test(pathname)) return;
-    if (mangaSlug && !pathname.includes(`/mangaread/${mangaSlug}/`)) return;
-    if (seen.has(url)) return;
-    const title = node.text().replace(/\s+/g, ' ').trim();
-    if (isNonCatalogChapterLink(title)) return;
-    seen.add(url);
-    chapters.push({
-      id: deriveChapterId(url, chapters.length),
-      title: title || `Chapter ${chapters.length + 1}`,
-      url,
-      number: chapters.length + 1,
-    });
-  });
-  return chapters;
+  const candidates = $(scoped);
+  return sameMangaLinks.length > candidates.length ? sameMangaLinks
+    : candidates.length ? candidates : $(HAPPYMH_SELECTORS.chapters.item);
+}
+
+function appendChapter(adapter: AdapterBase, $: cheerio.CheerioAPI, element: unknown,
+  baseUrl: string, mangaSlug: string | undefined, seen: Set<string>, chapters: ComicMetadata['chapters']): void {
+  const node = $(element as any);
+  const href = node.attr('href') ?? '';
+  if (!href) return;
+  const url = adapter.resolveUrl(baseUrl, href);
+  const pathname = new URL(url).pathname;
+  if (!/\/mangaread\/[^/]+\/[^/?#]+/i.test(pathname)) return;
+  if (mangaSlug && !pathname.includes(`/mangaread/${mangaSlug}/`)) return;
+  const title = node.text().replace(/\s+/g, ' ').trim();
+  if (seen.has(url) || isNonCatalogChapterLink(title)) return;
+  seen.add(url);
+  chapters.push({ id: deriveChapterId(url, chapters.length),
+    title: title || `Chapter ${chapters.length + 1}`, url, number: chapters.length + 1 });
 }
 
 function extractMangaSlug(url: string): string | undefined {
@@ -190,8 +177,15 @@ function extractAuthorName($: cheerio.CheerioAPI): string | undefined {
     return Array.from(new Set(detailAuthors)).join(', ');
   }
 
-  const candidates = [
-    ...textCandidates($, [
+  for (const candidate of authorCandidates($)) {
+    const cleaned = cleanAuthorName(candidate);
+    if (cleaned && !isGenericAuthorText(cleaned)) return cleaned;
+  }
+  return undefined;
+}
+
+function authorCandidates($: cheerio.CheerioAPI): string[] {
+  return [...textCandidates($, [
       '.detail-author',
       '.comic-author',
       '.author',
@@ -199,17 +193,8 @@ function extractAuthorName($: cheerio.CheerioAPI): string | undefined {
       '.bookauthor',
       '.info-author',
       'a[href*="author"]',
-    ]),
-    ...textCandidates($, ['.detail-info', '.comic-info', '.manga-info']),
-    ...attrCandidates($, [['title', 'text']]).flatMap(extractAuthorCandidatesFromTitle),
-  ];
-
-  for (const candidate of candidates) {
-    const cleaned = cleanAuthorName(candidate);
-    if (cleaned && !isGenericAuthorText(cleaned)) return cleaned;
-  }
-
-  return undefined;
+    ]), ...textCandidates($, ['.detail-info', '.comic-info', '.manga-info']),
+    ...attrCandidates($, [['title', 'text']]).flatMap(extractAuthorCandidatesFromTitle)];
 }
 
 function extractTagsFromDetail($: cheerio.CheerioAPI): string[] {
@@ -253,12 +238,16 @@ function isGenericAuthorText(value: string): boolean {
 }
 
 function extractMangaTitle($: cheerio.CheerioAPI): string {
-  const candidates = [
-    ...attrCandidates($, [
-      ['meta[property="og:title"]', 'content'],
-      ['meta[name="twitter:title"]', 'content'],
-    ]),
-    ...textCandidates($, ['title']),
+  for (const candidate of mangaTitleCandidates($)) {
+    const cleaned = cleanMangaTitle(candidate);
+    if (cleaned && !isGenericMangaTitle(cleaned)) return cleaned;
+  }
+  return '';
+}
+
+function mangaTitleCandidates($: cheerio.CheerioAPI): string[] {
+  return [...attrCandidates($, [['meta[property="og:title"]', 'content'],
+      ['meta[name="twitter:title"]', 'content']]), ...textCandidates($, ['title']),
     ...textCandidates($, [
       'main .detail-title',
       'main .comic-title',
@@ -274,16 +263,7 @@ function extractMangaTitle($: cheerio.CheerioAPI): string {
       '.manga-detail .bookname',
       '.manga-detail .info-title',
       '.manga-detail .detail-info h1',
-    ]),
-    ...textCandidates($, ['h1', '.title']),
-  ];
-
-  for (const candidate of candidates) {
-    const cleaned = cleanMangaTitle(candidate);
-    if (cleaned && !isGenericMangaTitle(cleaned)) return cleaned;
-  }
-
-  return '';
+    ]), ...textCandidates($, ['h1', '.title'])];
 }
 
 function textCandidates($: cheerio.CheerioAPI, selectors: string[]): string[] {

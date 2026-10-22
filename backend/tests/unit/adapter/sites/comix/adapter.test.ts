@@ -2,94 +2,100 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ComixAdapter } from '../../../../../src/adapter/sites/comix';
 import { composeChapterImages } from '../../../../../src/adapter/runtime-composer';
+import { instantiateAdapterImplementationDraft } from '../../../../../src/selector-discovery/adapter-draft-runtime';
 
 const CHAPTER_URL = 'https://comix.to/title/v5rz-absolute-dominion/11497386-chapter-112';
 const FIXTURE = readFileSync(join(__dirname, '../../../../fixtures/comix/chapter.html'), 'utf8');
 
-describe('ComixAdapter', () => {
-  const adapter = new ComixAdapter();
+const adapter = new ComixAdapter();
 
-  it('matches only Comix chapter URLs', () => {
+describe('ComixAdapter', () => {
+  ComixAdapterTestGroup1();
+});
+
+function ComixAdapterTestGroup1(): void {
+  it('matches only Comix chapter URLs', ComixAdapterTestMatchesOnlyComixChapterURLs);
+  it('declares chapter-image and human-verification capabilities only', ComixAdapterTestDeclaresChapterImageAndHumanVerificationCapabilitiesOnly);
+  it('detects the Comix Cloudflare verification page', ComixAdapterTestDetectsTheComixCloudflareVerificationPage);
+  it('prefers a usable reader DOM over passive Cloudflare script references', ComixAdapterTestPrefersAUsableReaderDOMOverPassiveCloudflareScriptReferences);
+  it('extracts the complete ordered reader image list without requiring file extensions', ComixAdapterTestExtractsTheCompleteOrderedReaderImageListWithoutRequiringFileExtensions);
+  it('rejects a partially lazy-loaded chapter instead of returning an incomplete URL list', ComixAdapterTestRejectsAPartiallyLazyLoadedChapterInsteadOfReturningAnIncompleteURLList);
+  it('extracts Browser Client image annotations left by virtualized reader pages', ComixAdapterTestExtractsBrowserClientImageAnnotationsLeftByVirtualizedReaderPages);
+  it('loads as a portable catalog implementation', ComixAdapterTestLoadsAsAPortableCatalogImplementation);
+}
+
+async function ComixAdapterTestLoadsAsAPortableCatalogImplementation() {
+    const source = readFileSync(join(__dirname, '../../../../../src/adapter/sites/comix/adapter.ts'), 'utf8');
+    const portable = instantiateAdapterImplementationDraft(source) as ComixAdapter;
+    portable.setHtmlRenderer({ render: async () => FIXTURE, dispose: async () => undefined });
+    expect(portable.id).toBe('comix');
+    await expect(composeChapterImages(portable, CHAPTER_URL)).resolves.toHaveLength(3);
+}
+
+function ComixAdapterTestMatchesOnlyComixChapterURLs() {
     expect(adapter.matchUrl(CHAPTER_URL)).toBe(true);
     expect(adapter.matchUrl('https://www.comix.to/title/demo/123-chapter-1')).toBe(true);
     expect(adapter.matchUrl('https://comix.to/title/v5rz-absolute-dominion')).toBe(false);
     expect(adapter.matchUrl('https://example.com/title/demo/123-chapter-1')).toBe(false);
-  });
+}
 
-  it('declares chapter-image and human-verification capabilities only', () => {
+function ComixAdapterTestDeclaresChapterImageAndHumanVerificationCapabilitiesOnly() {
     expect(adapter.parseMode).toBe('playwright');
     expect(adapter.capabilities).toEqual({
-      verification: true,
-      metadata: false,
-      chapterImages: true,
+        verification: true,
+        metadata: false,
+        chapterImages: true,
     });
-  });
+}
 
-  it('detects the Comix Cloudflare verification page', () => {
+function ComixAdapterTestDetectsTheComixCloudflareVerificationPage() {
     expect(adapter.detectVerificationRequired('<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>')).toBe(true);
     expect(adapter.detectVerificationRequired('<h2>正在執行安全驗證</h2>')).toBe(true);
     expect(adapter.detectVerificationRequired('<main class="rpage-main"></main>')).toBe(false);
-  });
+}
 
-  it('prefers a usable reader DOM over passive Cloudflare script references', () => {
-    const readerWithPassiveScript = FIXTURE.replace(
-      '</body>',
-      '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>'
-    );
-
+function ComixAdapterTestPrefersAUsableReaderDOMOverPassiveCloudflareScriptReferences() {
+    const readerWithPassiveScript = FIXTURE.replace('</body>', '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body>');
     expect(adapter.detectVerificationRequired(readerWithPassiveScript)).toBe(false);
-  });
+}
 
-  it('extracts the complete ordered reader image list without requiring file extensions', async () => {
+async function ComixAdapterTestExtractsTheCompleteOrderedReaderImageListWithoutRequiringFileExtensions() {
     adapter.setHtmlRenderer({
-      render: async () => FIXTURE,
-      dispose: async () => undefined,
+        render: async () => FIXTURE,
+        dispose: async () => undefined,
     });
-
     await expect(composeChapterImages(adapter, CHAPTER_URL)).resolves.toEqual([
-      { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
-      { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
-      { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
+        { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
+        { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
+        { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
     ]);
-  });
+}
 
-  it('rejects a partially lazy-loaded chapter instead of returning an incomplete URL list', async () => {
+async function ComixAdapterTestRejectsAPartiallyLazyLoadedChapterInsteadOfReturningAnIncompleteURLList() {
     adapter.setHtmlRenderer({
-      render: async () => FIXTURE.replace(
-        '<img class="rpage-page__img" alt="Page 3" srcset="https://447.reader-three.site/hi/page-three-token 1x">',
-        '<div class="rpage-page__loader">3 / 3</div>'
-      ),
-      dispose: async () => undefined,
+        render: async () => FIXTURE.replace('<img class="rpage-page__img" alt="Page 3" srcset="https://447.reader-three.site/hi/page-three-token 1x">', '<div class="rpage-page__loader">3 / 3</div>'),
+        dispose: async () => undefined,
     });
-
     await expect(composeChapterImages(adapter, CHAPTER_URL)).rejects.toMatchObject({
-      context: {
-        expectedImageCount: 3,
-        extractedImageCount: 2,
-        lazyImagesIncomplete: true,
-      },
+        context: {
+            expectedImageCount: 3,
+            extractedImageCount: 2,
+            lazyImagesIncomplete: true,
+        },
     });
-  });
+}
 
-  it('extracts Browser Client image annotations left by virtualized reader pages', async () => {
+async function ComixAdapterTestExtractsBrowserClientImageAnnotationsLeftByVirtualizedReaderPages() {
     const annotated = FIXTURE
-      .replace(
-        '<img class="rpage-page__img" alt="Page 2" data-src="https://447.reader-two.site/hi/page-two-token">',
-        ''
-      )
-      .replace(
-        '<div class="rpage-page" data-page="2">',
-        '<div class="rpage-page" data-page="2" data-comiccrawler-image-url="https://447.reader-two.site/hi/page-two-token">'
-      );
+        .replace('<img class="rpage-page__img" alt="Page 2" data-src="https://447.reader-two.site/hi/page-two-token">', '')
+        .replace('<div class="rpage-page" data-page="2">', '<div class="rpage-page" data-page="2" data-comiccrawler-image-url="https://447.reader-two.site/hi/page-two-token">');
     adapter.setHtmlRenderer({
-      render: async () => annotated,
-      dispose: async () => undefined,
+        render: async () => annotated,
+        dispose: async () => undefined,
     });
-
     await expect(composeChapterImages(adapter, CHAPTER_URL)).resolves.toEqual([
-      { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
-      { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
-      { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
+        { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
+        { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
+        { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
     ]);
-  });
-});
+}

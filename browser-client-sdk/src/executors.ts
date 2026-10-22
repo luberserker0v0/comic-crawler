@@ -160,12 +160,15 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
         return { type: command.type, url: await this.driver.navigate(this.page, command.url, signal) };
       case 'page.get-url':
         return { type: command.type, url: await this.driver.currentUrl(this.page, signal) };
+      default:
+        return this.executePageCommand(command, signal);
+    }
+  }
+
+  private async executePageCommand(command: BrowserCommand, signal: AbortSignal): Promise<BrowserCommandResult> {
+    switch (command.type) {
       case 'page.get-content':
-        return {
-          type: command.type,
-          url: await this.driver.currentUrl(this.page, signal),
-          html: await this.driver.content(this.page, signal),
-        };
+        return this.readContent(signal);
       case 'page.wait-for-ready':
         await this.driver.waitForReady(this.page, command.timeoutMs, signal);
         return { type: command.type, url: await this.driver.currentUrl(this.page, signal) };
@@ -175,7 +178,17 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
       case 'page.focus':
         await this.driver.focus(this.page, signal);
         return { type: command.type };
+      default:
+        throw new BrowserClientError(`Unsupported command "${command.type}".`, 'UNSUPPORTED_COMMAND');
     }
+  }
+
+  private async readContent(signal: AbortSignal): Promise<BrowserCommandResult> {
+    return {
+      type: 'page.get-content',
+      url: await this.driver.currentUrl(this.page, signal),
+      html: await this.driver.content(this.page, signal),
+    };
   }
 
   async close(): Promise<void> {

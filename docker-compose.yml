@@ -2,11 +2,15 @@ name: comiccrawler
 
 services:
   app:
-    image: luberserker/comiccrawler:latest
+    image: '${COMICCRAWLER_IMAGE:-luberserker/comiccrawler}:${COMICCRAWLER_IMAGE_TAG:-latest}'
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        COMICCRAWLER_VERSION: '${COMICCRAWLER_IMAGE_VERSION:-0.2.0}'
+        COMICCRAWLER_REVISION: '${COMICCRAWLER_IMAGE_REVISION:-local}'
     container_name: comiccrawler
+    init: true
     restart: unless-stopped
     logging:
       driver: json-file

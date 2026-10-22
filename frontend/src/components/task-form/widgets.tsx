@@ -76,64 +76,47 @@ export function AdapterPreviewPanel(props: {
 }) {
   const { preview, loading, error } = props;
   const { text } = useI18n();
-
-  if (loading) {
-    return (
-      <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600" data-testid="adapter-resolution-preview">
-        {text.taskForm.resolvingAdapter}
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" data-testid="adapter-resolution-preview">
-        {formatText(text.taskForm.adapterResolutionFailed, { error })}
-      </div>
-    );
-  }
-
+  if (loading) return <PreviewMessage tone="loading" message={text.taskForm.resolvingAdapter} />;
+  if (error) return <PreviewMessage tone="error" message={formatText(text.taskForm.adapterResolutionFailed, { error })} />;
   if (!preview) return null;
+  const adapter = preview.adapter ?? preview.matchedAdapter, canUse = preview.status === 'matched';
+  const colors = canUse ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-900';
+  return <div className={`rounded-md border p-3 text-sm ${colors}`} data-testid="adapter-resolution-preview">
+    <PreviewStatus preview={preview} text={text} />
+    <PreviewDetails preview={preview} text={text} />
+    {adapter && <ResolvedAdapter adapter={adapter} text={text} />}
+    {!canUse && <div className="mt-2">{preview.status === 'capability_mismatch'
+      ? text.taskForm.buildMissingCapability : text.taskForm.buildNewAdapter}</div>}
+  </div>;
+}
 
-  const adapter = preview.adapter ?? preview.matchedAdapter;
-  const canUse = preview.status === 'matched';
+type PreviewText = ReturnType<typeof useI18n>['text'];
 
-  return (
-    <div
-      className={`rounded-md border p-3 text-sm ${
-        canUse
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-          : 'border-amber-200 bg-amber-50 text-amber-900'
-      }`}
-      data-testid="adapter-resolution-preview"
-    >
-      <div className="font-medium">
-        {canUse
-          ? text.taskForm.adapterMatched
-          : preview.status === 'capability_mismatch'
-            ? text.taskForm.adapterCapabilityMismatch
-            : text.taskForm.adapterNotFound}
-      </div>
-      <div className="mt-2 grid gap-2 md:grid-cols-2">
-        <div className="break-all">URL: {preview.url}</div>
-        <div>{text.taskForm.domain}: {preview.hostname}</div>
-        <div>{text.taskForm.taskMode}: {preview.mode === 'chapters' ? text.taskForm.specificChaptersMode : text.taskForm.allChaptersMode}</div>
-        <div>{text.taskForm.discoveryTarget}: {preview.discoveryTarget}</div>
-      </div>
-      {adapter && (
-        <div className="mt-2 rounded border border-white/70 bg-white p-2">
-          <div className="font-medium">{adapter.name} <span className="font-mono text-xs">({adapter.id})</span></div>
-          <div className="mt-1 text-xs">{text.taskForm.domAcquisition}: {adapter.parseMode}</div>
-          <div className="mt-1 text-xs">
-            {text.taskForm.capabilities}: {text.taskForm.verification} {adapter.capabilities.verification ? 'O' : 'X'} / {text.taskForm.metadata} {adapter.capabilities.metadata ? 'O' : 'X'} / {text.taskForm.images} {adapter.capabilities.chapterImages ? 'O' : 'X'}
-          </div>
-        </div>
-      )}
-      {!canUse && (
-        <div className="mt-2">
-          {preview.status === 'capability_mismatch' ? text.taskForm.buildMissingCapability : text.taskForm.buildNewAdapter}
-        </div>
-      )}
-    </div>
-  );
+function PreviewMessage({ tone, message }: { tone: 'loading' | 'error'; message: string }) {
+  const colors = tone === 'loading' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-red-200 bg-red-50 text-red-700';
+  return <div className={`rounded-md border p-3 text-sm ${colors}`} data-testid="adapter-resolution-preview">{message}</div>;
+}
+
+function PreviewStatus({ preview, text }: { preview: AdapterResolutionPreview; text: PreviewText }) {
+  const label = preview.status === 'matched' ? text.taskForm.adapterMatched
+    : preview.status === 'capability_mismatch' ? text.taskForm.adapterCapabilityMismatch : text.taskForm.adapterNotFound;
+  return <div className="font-medium">{label}</div>;
+}
+
+function PreviewDetails({ preview, text }: { preview: AdapterResolutionPreview; text: PreviewText }) {
+  return <div className="mt-2 grid gap-2 md:grid-cols-2">
+    <div className="break-all">URL: {preview.url}</div><div>{text.taskForm.domain}: {preview.hostname}</div>
+    <div>{text.taskForm.taskMode}: {preview.mode === 'chapters' ? text.taskForm.specificChaptersMode : text.taskForm.allChaptersMode}</div>
+    <div>{text.taskForm.discoveryTarget}: {preview.discoveryTarget}</div>
+  </div>;
+}
+
+type PreviewAdapter = NonNullable<AdapterResolutionPreview['adapter']>;
+
+function ResolvedAdapter({ adapter, text }: { adapter: PreviewAdapter; text: PreviewText }) {
+  return <div className="mt-2 rounded border border-white/70 bg-white p-2">
+    <div className="font-medium">{adapter.name} <span className="font-mono text-xs">({adapter.id})</span></div>
+    <div className="mt-1 text-xs">{text.taskForm.domAcquisition}: {adapter.parseMode}</div>
+    <div className="mt-1 text-xs">{text.taskForm.capabilities}: {text.taskForm.verification} {adapter.capabilities.verification ? 'O' : 'X'} / {text.taskForm.metadata} {adapter.capabilities.metadata ? 'O' : 'X'} / {text.taskForm.images} {adapter.capabilities.chapterImages ? 'O' : 'X'}</div>
+  </div>;
 }

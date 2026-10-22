@@ -13,7 +13,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:e2e": "npx playwright test --config=../playwright.config.ts",
-    "lint": "eslint \"src/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"tests-e2e/**/*.ts\""
   },
   "dependencies": {
     "@comiccrawler/browser-client-sdk": "*",

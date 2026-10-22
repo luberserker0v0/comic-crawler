@@ -2,22 +2,37 @@ import * as cheerio from 'cheerio';
 
 export function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: 'metadata' | 'chapter'): string {
   const $ = cheerio.load(html);
-  const title = compactText($('title').first().text());
-  const bodyClasses = $('body').attr('class') ?? '';
-  const headings = collect($, 'h1,h2,h3', (el) => `${describeElementSelector($, el)} | text=${compactText($(el).text())}`, 40);
-  const meta = collect($, 'meta[name],meta[property],meta[itemprop]', (el) => {
+  const sections = {
+    headings: collectHeadings($), meta: collectMeta($), anchors: collectAnchors($, baseUrl, pageType),
+    images: collectImages($, pageType), containers: collectContainers($),
+  };
+  return formatOverview(html, baseUrl, $, sections);
+}
+
+function collectHeadings($: cheerio.CheerioAPI): string[] {
+  return collect($, 'h1,h2,h3', (el) => `${describeElementSelector($, el)} | text=${compactText($(el).text())}`, 40);
+}
+
+function collectMeta($: cheerio.CheerioAPI): string[] {
+  return collect($, 'meta[name],meta[property],meta[itemprop]', (el) => {
     const node = $(el);
     const key = node.attr('name') ?? node.attr('property') ?? node.attr('itemprop') ?? '';
     const value = node.attr('content') ?? '';
     return `${describeElementSelector($, el)} | ${key}: ${value}`;
   }, 40);
-  const anchors = collect($, 'a[href]', (el) => {
+}
+
+function collectAnchors($: cheerio.CheerioAPI, baseUrl: string, pageType: 'metadata' | 'chapter'): string[] {
+  return collect($, 'a[href]', (el) => {
     const node = $(el);
     const href = node.attr('href') ?? '';
     const text = compactText(node.text());
     return `${describeElementSelector($, el)} | text=${text || '(no text)'} | href=${safeResolve(baseUrl, href)}`;
   }, pageType === 'metadata' ? 120 : 50, (value) => /chapter|manga|comic|read|reader|viewer|episode|ep/i.test(value));
-  const images = collect($, 'img,source', (el) => {
+}
+
+function collectImages($: cheerio.CheerioAPI, pageType: 'metadata' | 'chapter'): string[] {
+  return collect($, 'img,source', (el) => {
     const node = $(el);
     const attrs = ['src', 'data-src', 'data-original', 'data-lazy-src', 'srcset']
       .map((attr) => node.attr(attr) ? `${attr}=${node.attr(attr)}` : '')
@@ -26,7 +41,10 @@ export function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: '
     const className = node.attr('class') ? ` class=${node.attr('class')}` : '';
     return `${describeElementSelector($, el)} | ${node[0]?.tagName ?? 'img'}${className} ${attrs}`.trim();
   }, pageType === 'chapter' ? 160 : 60);
-  const structuralCandidates = collect($, 'main,article,section,div[class],ul[class],ol[class]', (el) => {
+}
+
+function collectContainers($: cheerio.CheerioAPI): string[] {
+  return collect($, 'main,article,section,div[class],ul[class],ol[class]', (el) => {
     const node = $(el);
     const tag = node[0]?.tagName ?? 'node';
     const id = node.attr('id') ? `#${node.attr('id')}` : '';
@@ -35,32 +53,35 @@ export function summarizeHtmlForAgent(html: string, baseUrl: string, pageType: '
     const childSummary = summarizeChildren(node);
     return `${describeElementSelector($, el)} | node=${tag}${id}${className} | children=${childSummary} | text=${text.slice(0, 120)}`;
   }, 140, (value) => /chapter|manga|comic|read|page|detail|content|list|episode|image|img|book|doc|main|article|section|box/i.test(value));
+}
 
+function formatOverview(html: string, baseUrl: string, $: cheerio.CheerioAPI,
+  sections: { headings: string[]; meta: string[]; anchors: string[]; images: string[]; containers: string[] }): string {
   return `### DOM Overview
 - URL: ${baseUrl}
-- Document title: ${title || 'unknown'}
-- Body classes: ${bodyClasses || 'none'}
+- Document title: ${compactText($('title').first().text()) || 'unknown'}
+- Body classes: ${$('body').attr('class') || 'none'}
 - Original HTML length: ${html.length} characters
 
 ### Headings
 
-${formatList(headings)}
+${formatList(sections.headings)}
 
 ### Metadata-like Meta Tags
 
-${formatList(meta)}
+${formatList(sections.meta)}
 
 ### Candidate Links
 
-${formatList(anchors)}
+${formatList(sections.anchors)}
 
 ### Candidate Image Nodes
 
-${formatList(images)}
+${formatList(sections.images)}
 
 ### Candidate Structural Containers
 
-${formatList(structuralCandidates)}
+${formatList(sections.containers)}
 `;
 }
 

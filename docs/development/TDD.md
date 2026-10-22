@@ -28,6 +28,25 @@
 19. Preserve handoff owner, URL, and exact browser target.
 20. Finish deferred handoffs as failed or cancelled.
 21. Prefer usable reader DOM over passive challenge scripts.
+22. Preserve runtime data during development cleanup.
+23. Preserve immutable adapter package versions.
+24. Activate, deactivate, restore, and roll back catalog versions.
+25. Migrate the legacy generated implementation once.
+26. Inspect a shared package without executing it.
+27. Reject schema, checksum, and identity mismatches.
+28. Import shared packages inactive by default.
+29. Activate imported packages only when explicitly requested.
+30. Verify registry indexes with administrator-trusted Ed25519 keys.
+31. Reject modified indexes, packages, identities, checksums, and key IDs.
+32. Install signed remote packages inactive by default.
+33. Reject registry redirects, private networks, and oversized responses.
+34. Produce deterministic signed registry artifacts from reviewed packages.
+35. Reject duplicate identities and non-Ed25519 release keys.
+36. Keep private signing keys out of generated registry artifacts.
+37. Derive the published public key from the configured release private key.
+38. Keep signing jobs separate from Pages deployment permissions.
+39. Build project-source adapters only when the Catalog sandbox can load them.
+40. Validate every checked-in Registry source package.
 
 ### Integration tests
 
@@ -110,12 +129,17 @@
 | `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14 |
 | `backend/tests/unit/server/adapter-draft-routes.test.ts` | ADP-03, ADP-04, ADP-07 |
 | `backend/tests/unit/adapter/chapter-image-identity.test.ts` | ADP-08, ADP-09 |
+| `backend/tests/unit/adapter/catalog.test.ts` | ADP-14～17 |
+| `backend/tests/unit/adapter/package-transfer.test.ts` | ADP-18～21 |
+| `backend/tests/unit/adapter/registry-sources.test.ts` | ADP-23 |
+| `backend/tests/unit/cli/adapter-package-command.test.ts` | ADP-18, ADP-20, ADP-22 |
 | `backend/tests/integration/chapter-image-identities.test.ts` | ADP-08 |
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |
 | `backend/tests/integration/chapter-images-handoff.test.ts` | ADP-10, ADP-11 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
 | `browser-client-sdk/tests/webextension-driver.test.ts` | BC-06, BC-15, BC-16 |
+| `scripts/clean.test.mjs` | DEV-01, DEV-02 |
 
 正式環境 Consumer 驗證對應 BC-13 與 COMIX-02。它不是 merge gate，因為外部
 網站與 challenge 狀態不穩定。
