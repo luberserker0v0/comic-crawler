@@ -7,6 +7,7 @@ import { createAdapterPackage } from '../../../src/adapter/package-builder';
 import { AdapterRegistry } from '../../../src/adapter/registry';
 import { ComicCrawlerCli } from '../../../src/cli';
 import { instantiateAdapterImplementationDraft } from '../../../src/selector-discovery/adapter-draft-runtime';
+import { PROJECT_ADAPTER_SOURCE } from '../../../src/adapter/runtime-state';
 
 class MemoryStorage implements IStorage {
   readonly values = new Map<string, unknown>();
@@ -19,8 +20,27 @@ class MemoryStorage implements IStorage {
 
 describe('adapter-packages CLI', () => {
   it('exports and imports an inactive portable package', exportsAndImportsPackage);
+  it('builds a portable package from project source', buildsProjectPackage);
   it('generates keys and publishes a signed static registry', publishesSignedRegistry);
 });
+
+async function buildsProjectPackage() {
+  const directory = await mkdtemp(join(tmpdir(), 'comiccrawler-project-package-'));
+  const sourcePath = join(directory, 'adapter.ts');
+  const output = join(directory, 'demo.ccadapter.json');
+  await writeFile(sourcePath, adapterSource(), 'utf-8');
+  PROJECT_ADAPTER_SOURCE.demo = sourcePath;
+  const { cli } = await createRuntime();
+  jest.spyOn(console, 'log').mockImplementation(() => undefined);
+  await cli.parse(['node', 'comiccrawler', 'adapter-packages', 'build-project', 'demo',
+    '--created-at', '2026-10-22T00:00:00.000Z', '--output', output]);
+  const document = JSON.parse(await readFile(output, 'utf-8'));
+  expect(document.manifest).toMatchObject({ adapterId: 'demo', origin: 'bundled' });
+  expect(instantiateAdapterImplementationDraft(document.implementationTs).id).toBe('demo');
+  delete PROJECT_ADAPTER_SOURCE.demo;
+  jest.restoreAllMocks();
+  await rm(directory, { recursive: true, force: true });
+}
 
 async function exportsAndImportsPackage() {
   const directory = await mkdtemp(join(tmpdir(), 'comiccrawler-package-cli-'));

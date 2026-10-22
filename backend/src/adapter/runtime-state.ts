@@ -109,6 +109,13 @@ export function projectAdapterSourceExists(adapterId: string): boolean {
   return Boolean(relativePath && resolveProjectPathCandidates(relativePath).some((candidate) => existsSync(candidate)));
 }
 
+export function resolveProjectAdapterSourcePath(adapterId: string): string | undefined {
+  const relativePath = PROJECT_ADAPTER_SOURCE[adapterId];
+  return relativePath
+    ? resolveProjectPathCandidates(relativePath).find((candidate) => existsSync(candidate))
+    : undefined;
+}
+
 export function resolveProjectAdapterSourceDir(adapterId: string): string | undefined {
   const relativePath = PROJECT_ADAPTER_SOURCE[adapterId];
   if (!relativePath) return undefined;

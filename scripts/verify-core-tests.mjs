@@ -27,6 +27,7 @@ const coreBackendTests = [
   'tests/unit/adapter/official-registry.test.ts',
   'tests/unit/adapter/package-transfer.test.ts',
   'tests/unit/adapter/registry-publisher.test.ts',
+  'tests/unit/adapter/registry-sources.test.ts',
   'tests/unit/cli/adapter-package-command.test.ts',
   'tests/unit/scheduler/task-scheduler.test.ts',
 ];

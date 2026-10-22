@@ -70,10 +70,27 @@ Run package commands from `repo/`:
 
 ```bash
 npm run -w backend cli -- adapter-packages list
-npm run -w backend cli -- adapter-packages inspect ./demo.ccadapter.json
-npm run -w backend cli -- adapter-packages export demo --output ./demo.ccadapter.json
-npm run -w backend cli -- adapter-packages import ./demo.ccadapter.json
+npm run -w backend cli -- adapter-packages inspect ../demo.ccadapter.json
+npm run -w backend cli -- adapter-packages export demo --output ../demo.ccadapter.json
+npm run -w backend cli -- adapter-packages import ../demo.ccadapter.json
 ```
+
+Repository-maintained adapters use a separate, explicit build command:
+
+```bash
+npm run -w backend cli -- adapter-packages build-project comix \
+  --created-at 2026-10-22T06:28:35.337Z \
+  --output ../registry/packages/comix-v2026.10.22-818eaad9.ccadapter.json
+```
+
+`build-project` reads the registered project source and evaluates it with the
+same restricted runtime used for imported Catalog packages. Internal Server
+imports therefore fail before the package is written. `--created-at` is
+required because it participates in the immutable version identifier.
+
+Portable source may import Adapter capability classes, `ComicError`, and
+`ErrorType` from `../../base`. Runtime imports outside that Adapter API are not
+available to installed packages.
 
 Export writes the exact immutable JSON document. It refuses to overwrite an
 existing file unless `--force` is supplied. Use `--version` when exporting an
@@ -86,7 +103,7 @@ code. Import performs the same checks and installs the version inactive.
 Activation is a separate trust decision:
 
 ```bash
-npm run -w backend cli -- adapter-packages import ./demo.ccadapter.json --activate
+npm run -w backend cli -- adapter-packages import ../demo.ccadapter.json --activate
 ```
 
 Activation evaluates the TypeScript in the restricted Adapter draft runtime,

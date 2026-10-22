@@ -45,6 +45,8 @@
 36. Keep private signing keys out of generated registry artifacts.
 37. Derive the published public key from the configured release private key.
 38. Keep signing jobs separate from Pages deployment permissions.
+39. Build project-source adapters only when the Catalog sandbox can load them.
+40. Validate every checked-in Registry source package.
 
 ### Integration tests
 
@@ -129,6 +131,8 @@
 | `backend/tests/unit/adapter/chapter-image-identity.test.ts` | ADP-08, ADP-09 |
 | `backend/tests/unit/adapter/catalog.test.ts` | ADP-14～17 |
 | `backend/tests/unit/adapter/package-transfer.test.ts` | ADP-18～21 |
+| `backend/tests/unit/adapter/registry-sources.test.ts` | ADP-23 |
+| `backend/tests/unit/cli/adapter-package-command.test.ts` | ADP-18, ADP-20, ADP-22 |
 | `backend/tests/integration/chapter-image-identities.test.ts` | ADP-08 |
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |

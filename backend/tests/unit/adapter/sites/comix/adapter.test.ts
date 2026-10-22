@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ComixAdapter } from '../../../../../src/adapter/sites/comix';
 import { composeChapterImages } from '../../../../../src/adapter/runtime-composer';
+import { instantiateAdapterImplementationDraft } from '../../../../../src/selector-discovery/adapter-draft-runtime';
 
 const CHAPTER_URL = 'https://comix.to/title/v5rz-absolute-dominion/11497386-chapter-112';
 const FIXTURE = readFileSync(join(__dirname, '../../../../fixtures/comix/chapter.html'), 'utf8');
@@ -20,6 +21,15 @@ function ComixAdapterTestGroup1(): void {
   it('extracts the complete ordered reader image list without requiring file extensions', ComixAdapterTestExtractsTheCompleteOrderedReaderImageListWithoutRequiringFileExtensions);
   it('rejects a partially lazy-loaded chapter instead of returning an incomplete URL list', ComixAdapterTestRejectsAPartiallyLazyLoadedChapterInsteadOfReturningAnIncompleteURLList);
   it('extracts Browser Client image annotations left by virtualized reader pages', ComixAdapterTestExtractsBrowserClientImageAnnotationsLeftByVirtualizedReaderPages);
+  it('loads as a portable catalog implementation', ComixAdapterTestLoadsAsAPortableCatalogImplementation);
+}
+
+async function ComixAdapterTestLoadsAsAPortableCatalogImplementation() {
+    const source = readFileSync(join(__dirname, '../../../../../src/adapter/sites/comix/adapter.ts'), 'utf8');
+    const portable = instantiateAdapterImplementationDraft(source) as ComixAdapter;
+    portable.setHtmlRenderer({ render: async () => FIXTURE, dispose: async () => undefined });
+    expect(portable.id).toBe('comix');
+    await expect(composeChapterImages(portable, CHAPTER_URL)).resolves.toHaveLength(3);
 }
 
 function ComixAdapterTestMatchesOnlyComixChapterURLs() {

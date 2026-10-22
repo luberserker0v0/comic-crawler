@@ -140,11 +140,24 @@ npm run -w backend cli -- adapter-registry keygen \
   --public-key ./registry-public.pem
 ```
 
-Export reviewed Catalog packages into a release-input directory:
+Build a reviewed repository-maintained adapter directly into the Registry
+source directory:
+
+```bash
+npm run -w backend cli -- adapter-packages build-project comix \
+  --created-at 2026-10-22T06:28:35.337Z \
+  --output ../registry/packages/comix-v2026.10.22-818eaad9.ccadapter.json
+```
+
+The command rejects project source that cannot execute as a portable Catalog
+package. Review and test the source before committing the generated document.
+
+For a developer-approved generated adapter already stored in Adapter Catalog,
+export its immutable version instead:
 
 ```bash
 npm run -w backend cli -- adapter-packages export comix \
-  --output ./.artifacts/registry-input/comix.ccadapter.json
+  --output ../.artifacts/registry-input/comix.ccadapter.json
 ```
 
 Keep every version that the index should advertise in that input directory.
@@ -156,8 +169,8 @@ Build the static release:
 
 ```bash
 npm run -w backend cli -- adapter-registry publish \
-  ./.artifacts/registry-input \
-  --output ./.artifacts/adapter-registry \
+  ../.artifacts/registry-input \
+  --output ../.artifacts/adapter-registry \
   --registry-id official \
   --base-url https://example.org/comiccrawler \
   --key-id release-2026 \

@@ -18,7 +18,7 @@ these files instead of merging a previously deployed index.
 
 ## Review requirements
 
-1. Export the immutable package from Adapter Catalog.
+1. Export an approved Catalog package or build reviewed project source.
 2. Review its complete TypeScript implementation.
 3. Verify adapter ID, domains, capabilities, and fixture provenance.
 4. Run the relevant adapter and fixture tests.
@@ -36,7 +36,7 @@ private key must never be committed. Repository variables may override:
 The initial official key ID is `comiccrawler-official-2026-10`. Generate it
 with `npm run registry:keygen`. Its optional `--backup-directory` defaults to
 the npm invocation directory; a repo-external encrypted path is recommended.
-the script and backup procedure are documented in `docs/ADAPTER_REGISTRY.md`.
+The script and backup procedure are documented in `docs/ADAPTER_REGISTRY.md`.
 
 GitHub Pages must use GitHub Actions as its publishing source. The deployed
 root contains `index.json`, `public-key.pem`, and signed package envelopes.

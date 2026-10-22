@@ -1,6 +1,11 @@
-import { AdapterBase, ChapterImagesCapability, CommonCapability, VerificationCapability } from '../../base';
-import { ComicError, ErrorType } from '../../../error/types';
-import { looksLikeAntiBotChallenge } from '../../../crawler/anti-bot';
+import {
+  AdapterBase,
+  ChapterImagesCapability,
+  ComicError,
+  CommonCapability,
+  ErrorType,
+  VerificationCapability,
+} from '../../base';
 
 export class ComixAdapter extends AdapterBase {
   readonly id = 'comix';
@@ -45,7 +50,7 @@ class ComixVerificationCapability extends VerificationCapability {
       );
     });
     if ($('.rpage-main').length > 0 && loadedReaderPages.length > 0) return false;
-    return looksLikeAntiBotChallenge(input);
+    return looksLikeComixChallenge(input);
   }
 
   describeVerificationHandoff(): Record<string, unknown> {
@@ -54,6 +59,24 @@ class ComixVerificationCapability extends VerificationCapability {
       flow: 'Open the chapter through the task-bound Browser Worker, complete the Comix/Cloudflare verification, then resume the task with the same browser session.',
     };
   }
+}
+
+const BLOCK_SIGNALS = [
+  'attention required! | cloudflare', 'sorry, you have been blocked', 'you are unable to access',
+];
+const CHALLENGE_SIGNALS = [
+  ...BLOCK_SIGNALS, 'cdn-cgi/challenge-platform', 'window.__cf$cv', 'cf-chl', 'cf-error',
+  'cloudflare ray id', 'verify you are human', 'checking if the site connection is secure',
+  '<title>請稍候', '<title>请稍候', '正在執行安全驗證', '正在执行安全验证', '人机验证', '人機驗證',
+];
+
+function looksLikeComixChallenge(html: string): boolean {
+  const lower = html.toLowerCase();
+  if (!CHALLENGE_SIGNALS.some((signal) => lower.includes(signal))) return false;
+  const imageCount = (html.match(/<img\b/gi) ?? []).length;
+  const anchorCount = (html.match(/<a\s/gi) ?? []).length;
+  return (imageCount === 0 && anchorCount === 0)
+    || BLOCK_SIGNALS.some((signal) => lower.includes(signal));
 }
 
 class ComixChapterImagesCapability extends ChapterImagesCapability {

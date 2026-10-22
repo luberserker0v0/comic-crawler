@@ -302,6 +302,24 @@
 
 預期：驗證通過後 package 才成為 active。
 
+### ADP-22 打包 project-source adapter
+
+1. 讀取 project-source TypeScript。
+2. 執行 portable runtime 驗證。
+3. 產生 immutable package。
+4. 再次載入 package implementation。
+
+預期：package 不依賴 Server 內部模組且可在 Catalog sandbox 執行。
+
+### ADP-23 驗證 Registry source packages
+
+1. 掃描 `registry/packages/`。
+2. 驗證每個 package schema。
+3. 驗證 checksums 與 TypeScript contract。
+4. 在 Catalog sandbox 建立 adapter。
+
+預期：所有納入 Git 的 package 都可安全載入。
+
 ### COMIX-01 擷取 Comix fixture
 
 1. 載入 Comix chapter fixture。

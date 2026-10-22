@@ -3,6 +3,10 @@ import { dirname, resolve } from 'node:path';
 import type { AdapterCatalogEntry, AdapterPackageDocument } from '@comiccrawler/shared';
 import { formatError } from '../error/types';
 import { importAdapterPackage, inspectAdapterPackage } from '../adapter/package-transfer';
+import { createAdapterPackage } from '../adapter/package-builder';
+import { resolveProjectAdapterSourcePath } from '../adapter/runtime-state';
+import { instantiateAdapterImplementationDraft } from '../selector-discovery/adapter-draft-runtime';
+import { validateAdapterImplementationDraft } from '../selector-discovery/adapter-implementation';
 import type { CliCommandContext } from './command-context';
 
 const MAX_PACKAGE_BYTES = 5_500_000;
@@ -16,12 +20,17 @@ export function setupAdapterPackageCommand(ctx: CliCommandContext): void {
   command.command('export').argument('<adapter-id>').description('Export an immutable package as JSON')
     .option('--version <version>').option('-o, --output <file>').option('--force')
     .action((id: string, options: ExportOptions) => exportPackage(ctx, id, options));
+  command.command('build-project').argument('<adapter-id>')
+    .description('Build a portable package from a project-source adapter')
+    .requiredOption('--created-at <timestamp>').option('-o, --output <file>').option('--force')
+    .action((id: string, options: BuildProjectOptions) => buildProjectPackage(ctx, id, options));
   command.command('import').argument('<file>').description('Validate and install a package without activation')
     .option('--activate', 'Activate the imported package after validation')
     .action((file: string, options: { activate?: boolean }) => importPackageFile(ctx, file, options));
 }
 
 interface ExportOptions { version?: string; output?: string; force?: boolean }
+interface BuildProjectOptions { createdAt: string; output?: string; force?: boolean }
 
 async function listPackages(ctx: CliCommandContext): Promise<void> {
   await runPackageCommand(ctx, async () => {
@@ -56,6 +65,27 @@ async function exportPackage(ctx: CliCommandContext, id: string, options: Export
     const output = resolve(options.output ?? `${id}-${version}.ccadapter.json`);
     await writePackageFile(output, document, Boolean(options.force));
     ctx.ui.renderSuccess(`Exported ${id}@${version} to ${output}`);
+  });
+}
+
+async function buildProjectPackage(
+  ctx: CliCommandContext, id: string, options: BuildProjectOptions
+): Promise<void> {
+  await runPackageCommand(ctx, async () => {
+    const sourcePath = resolveProjectAdapterSourcePath(id);
+    if (!sourcePath) throw new Error(`Project-source adapter "${id}" was not found.`);
+    const source = await readFile(sourcePath, 'utf-8');
+    const adapter = instantiateAdapterImplementationDraft(source);
+    if (adapter.id !== id) throw new Error(`Project-source adapter identity is "${adapter.id}", not "${id}".`);
+    const validation = validateAdapterImplementationDraft(source,
+      { target: adapter.capabilities?.metadata ? 'full' : 'chapter-only' });
+    if (!validation.valid) throw new Error(validation.errors.join(' '));
+    const document = createAdapterPackage({ adapter, implementationTs: source,
+      origin: 'bundled', createdAt: options.createdAt, validation });
+    inspectAdapterPackage(document);
+    const output = resolve(options.output ?? `${id}-${document.manifest.version}.ccadapter.json`);
+    await writePackageFile(output, document, Boolean(options.force));
+    ctx.ui.renderSuccess(`Built portable package ${id}@${document.manifest.version} at ${output}`);
   });
 }
 
