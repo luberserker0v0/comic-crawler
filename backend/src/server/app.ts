@@ -7,6 +7,7 @@ import type { ConfigManager } from '../config/manager';
 import type { TaskManager } from '../task/manager';
 import type { AdapterRegistry } from '../adapter/registry';
 import type { AdapterCatalog } from '../adapter/catalog';
+import type { OfficialAdapterRegistryService } from '../adapter/official-registry';
 import type { CrawlerEngine } from '../crawler/engine';
 import type { EventBus } from '../events/bus';
 import type { AgentAdminService } from '../agent/admin-service';
@@ -33,6 +34,7 @@ import { setupFixtureRoutes } from './routes/fixtures';
 import { setupAdapterDraftRoutes } from './routes/adapter-drafts';
 import { setupMaintenanceRoutes } from './routes/maintenance';
 import { setupBrowserClientRoutes } from './routes/browser-clients';
+import { setupAdapterRegistryRoutes } from './routes/adapter-registry';
 import { setupWebSocket } from './websocket';
 import { setupCors } from './middleware/cors';
 import { setupApiSecurity } from './middleware/api-security';
@@ -46,6 +48,7 @@ export interface ServerOptions {
   taskManager: TaskManager;
   adapterRegistry: AdapterRegistry;
   adapterCatalog?: AdapterCatalog;
+  officialAdapterRegistry?: OfficialAdapterRegistryService;
   crawlerEngine: CrawlerEngine;
   eventBus: EventBus;
   agentAdminService?: AgentAdminService;
@@ -173,6 +176,8 @@ export class ComicCrawlerServer {
       adapterCatalog: this.options.adapterCatalog,
       apiSecurity: this.apiSecurity,
     });
+    if (this.options.officialAdapterRegistry)
+      setupAdapterRegistryRoutes(this.app, this.options.officialAdapterRegistry);
     this.setupAdapterDraftRoutes();
   }
 

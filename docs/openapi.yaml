@@ -311,6 +311,131 @@ paths:
                         $ref: "#/components/schemas/AdapterCatalogEntry"
         "404":
           $ref: "#/components/responses/Error"
+  /api/adapters/{id}/versions/{version}/package:
+    get:
+      summary: Export an immutable adapter package
+      parameters:
+        - $ref: "#/components/parameters/AdapterId"
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Exact stored package document
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdapterPackageDocument"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/adapter-packages/import:
+    post:
+      summary: Validate and import an adapter package
+      description: Import is inactive by default. Set activate only after explicit developer review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document]
+              properties:
+                document:
+                  $ref: "#/components/schemas/AdapterPackageDocument"
+                activate:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Package validation and catalog installation result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdapterPackageImportResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/adapter-registry/packages:
+    get:
+      summary: Verify and list packages from trusted adapter registries
+      responses:
+        "200":
+          description: Verified remote packages and local installation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterRegistryUpdateListResponse"
+        "422":
+          $ref: "#/components/responses/Error"
+  /api/adapter-registry/updates:
+    get:
+      summary: List newest verified packages not installed locally
+      parameters:
+        - in: query
+          name: adapterId
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Available updates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterRegistryUpdateListResponse"
+        "422":
+          $ref: "#/components/responses/Error"
+  /api/adapter-registry/install:
+    post:
+      summary: Download, verify, and install one official adapter package
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdapterRegistryInstallRequest"
+      responses:
+        "200":
+          description: Installed package; inactive unless explicitly requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterRegistryUpdateResponse"
+        "422":
+          $ref: "#/components/responses/Error"
+  /api/adapter-registry/update:
+    post:
+      summary: Install newest missing signed adapter packages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                adapterId:
+                  type: string
+                activate:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Installed updates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdapterRegistryUpdateListResponse"
+        "422":
+          $ref: "#/components/responses/Error"
   /api/adapters/{id}/capabilities:
     get:
       summary: Read Adapter Lab capabilities and function descriptors
@@ -1703,7 +1828,169 @@ components:
         sourceDiscoveryId:
           type: string
         approvalFixture:
-          $ref: "#/components/schemas/FixtureSummary"
+          $ref: "#/components/schemas/AdapterPackageFixtureSummary"
+    AdapterPackageFixtureSummary:
+      type: object
+      required: [id, domain, url, title, htmlLength, capturedAt, readiness]
+      description: Portable fixture provenance without local filesystem paths or fixture contents.
+      properties:
+        id:
+          type: string
+        domain:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        htmlLength:
+          type: integer
+        capturedAt:
+          type: string
+          format: date-time
+        adapterId:
+          type: string
+        sourceDiscoveryId:
+          type: string
+        functionIds:
+          type: array
+          items:
+            type: string
+        readiness:
+          type: object
+    AdapterPackageDocument:
+      type: object
+      required: [manifest, implementationTs, validation, checksums]
+      properties:
+        manifest:
+          $ref: "#/components/schemas/AdapterPackageManifest"
+        implementationTs:
+          type: string
+        validation:
+          type: object
+          required: [valid, syntaxValid, errors, warnings]
+          properties:
+            valid:
+              type: boolean
+            syntaxValid:
+              type: boolean
+            errors:
+              type: array
+              items:
+                type: string
+            warnings:
+              type: array
+              items:
+                type: string
+        checksums:
+          type: object
+          required: [algorithm, manifest, implementation]
+          properties:
+            algorithm:
+              type: string
+              const: sha256
+            manifest:
+              type: string
+              pattern: "^[a-f0-9]{64}$"
+            implementation:
+              type: string
+              pattern: "^[a-f0-9]{64}$"
+    AdapterPackageImportResponse:
+      type: object
+      required: [entry, inspection, activated]
+      properties:
+        entry:
+          $ref: "#/components/schemas/AdapterCatalogEntry"
+        inspection:
+          type: object
+          required: [adapterId, version, name, domains, capabilities, origin, sourceValid, warnings]
+          properties:
+            adapterId:
+              type: string
+            version:
+              type: string
+            name:
+              type: string
+            domains:
+              type: array
+              items:
+                type: string
+            capabilities:
+              $ref: "#/components/schemas/Capabilities"
+            origin:
+              type: string
+              enum: [bundled, local-generated, imported, official]
+            sourceValid:
+              type: boolean
+            warnings:
+              type: array
+              items:
+                type: string
+        activated:
+          type: boolean
+    AdapterRegistryPackageRecord:
+      type: object
+      required: [adapterId, version, packageUrl, publishedAt, manifestChecksum, implementationChecksum, keyId]
+      properties:
+        adapterId:
+          type: string
+        version:
+          type: string
+        packageUrl:
+          type: string
+          format: uri
+        publishedAt:
+          type: string
+          format: date-time
+        manifestChecksum:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        implementationChecksum:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        keyId:
+          type: string
+    AdapterRegistryUpdate:
+      type: object
+      required: [registryId, package, installed, active]
+      properties:
+        registryId:
+          type: string
+        package:
+          $ref: "#/components/schemas/AdapterRegistryPackageRecord"
+        installed:
+          type: boolean
+        active:
+          type: boolean
+    AdapterRegistryInstallRequest:
+      type: object
+      required: [adapterId]
+      properties:
+        registryId:
+          type: string
+        adapterId:
+          type: string
+        version:
+          type: string
+        activate:
+          type: boolean
+          default: false
+    AdapterRegistryUpdateResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/AdapterRegistryUpdate"
+    AdapterRegistryUpdateListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiResponse"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdapterRegistryUpdate"
     AdapterCatalogEntry:
       type: object
       required: [adapterId, activeVersion, versions]

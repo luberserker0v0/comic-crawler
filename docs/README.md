@@ -22,6 +22,8 @@ This directory contains user- and contributor-facing documentation for the
   Lab, drafts, and verified fixture policy.
 - `ADAPTER_PACKAGES.md` - immutable reviewed packages, local catalog lifecycle,
   restore, and rollback.
+- `ADAPTER_REGISTRY.md` - Ed25519 trust store, signed registry queries, remote
+  publishing, package installation, and pull updates.
 - `AO_SELECTOR_DISCOVERY.md` - AO adapter implementation discovery stages,
   `AdapterBase` output contract, and AO API lifecycle.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,

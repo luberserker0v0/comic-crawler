@@ -42,11 +42,13 @@ function runtimeConfigTestLetsCOMICCRAWLEREnvVarsOverridePersistedServerConfig()
     process.env.COMICCRAWLER_HOST = '127.0.0.1';
     process.env.COMICCRAWLER_DATA_PATH = './runtime-data';
     process.env.AGENT_WORKSPACE_PATH = './custom-agent-workspaces';
+    process.env.COMICCRAWLER_ADAPTER_TRUST_STORE_PATH = './trusted/adapter-registries.json';
     expect(resolveRuntimeConfig({ server: { port: 4200, host: '0.0.0.0' } })).toMatchObject({
         port: 3200,
         host: '127.0.0.1',
         dataPath: './runtime-data',
         agentWorkspacePath: './custom-agent-workspaces',
+        adapterTrustStorePath: './trusted/adapter-registries.json',
         dataLayout: {
             root: './runtime-data',
             agentWorkspacePath: './custom-agent-workspaces',

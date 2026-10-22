@@ -24,6 +24,7 @@ logs/
 *.log
 *.tmp
 *.bak
+*.private.pem
 .tmp-dev-logs/
 tools/browser-client-acceptance/config.json
 tools/browser-client-acceptance/.state/

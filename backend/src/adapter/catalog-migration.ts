@@ -35,7 +35,7 @@ async function migrateImplementation(record: LegacyImplementationRecord, catalog
   const document = createAdapterPackage({ adapter, implementationTs: record.adapterImplementationTs,
     origin: 'local-generated', createdAt: record.promotedAt,
     sourceDiscoveryId: record.sourceDiscoveryId, approvalFixture: record.approvalFixture });
-  await catalog.installApproved(document, true);
+  await catalog.installApproved(document);
 }
 
 async function removeEmptyLegacyManifests(storage: IStorage): Promise<void> {

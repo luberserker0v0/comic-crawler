@@ -142,22 +142,22 @@ async function managedCatalogFixture(storage: IStorage, selector = 'img.page') {
 }
 
 function catalogAdapterSource(selector: string): string {
-  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base';
-export class DynamicDemoAdapter extends AdapterBase {
-  readonly id = 'dynamic-demo'; readonly name = 'Dynamic Demo'; readonly domains = ['example.com'];
+  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base'; export class DynamicDemoAdapter extends AdapterBase {
+  readonly id = 'dynamic-demo'; readonly name = 'Dynamic Demo'; readonly domains = ['demo.invalid'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommon(this); readonly verification = new DemoVerification(this);
   readonly chapterImages = new DemoImages(this);
 }
-class DemoCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('example.com'); } }
+class DemoCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('demo.invalid'); } }
 class DemoVerification extends VerificationCapability {
   detectVerificationRequired(_input: string): boolean { return false; }
   describeVerificationHandoff(): Record<string, unknown> { return { supported: false }; }
 }
 class DemoImages extends ChapterImagesCapability {
-  extractChapterImageUrls(document: unknown, _sourceUrl: string): string[] {
-    const $ = this.adapter.asCheerio(document); return $('${selector}').map((_, node) => $(node).attr('src') ?? '').get();
+  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
+    const $ = this.adapter.asCheerio(document); void sourceUrl; return $('${selector}')
+      .map((_, node) => $(node).attr('src') ?? '').get();
   }
 }`;
 }
@@ -210,6 +210,8 @@ function AdapterRoutesTestGroup2(): void {
   it('restores deleted generated adapters from an approved catalog version', AdapterRoutesTestRestoresDeletedGeneratedAdaptersFromCatalog);
   it('rolls a generated adapter back to an approved catalog version', AdapterRoutesTestRollsBackGeneratedAdapter);
   it('lists approved catalog versions', AdapterRoutesTestListsApprovedCatalogVersions);
+  it('exports an immutable catalog package', AdapterRoutesTestExportsCatalogPackage);
+  it('imports a package inactive by default', AdapterRoutesTestImportsPackageInactive);
   it('does not restore deleted project-source adapters when the source directory is missing', AdapterRoutesTestDoesNotRestoreDeletedProjectSourceAdaptersWhenTheSourceDirectoryIsMissing);
   it('returns 404 when deleting an unknown adapter', AdapterRoutesTestReturns404WhenDeletingAnUnknownAdapter);
   it('lists adapter function descriptors by capability', AdapterRoutesTestListsAdapterFunctionDescriptorsByCapability);
@@ -598,6 +600,35 @@ async function AdapterRoutesTestListsApprovedCatalogVersions() {
   expect(response.json().data).toMatchObject({ adapterId: 'dynamic-demo',
     activeVersion: managed.document.manifest.version,
     versions: [expect.objectContaining({ version: managed.document.manifest.version, status: 'active' })] });
+  await app.close();
+}
+
+async function AdapterRoutesTestExportsCatalogPackage() {
+  const storage = new MemoryStorage();
+  const managed = await managedCatalogFixture(storage);
+  const { app } = appWithAdapters([managed.adapter], { storage, adapterCatalog: managed.catalog });
+  const path = `/api/adapters/dynamic-demo/versions/${managed.document.manifest.version}/package`;
+  const response = await app.inject({ method: 'GET', url: path });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().data).toEqual(managed.document);
+  await app.close();
+}
+
+async function AdapterRoutesTestImportsPackageInactive() {
+  const storage = new MemoryStorage();
+  const catalog = new AdapterCatalog(storage);
+  await catalog.initialize();
+  const source = catalogAdapterSource('img.page');
+  const adapter = instantiateAdapterImplementationDraft(source);
+  const document = createAdapterPackage({ adapter, implementationTs: source,
+    origin: 'local-generated', createdAt: '2026-10-22T00:00:00.000Z' });
+  const { app, registry } = appWithAdapters([], { storage, adapterCatalog: catalog });
+  const response = await app.inject({ method: 'POST', url: '/api/adapter-packages/import',
+    payload: { document } });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().data).toMatchObject({ activated: false,
+    entry: { adapterId: 'dynamic-demo', activeVersion: null } });
+  expect(registry.has('dynamic-demo')).toBe(false);
   await app.close();
 }
 

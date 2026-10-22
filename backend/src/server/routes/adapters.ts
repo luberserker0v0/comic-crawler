@@ -14,6 +14,8 @@ import type {
   IComicAdapter,
   ChapterIdentityDescriptor,
   ChapterImageDescriptor,
+  AdapterPackageImportRequest,
+  AdapterPackageImportResponse,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
 import { getAdapterCapabilities } from '../../adapter/registry';
@@ -31,6 +33,7 @@ import {
 import type { IStorage } from '../../storage/types';
 import type { AdapterCatalog } from '../../adapter/catalog';
 import { instantiateCatalogPackage } from '../../adapter/catalog-runtime';
+import { activateAdapterPackage, importAdapterPackage } from '../../adapter/package-transfer';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { getAdapterImplementation } from './adapter-function-source';
 import { testAdapterFunction } from './adapter-function-runner';
@@ -76,6 +79,8 @@ function registerAdapterCollectionRoutes(app: FastifyInstance, ctx: AdapterRoute
   app.get('/api/adapters/deleted', (_request, reply) => listDeletedAdapters(ctx, reply));
   app.post('/api/adapters/resolve', (request, reply) => resolveAdapter(ctx, request, reply));
   app.post('/api/adapters/chapter-images', (request, reply) => extractChapterImages(ctx, request, reply));
+  app.post('/api/adapter-packages/import', { bodyLimit: 6_000_000 },
+    (request, reply) => importManagedPackage(ctx, request, reply));
 }
 
 function registerAdapterItemRoutes(app: FastifyInstance, ctx: AdapterRouteContext): void {
@@ -83,6 +88,8 @@ function registerAdapterItemRoutes(app: FastifyInstance, ctx: AdapterRouteContex
   app.post('/api/adapters/:id/restore', (request, reply) => restoreAdapter(ctx, request, reply));
   app.post('/api/adapters/:id/rollback', (request, reply) => rollbackManagedAdapter(ctx, request, reply));
   app.get('/api/adapters/:id/versions', (request, reply) => listManagedAdapterVersions(ctx, request, reply));
+  app.get('/api/adapters/:id/versions/:version/package',
+    (request, reply) => exportManagedPackage(ctx, request, reply));
   app.get('/api/adapters/:id', (request, reply) => getAdapterDetails(ctx, request, reply));
   app.get('/api/adapters/:id/capabilities', (request, reply) => getAdapterCapabilityDetails(ctx, request, reply));
   app.get('/api/adapters/:id/implementation', (request, reply) => getImplementation(ctx, request, reply));
@@ -210,13 +217,18 @@ async function rollbackManagedAdapter(
   const { id } = request.params as { id: string };
   const { version } = (request.body ?? {}) as { version?: string };
   try {
-    const entry = await catalog.rollback(id, version);
-    const document = await catalog.getActivePackage(id);
-    if (!document) throw new Error('Rollback package was not found.');
-    const adapter = instantiateCatalogPackage(document);
-    if (ctx.registry.has(id)) ctx.registry.replace(adapter); else ctx.registry.register(adapter);
+    const target = version ?? await previousManagedVersion(catalog, id);
+    if (!target) throw new Error(`Adapter "${id}" has no previous approved version.`);
+    const entry = await activateAdapterPackage(catalog, ctx.registry, id, target);
     reply.send({ data: { adapterId: id, activeVersion: entry.activeVersion, rolledBack: true } });
   } catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
+}
+
+async function previousManagedVersion(catalog: AdapterCatalog, id: string): Promise<string | undefined> {
+  const entry = await catalog.getEntry(id);
+  if (!entry) throw new Error(`Adapter "${id}" is not managed by the catalog.`);
+  if (entry.lastActiveVersion && entry.lastActiveVersion !== entry.activeVersion) return entry.lastActiveVersion;
+  return [...entry.versions].reverse().find((item) => item.version !== entry.activeVersion)?.version;
 }
 
 async function listManagedAdapterVersions(
@@ -228,6 +240,32 @@ async function listManagedAdapterVersions(
   const entry = await catalog.getEntry(id);
   if (!entry) return void reply.code(404).send({ error: 'Catalog adapter not found.' });
   reply.send({ data: entry });
+}
+
+async function exportManagedPackage(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const catalog = ctx.options.adapterCatalog;
+  if (!catalog) return void reply.code(501).send({ error: 'Adapter Catalog is not available.' });
+  const { id, version } = request.params as { id: string; version: string };
+  const document = await catalog.getPackage(id, version);
+  if (!document) return void reply.code(404).send({ error: 'Adapter package not found.' });
+  reply.send({ data: document });
+}
+
+async function importManagedPackage(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
+): Promise<void> {
+  const catalog = ctx.options.adapterCatalog;
+  if (!catalog) return void reply.code(501).send({ error: 'Adapter Catalog is not available.' });
+  const body = (request.body ?? {}) as Partial<AdapterPackageImportRequest>;
+  if (!body.document) return void reply.code(400).send({ error: 'Adapter package document is required.' });
+  try {
+    const result = await importAdapterPackage(catalog, ctx.registry, body.document, Boolean(body.activate));
+    const data: AdapterPackageImportResponse = { entry: result.entry, inspection: result.inspection,
+      activated: Boolean(body.activate) };
+    reply.send({ data });
+  } catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
 }
 
 async function restoreActiveAdapter(

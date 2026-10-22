@@ -41,6 +41,7 @@ backend/    Fastify API, crawler engine, task queue, adapters
 shared/     shared TypeScript types and defaults
 agent/ao/   AO bundle drafts, agents, skills, contracts, eval cases
 docs/       user/contributor-facing docs
+registry/   reviewed package inputs for the signed official registry
 ```
 
 Runtime state such as `data/`, `backend/data/`, downloads, build output, test
@@ -154,6 +155,13 @@ be captured from real browser sessions for local diagnosis, but hand-written
 fake site fixtures must not be used to imply live-site correctness. Generated
 adapters should come from reviewed selector drafts and should be promoted
 through the existing adapter review flow into an immutable catalog package.
+
+To share a locally approved generated adapter, export its exact Catalog package
+with `adapter-packages export` and attach it to the contribution for review.
+Do not mark it official or sign it with an untrusted key. Project maintainers
+review the TypeScript and fixture provenance, then use the local-only
+`adapter-registry publish` command to build signed release artifacts. See
+[Official Adapter Registry](docs/ADAPTER_REGISTRY.md) for the release workflow.
 
 ## AO, selector discovery, and verification handoff
 

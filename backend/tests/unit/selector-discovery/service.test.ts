@@ -283,6 +283,8 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestCapturesAGoldenFixtu
     const promoted = await service.promote('disc-fixture');
     expect(captureOrder).toEqual(['capture:false']);
     expect(promoted.approvalFixture?.id).toBe('fixture-1');
+    expect(promoted.approvalFixture).not.toHaveProperty('path');
+    expect(promoted.approvalFixture).not.toHaveProperty('expectedPath');
     expect(registry.has('generated-adapter')).toBe(true);
 }
 

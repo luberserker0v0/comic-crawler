@@ -156,6 +156,12 @@ active-version pointer per adapter. Startup loads only active catalog packages
 into the runtime registry. Deletion deactivates the pointer; restore and
 rollback reactivate an approved version without rewriting package content.
 
+An optional Official Adapter Registry is a pull-only distribution boundary.
+The Server reads administrator-provisioned public keys, verifies the remote
+index and package Ed25519 signatures, then imports the package into the same
+Catalog inactive by default. Registry transport never writes directly to the
+runtime adapter registry and never stores release private keys.
+
 Adapter discovery is intentionally modular:
 
 - Chapter-only discovery is the base unit. It analyzes a chapter reader page and

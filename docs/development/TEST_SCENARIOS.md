@@ -129,6 +129,58 @@
 
 預期：draft 可執行但不會註冊為正式 adapter。
 
+### ADP-07A 安裝簽章 adapter
+
+1. 設定可信任公開金鑰。
+2. 讀取已簽章 registry index。
+3. 驗證 index 簽章。
+4. 下載指定 package。
+5. 驗證 package 簽章。
+6. 比對 identity 與 checksum。
+7. 匯入 Adapter Catalog。
+
+預期：package 安裝成功但不會自動啟用。
+
+### ADP-07B 拒絕遭竄改的更新
+
+1. 建立有效簽章 package。
+2. 修改 implementation 內容。
+3. 執行遠端安裝。
+
+預期：簽章驗證失敗，Catalog 不會寫入版本。
+
+### ADP-07C 發布官方 adapter registry
+
+1. 匯出已審核 adapter package。
+2. 讀取 Ed25519 私鑰。
+3. 指定 registry ID 與 base URL。
+4. 產生 official package envelope。
+5. 產生完整 registry index。
+6. 驗證 package 與 index 簽章。
+
+預期：靜態輸出不含私鑰，且可由設定公開金鑰的 Server 安裝。
+
+### ADP-07D 重現 registry release
+
+1. 固定 package inputs。
+2. 固定 release timestamp。
+3. 執行兩次發布。
+4. 比對所有輸出。
+
+預期：兩次輸出完全相同。
+
+### ADP-07E 部署 GitHub Pages registry
+
+1. 合併已審核 package inputs。
+2. 手動啟動發布 workflow。
+3. 從 Actions secret 讀取私鑰。
+4. 建立簽章靜態輸出。
+5. 衍生並發布公開金鑰。
+6. 上傳 Pages artifact。
+7. 由獨立 deploy job 發布。
+
+預期：Pages 提供 index 與 packages，build job 沒有 Pages 寫入權限。
+
 ### ADP-08 保持 chapter page identity
 
 1. 擷取同一個 chapter。
@@ -213,6 +265,42 @@
 4. 檢查舊 storage key。
 
 預期：內容完整遷移且舊 key 被移除。
+
+### ADP-18 靜態檢查分享 package
+
+1. 讀取 package JSON。
+2. 驗證 schema。
+3. 驗證 checksums。
+4. 驗證 TypeScript contract。
+
+預期：檢查完成且不執行 package code。
+
+### ADP-19 拒絕遭修改的 package
+
+1. 匯出有效 package。
+2. 修改 manifest。
+3. 執行 inspect。
+
+預期：系統拒絕 checksum 不符的 package。
+
+### ADP-20 匯入分享 package
+
+1. 檢查有效 package。
+2. 執行 import。
+3. 讀取 catalog entry。
+4. 讀取 runtime registry。
+
+預期：version 已安裝但尚未啟用。
+
+### ADP-21 明確啟用 imported package
+
+1. 匯入有效 package。
+2. 指定 activate。
+3. 檢查 implementation identity。
+4. 檢查 domain conflict。
+5. 讀取 runtime registry。
+
+預期：驗證通過後 package 才成為 active。
 
 ### COMIX-01 擷取 Comix fixture
 

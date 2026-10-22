@@ -23,6 +23,7 @@ import { FixtureCaptureService } from './fixtures/fixture-capture-service';
 import type { GlobalConfig } from '@comiccrawler/shared';
 import type { RuntimeConfig } from './config/runtime';
 import type { IStorage } from './storage/types';
+import { OfficialAdapterRegistryService } from './adapter/official-registry';
 
 async function main(): Promise<void> {
   try {
@@ -38,6 +39,8 @@ async function createCli(): Promise<ComicCrawlerCli> {
   const runtime = resolveRuntimeConfig();
   const { storage, configManager, config } = await createStorageContext(runtime, eventBus);
   const { adapterRegistry, adapterCatalog } = await createAdapterRuntime(storage, eventBus);
+  const officialAdapterRegistry = new OfficialAdapterRegistryService(
+    adapterCatalog, adapterRegistry, runtime.adapterTrustStorePath);
   const crawlerEngine = createCrawlerEngine(config, eventBus);
   const taskManager = await createTaskManager(storage, eventBus, config, adapterRegistry, crawlerEngine);
   const agentAdminService = await createAgentAdminService(runtime, storage, eventBus);
@@ -46,7 +49,8 @@ async function createCli(): Promise<ComicCrawlerCli> {
   const maintenanceService = createMaintenanceService(runtime, storage, configManager, taskManager, discovery);
   return new ComicCrawlerCli({ configManager, taskManager, adapterRegistry, crawlerEngine,
     agentAdminService, selectorDiscoveryService: discovery.selector,
-    maintenanceService, fixtureCaptureService: discovery.fixture, storage });
+    maintenanceService, fixtureCaptureService: discovery.fixture, storage, adapterCatalog,
+    officialAdapterRegistry });
 }
 
 async function createStorageContext(runtime: RuntimeConfig, eventBus: EventBus) {

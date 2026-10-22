@@ -924,7 +924,7 @@ export class SelectorDiscoveryService {
     const document = createAdapterPackage({ adapter, implementationTs: job.adapterImplementationTs,
       origin: 'local-generated', sourceDiscoveryId: job.id, approvalFixture,
       validation: job.implementationValidation });
-    await this.adapterCatalog.installApproved(document, true);
+    await this.adapterCatalog.installApproved(document);
     if (registeredAdapter) this.adapterRegistry.replace(adapter);
     else this.adapterRegistry.register(adapter);
     await this.persistPromotedAdapter(job, document.manifest);

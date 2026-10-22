@@ -207,6 +207,8 @@ Inspect and test individual adapter functions.
 - [Adapters](docs/ADAPTERS.md): adapter contract and capability design.
 - [Adapter Packages](docs/ADAPTER_PACKAGES.md): reviewed package format,
   catalog lifecycle, and rollback behavior.
+- [Official Adapter Registry](docs/ADAPTER_REGISTRY.md): signed remote package
+  publishing, discovery, installation, and updates.
 - [AO Selector Discovery](docs/AO_SELECTOR_DISCOVERY.md): generated adapter
   workflow.
 - [Reliability](docs/RELIABILITY.md): queue, checkpoint, and resume behavior.

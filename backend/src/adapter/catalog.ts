@@ -7,8 +7,13 @@ import type {
   AdapterPackageManifest,
 } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
+import { canonicalJson } from './canonical-json';
 
 const INDEX_KEY = 'adapter-catalog/index';
+
+export interface AdapterInstallOptions {
+  activate?: boolean;
+}
 
 export class AdapterCatalog {
   private mutation: Promise<unknown> = Promise.resolve();
@@ -51,8 +56,8 @@ export class AdapterCatalog {
     return packages as AdapterPackageDocument[];
   }
 
-  installApproved(document: AdapterPackageDocument, activate = true): Promise<AdapterCatalogEntry> {
-    return this.mutate(() => this.installApprovedNow(document, activate));
+  installApproved(document: AdapterPackageDocument, options: AdapterInstallOptions = {}): Promise<AdapterCatalogEntry> {
+    return this.mutate(() => this.installApprovedNow(document, options.activate ?? true));
   }
 
   activate(adapterId: string, version: string): Promise<AdapterCatalogEntry> {
@@ -108,7 +113,7 @@ export class AdapterCatalog {
   }
 
   private async installApprovedNow(document: AdapterPackageDocument, activate: boolean) {
-    validatePackage(document);
+    validateAdapterPackageDocument(document);
     await this.writeImmutablePackage(document);
     const index = await this.getIndex();
     const entry = ensureEntry(index, document);
@@ -122,7 +127,7 @@ export class AdapterCatalog {
     const { adapterId, version } = document.manifest;
     const key = packageKey(adapterId, version);
     const existing = await this.storage.read<AdapterPackageDocument>(key);
-    if (existing && stableJson(existing) !== stableJson(document)) {
+    if (existing && canonicalJson(existing) !== canonicalJson(document)) {
       throw new Error(`Adapter package ${adapterId}@${version} is immutable and already exists.`);
     }
     if (!existing) await this.storage.write(key, document);
@@ -140,7 +145,7 @@ export function implementationChecksum(source: string): string {
 }
 
 export function manifestChecksum(manifest: AdapterPackageManifest): string {
-  return createHash('sha256').update(stableJson(manifest)).digest('hex');
+  return createHash('sha256').update(canonicalJson(manifest)).digest('hex');
 }
 
 export function createAdapterVersion(createdAt: string, source: string): string {
@@ -149,13 +154,17 @@ export function createAdapterVersion(createdAt: string, source: string): string 
   return `v${stamp}-${implementationChecksum(source).slice(0, 8)}`;
 }
 
-function validatePackage(document: AdapterPackageDocument): void {
+export function validateAdapterPackageDocument(document: AdapterPackageDocument): void {
   const { manifest, implementationTs, checksums, validation } = document;
   assertIdentifier(manifest.adapterId, 'adapter ID');
   assertIdentifier(manifest.version, 'adapter version');
   if (manifest.schemaVersion !== 1) throw new Error(`Unsupported adapter package schema ${manifest.schemaVersion}.`);
+  if (Number.isNaN(Date.parse(manifest.createdAt))) throw new Error('Adapter package createdAt is invalid.');
+  if (!manifest.domains.length) throw new Error('Adapter package must declare at least one domain.');
   if (!implementationTs.trim()) throw new Error('Adapter package implementation is empty.');
   if (!validation.valid || !validation.syntaxValid) throw new Error('Adapter package validation did not pass.');
+  if (manifest.version !== createAdapterVersion(manifest.createdAt, implementationTs))
+    throw new Error('Adapter package version does not match its implementation and creation time.');
   if (checksums.algorithm !== 'sha256' || checksums.implementation !== implementationChecksum(implementationTs))
     throw new Error('Adapter package implementation checksum does not match.');
   if (checksums.manifest !== manifestChecksum(manifest))
@@ -215,12 +224,4 @@ function packageKey(adapterId: string, version: string): string {
 
 function assertIdentifier(value: string, label: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`Invalid ${label}: "${value}".`);
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
-  return JSON.stringify(value) ?? 'null';
 }

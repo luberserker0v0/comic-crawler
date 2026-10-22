@@ -3,6 +3,7 @@ import type { AdapterCapabilities } from './adapter';
 
 export type AdapterPackageOrigin = 'bundled' | 'local-generated' | 'imported' | 'official';
 export type AdapterVersionStatus = 'approved' | 'active';
+export type AdapterPackageFixtureSummary = Omit<FixtureSummary, 'path' | 'expectedPath'>;
 
 export interface AdapterPackageManifest {
   schemaVersion: 1;
@@ -16,7 +17,7 @@ export interface AdapterPackageManifest {
   origin: AdapterPackageOrigin;
   createdAt: string;
   sourceDiscoveryId?: string;
-  approvalFixture?: FixtureSummary;
+  approvalFixture?: AdapterPackageFixtureSummary;
 }
 
 export interface AdapterPackageValidation {
@@ -59,4 +60,83 @@ export interface AdapterCatalogEntry {
 export interface AdapterCatalogIndex {
   schemaVersion: 1;
   adapters: Record<string, AdapterCatalogEntry>;
+}
+
+export interface AdapterPackageInspection {
+  adapterId: string;
+  version: string;
+  name: string;
+  domains: string[];
+  capabilities: AdapterCapabilities;
+  origin: AdapterPackageOrigin;
+  sourceValid: boolean;
+  warnings: string[];
+}
+
+export interface AdapterPackageImportRequest {
+  document: AdapterPackageDocument;
+  activate?: boolean;
+}
+
+export interface AdapterPackageImportResponse {
+  entry: AdapterCatalogEntry;
+  inspection: AdapterPackageInspection;
+  activated: boolean;
+}
+
+export interface AdapterPackageSignature {
+  algorithm: 'ed25519';
+  keyId: string;
+  value: string;
+  signedAt: string;
+}
+
+export interface SignedAdapterPackage {
+  schemaVersion: 1;
+  document: AdapterPackageDocument;
+  signature: AdapterPackageSignature;
+}
+
+export interface AdapterRegistryPackageRecord {
+  adapterId: string;
+  version: string;
+  packageUrl: string;
+  publishedAt: string;
+  manifestChecksum: string;
+  implementationChecksum: string;
+  keyId: string;
+}
+
+export interface AdapterRegistryIndex {
+  schemaVersion: 1;
+  id: string;
+  generatedAt: string;
+  packages: AdapterRegistryPackageRecord[];
+}
+
+export interface SignedAdapterRegistryIndex {
+  schemaVersion: 1;
+  index: AdapterRegistryIndex;
+  signature: AdapterPackageSignature;
+}
+
+export interface AdapterRegistryTrustEntry {
+  id: string;
+  indexUrl: string;
+  keyId: string;
+  publicKeyPem: string;
+  enabled: boolean;
+  allowedPackageOrigins?: string[];
+}
+
+export interface AdapterRegistryTrustStore {
+  schemaVersion: 1;
+  registries: AdapterRegistryTrustEntry[];
+}
+
+export interface AdapterRegistryUpdate {
+  registryId: string;
+  package: AdapterRegistryPackageRecord;
+  installed: boolean;
+  active: boolean;
 }

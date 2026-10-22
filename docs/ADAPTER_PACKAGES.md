@@ -64,6 +64,45 @@ TypeScript implementation record, verifies the new package, and removes the old
 key. Runtime loading never falls back to that old record. Old selector-manifest
 records are rejected and must be converted to TypeScript packages explicitly.
 
-Package export, sharing, signed registries, and remote update channels are later
-features. The current catalog provides the required local immutable foundation;
-it does not claim those distribution operations are available yet.
+## Export and import
+
+Run package commands from `repo/`:
+
+```bash
+npm run -w backend cli -- adapter-packages list
+npm run -w backend cli -- adapter-packages inspect ./demo.ccadapter.json
+npm run -w backend cli -- adapter-packages export demo --output ./demo.ccadapter.json
+npm run -w backend cli -- adapter-packages import ./demo.ccadapter.json
+```
+
+Export writes the exact immutable JSON document. It refuses to overwrite an
+existing file unless `--force` is supplied. Use `--version` when exporting an
+approved version that is not active.
+
+Inspect validates the strict schema, version derivation, manifest checksum,
+implementation checksum, and TypeScript contract without evaluating package
+code. Import performs the same checks and installs the version inactive.
+
+Activation is a separate trust decision:
+
+```bash
+npm run -w backend cli -- adapter-packages import ./demo.ccadapter.json --activate
+```
+
+Activation evaluates the TypeScript in the restricted Adapter draft runtime,
+checks implementation identity and domain conflicts, then changes the active
+Catalog pointer. Review third-party source before activating it.
+
+The corresponding REST operations are:
+
+- `GET /api/adapters/:id/versions/:version/package`
+- `POST /api/adapter-packages/import`
+
+Protect REST import with the `adapter:manage` permission in token mode. The
+package carries approval fixture metadata, not the fixture file contents. A
+receiving developer should capture a fresh local fixture before accepting a
+shared adapter for an official release.
+
+For signed remote installation and updates, see
+[Official Adapter Registry](ADAPTER_REGISTRY.md). Remote packages pass the same
+inspection and Catalog checks; download never bypasses local validation.

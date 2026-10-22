@@ -24,7 +24,7 @@ export function createAdapterPackage(input: AdapterPackageInput): AdapterPackage
   const validation = input.validation ?? successfulValidation();
   const optionalManifest = {
     ...(input.sourceDiscoveryId ? { sourceDiscoveryId: input.sourceDiscoveryId } : {}),
-    ...(input.approvalFixture ? { approvalFixture: input.approvalFixture } : {}) };
+    ...(input.approvalFixture ? { approvalFixture: portableFixture(input.approvalFixture) } : {}) };
   const manifest = { schemaVersion: 1 as const, adapterId: input.adapter.id, version,
     name: input.adapter.name, domains: [...input.adapter.domains],
     urlPatterns: input.adapter.domains.map((domain) => `https://${domain}/*`),
@@ -41,4 +41,9 @@ export function createAdapterPackage(input: AdapterPackageInput): AdapterPackage
 
 function successfulValidation(): AdapterPackageValidation {
   return { valid: true, syntaxValid: true, errors: [], warnings: [] };
+}
+
+function portableFixture(fixture: FixtureSummary) {
+  const { path: _path, expectedPath: _expectedPath, ...portable } = fixture;
+  return portable;
 }

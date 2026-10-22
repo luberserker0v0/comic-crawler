@@ -138,6 +138,7 @@ Environment variables override persisted deployment settings.
 | AO bundle | `AO_BUNDLE_PATH` | `agent/ao/selector-discovery` |
 | API security mode | `COMICCRAWLER_API_SECURITY_MODE` | `public` |
 | API security secret | `COMICCRAWLER_API_SECURITY_SECRET_PATH` | unset |
+| Adapter registry trust store | `COMICCRAWLER_ADAPTER_TRUST_STORE_PATH` | `<data>/config/adapter-registries.json` |
 | Static frontend | `STATIC_DIR` | unset |
 
 Example:

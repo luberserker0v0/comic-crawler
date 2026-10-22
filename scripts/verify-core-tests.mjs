@@ -21,7 +21,13 @@ const coreBackendTests = [
   'tests/unit/server/adapter-routes.test.ts',
   'tests/unit/adapter/chapter-image-identity.test.ts',
   'tests/unit/server/adapter-draft-routes.test.ts',
+  'tests/unit/server/adapter-registry-routes.test.ts',
   'tests/unit/fixtures/fixture-capture-service.test.ts',
+  'tests/unit/adapter/catalog.test.ts',
+  'tests/unit/adapter/official-registry.test.ts',
+  'tests/unit/adapter/package-transfer.test.ts',
+  'tests/unit/adapter/registry-publisher.test.ts',
+  'tests/unit/cli/adapter-package-command.test.ts',
   'tests/unit/scheduler/task-scheduler.test.ts',
 ];
 

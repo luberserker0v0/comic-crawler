@@ -12,6 +12,7 @@ import { EventBus } from './events/bus';
 import { AdapterRegistry } from './adapter/registry';
 import { registerProjectAdapters } from './adapter/runtime-state';
 import { AdapterCatalog } from './adapter/catalog';
+import { OfficialAdapterRegistryService } from './adapter/official-registry';
 import { loadCatalogAdapters } from './adapter/catalog-runtime';
 import { migrateLegacyAdapterStorage } from './adapter/catalog-migration';
 import { TaskManager } from './task/manager';
@@ -52,18 +53,23 @@ async function bootstrapApplication() {
   const configuration = await initializeConfiguration(storage, eventBus, timing);
   const adapters = await initializeAdapters(storage, eventBus);
   const { adapterRegistry, adapterCatalog } = adapters;
+  const officialAdapterRegistry = createOfficialAdapterRegistry(adapterCatalog, adapterRegistry, configuration.runtime.adapterTrustStorePath);
   const browser = await initializeBrowserServices(storage, configuration.apiSecurity, timing);
-  const discovery = createDiscoveryServices(
-    storage, adapterRegistry, adapterCatalog, configuration, browser);
+  const discovery = createDiscoveryServices(storage, adapterRegistry, adapterCatalog, configuration, browser);
   const crawlerEngine = createCrawlerEngine(configuration.config, browser.browserRenderService, eventBus);
-  const taskManager = await initializeTaskManager(
-    storage, configuration, browser, discovery, adapterRegistry, crawlerEngine, eventBus, timing);
-  const agentAdminService = await initializeAgentServices(
-    configuration.runtime.agentWorkspacePath, storage, eventBus, timing);
+  const taskManager = await initializeTaskManager(storage, configuration, browser, discovery,
+    adapterRegistry, crawlerEngine, eventBus, timing);
+  const agentAdminService = await initializeAgentServices(configuration.runtime.agentWorkspacePath,
+    storage, eventBus, timing);
   await initializeDiscoveryRuntime(discovery, timing);
   const maintenanceService = createMaintenanceService(storage, taskManager, discovery, configuration);
-  return { timing, eventBus, storage, ...configuration, ...adapters, ...browser,
+  return { timing, eventBus, storage, ...configuration, ...adapters, officialAdapterRegistry, ...browser,
     ...discovery, crawlerEngine, taskManager, agentAdminService, maintenanceService };
+}
+
+function createOfficialAdapterRegistry(catalog: AdapterCatalog, registry: AdapterRegistry,
+  trustStorePath: string): OfficialAdapterRegistryService {
+  return new OfficialAdapterRegistryService(catalog, registry, trustStorePath);
 }
 
 type BootstrapTiming = ReturnType<typeof createBootstrapTiming>;
@@ -274,7 +280,7 @@ async function startApplication(application: ApplicationRuntime): Promise<void> 
 function createServerOptions(app: ApplicationRuntime): ServerOptions {
   const runtime = { port: app.runtime.port, host: app.runtime.host,
     staticDir: app.runtime.staticDir, apiSecurity: app.apiSecurity, storage: app.storage,
-    adapterCatalog: app.adapterCatalog };
+    adapterCatalog: app.adapterCatalog, officialAdapterRegistry: app.officialAdapterRegistry };
   const core = { configManager: app.configManager, taskManager: app.taskManager,
     adapterRegistry: app.adapterRegistry, crawlerEngine: app.crawlerEngine, eventBus: app.eventBus };
   const discovery = { agentAdminService: app.agentAdminService,
