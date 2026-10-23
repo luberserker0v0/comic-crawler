@@ -14,7 +14,6 @@ import { registerProjectAdapters } from './adapter/runtime-state';
 import { AdapterCatalog } from './adapter/catalog';
 import { OfficialAdapterRegistryService } from './adapter/official-registry';
 import { loadCatalogAdapters } from './adapter/catalog-runtime';
-import { migrateLegacyAdapterStorage } from './adapter/catalog-migration';
 import { TaskManager } from './task/manager';
 import { CrawlerEngine } from './crawler/engine';
 import { errorToLogObject } from './error/types';
@@ -87,7 +86,6 @@ async function initializeAdapters(storage: JsonFileStore, eventBus: EventBus) {
   const registry = new AdapterRegistry(eventBus);
   const catalog = new AdapterCatalog(storage);
   await catalog.initialize();
-  await migrateLegacyAdapterStorage(storage, catalog);
   await registerProjectAdapters(storage, (adapter) => registry.register(adapter));
   await loadCatalogAdapters(catalog, registry);
   return { adapterRegistry: registry, adapterCatalog: catalog };
@@ -190,7 +188,7 @@ async function acquireSelectorBrowserSession(
 
 async function captureApprovalFixture(
   configuration: ConfigurationRuntime, browser: BrowserRuntime, service: FixtureCaptureService,
-  input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }
+  input: { job: SelectorDiscoveryJob; adapter: IComicAdapter; adapterVersion: string }
 ) {
   const browserConfig = (await configuration.configManager.get()).browser;
   const lease = await browser.browserLeaseCoordinator.acquire({ taskId: `selector-fixture:${input.job.id}`,
@@ -200,7 +198,8 @@ async function captureApprovalFixture(
     const page = await browser.browserRenderService.render(lease.sessionId, input.job.normalizedUrl,
       { timeoutMs: browserConfig.timeout });
     return service.captureApprovedAdapterFixture({ sourceDiscoveryId: input.job.id,
-      adapter: input.adapter, target: input.job.target ?? 'full', url: page.url, html: page.html });
+      adapter: input.adapter, adapterVersion: input.adapterVersion,
+      target: input.job.target ?? 'full', url: page.url, html: page.html });
   } finally { await lease.release(); }
 }
 

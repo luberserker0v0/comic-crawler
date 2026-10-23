@@ -57,6 +57,8 @@ docker compose down
 ```
 
 Docker keeps runtime data and downloads in named volumes.
+The image also pins the official Adapter Registry public key; no Registry
+private key is included.
 See the [Docker deployment guide](docs/DOCKER.md) for image metadata, health
 checks, log rotation, updates, and data persistence.
 
@@ -93,7 +95,7 @@ flowchart LR
   subgraph ClientSide["User side"]
     direction TB
     User["User / Web browser"]
-    Provider["Browser Client<br/>GUI / extension / local process"]
+    Provider["Browser Client<br/>user-side browser process"]
     Browser["User browser / tab"]
     User -->|"start or enable"| Provider
     Provider -->|"command adapter"| Browser

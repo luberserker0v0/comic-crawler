@@ -69,7 +69,7 @@ export async function cleanupAgentSessions(
   const workspaceRoot = deps.workspaceRoot;
   if (!workspaceRoot) { result.skipped.push('workspaceRoot not configured'); return result; }
   const cutoff = Date.now() - policy.tasksRetainDays * 24 * 60 * 60 * 1000;
-  const ignoredTopLevel = new Set(['fixtures', 'bundle-evaluations']);
+  const ignoredTopLevel = new Set(['fixtures', 'approved-fixtures', 'bundle-evaluations']);
   for (const top of await listDirectories(workspaceRoot)) {
     if (ignoredTopLevel.has(top)) continue;
     await cleanupAdapterSessions(workspaceRoot, top, cutoff, dryRun, result);

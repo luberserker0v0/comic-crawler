@@ -29,6 +29,8 @@ test('rejects a connection when saved state belongs to another server', testWron
 test('registers and revokes an opaque browser resource over the control WebSocket', testResourceLifecycle);
 test('keeps the active browser session when the same process reconnects', testSessionReconnect);
 test('re-registers process-memory browser resources after reconnect', testResourceReconnect);
+test('reports an active browser session that the user closes', testUserClosedSession);
+test('closes an orphaned session when a restarted Server assigns a new Worker ID', testServerRestartSession);
 
 async function testEnrollment(): Promise<void> {
   const stateStore = new MemoryStateStore();
@@ -210,6 +212,34 @@ async function testResourceReconnect(): Promise<void> {
   await client.close();
 }
 
+async function testUserClosedSession(): Promise<void> {
+  const socket = new FakeSocket();
+  const session = new TerminatingSession();
+  const client = createClient(() => socket, new TestExecutor(session));
+  await connectClient(client, socket);
+  await openRemoteSession(socket);
+  session.terminate();
+  await waitForMessage(socket, 'session.closed');
+  assert.equal(session.closed, true);
+  await client.close();
+}
+
+async function testServerRestartSession(): Promise<void> {
+  const first = new FakeSocket();
+  const second = new FakeSocket();
+  const session = new ControlledSession();
+  const client = createClient(() => [first, second].find((socket) => socket.readyState === 0)!,
+    new TestExecutor(session));
+  await connectClient(client, first);
+  await openRemoteSession(first);
+  first.close();
+  const reconnecting = client.connect();
+  await authenticateSocket(second, 'worker-2');
+  await reconnecting;
+  assert.equal(session.closed, true);
+  await client.close();
+}
+
 function enrolledState(serverUrl = 'https://crawler.example/'): BrowserClientState {
   return { schemaVersion: 1, serverUrl, clientId: 'client-1', credentialId: 'credential-1', credential: 'secret-1', registeredAt: '2026-10-16T00:00:00.000Z' };
 }
@@ -235,14 +265,14 @@ async function connectClient(client: BrowserClient, socket: FakeSocket, processI
   assert.deepEqual(await connecting, { clientId: 'client-1', workerId: 'worker-1', processInstanceId: processId });
 }
 
-async function authenticateSocket(socket: FakeSocket): Promise<void> {
+async function authenticateSocket(socket: FakeSocket, workerId = 'worker-1'): Promise<void> {
   await waitFor(() => socket.listenerCount('open') === 1);
   socket.open();
   await waitFor(() => socket.sent.length === 1);
   socket.serverSend({
     protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
     type: 'client.authenticated',
-    workerId: 'worker-1',
+    workerId,
     heartbeatIntervalMs: 60_000,
   });
 }
@@ -358,6 +388,19 @@ class ControlledSession implements BrowserSession {
     resolve(result);
   }
   async close(): Promise<void> {
+    this.closed = true;
+  }
+}
+
+class TerminatingSession extends ImmediateSession {
+  closed = false;
+  private resolveTermination!: () => void;
+  readonly terminated = new Promise<void>((resolve) => { this.resolveTermination = resolve; });
+
+  terminate(): void {
+    this.resolveTermination();
+  }
+  override async close(): Promise<void> {
     this.closed = true;
   }
 }

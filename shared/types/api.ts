@@ -14,16 +14,17 @@ export interface ApiErrorResponse {
 }
 
 export type CrawlMode = 'all' | 'chapters';
+export type AdapterResolveMode = CrawlMode | 'inspect';
 
 export interface AdapterResolveRequest {
   url: string;
-  mode?: CrawlMode;
+  mode?: AdapterResolveMode;
 }
 
 export interface AdapterResolveResponse {
   url: string;
   hostname: string;
-  mode: CrawlMode;
+  mode: AdapterResolveMode;
   requiredCapabilities: Partial<Pick<AdapterCapabilities, 'metadata' | 'chapterImages'>>;
   status: 'matched' | 'capability_mismatch' | 'not_found';
   adapter?: Pick<AdapterInfo, 'id' | 'name' | 'domains' | 'parseMode' | 'capabilities'>;
@@ -253,6 +254,7 @@ export interface FixtureSummary {
   path: string;
   expectedPath?: string;
   adapterId?: string;
+  adapterVersion?: string;
   sourceDiscoveryId?: string;
   functionIds?: string[];
   readiness: DomReadinessReport;
@@ -364,6 +366,19 @@ export interface BrowserWorkerSummary {
 
 export interface BrowserWorkerListResponse {
   workers: BrowserWorkerSummary[];
+}
+
+export interface BrowserResourceSummary {
+  resourceId: string;
+  workerId: string;
+  kind: 'tab';
+  url: string;
+  title?: string;
+  registeredAt: string;
+}
+
+export interface BrowserResourceListResponse {
+  resources: BrowserResourceSummary[];
 }
 
 export type BrowserTarget =
@@ -597,6 +612,9 @@ export interface SelectorDiscoveryJobSummary {
   aoBaseUrl?: string;
   createdAt: string;
   updatedAt: string;
+  finishedAt?: string;
+  promotedVersion?: string;
+  artifactsCleanedAt?: string;
   phase1Markdown?: string;
   adapterImplementationTs?: string;
   reviewNotesMarkdown?: string;

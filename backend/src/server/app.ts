@@ -19,7 +19,7 @@ import type { MaintenanceService } from '../maintenance/service';
 import type { IStorage } from '../storage/types';
 import type { BrowserClientRegistry } from '../browser/browser-client-registry';
 import type { BrowserSessionGateway } from '../browser/browser-session-gateway';
-import type { BrowserWorkerLeaseCoordinator } from '../browser/browser-worker-lease-coordinator';
+import type { BrowserWorkerLease, BrowserWorkerLeaseCoordinator } from '../browser/browser-worker-lease-coordinator';
 import type { BrowserRenderService } from '../browser/browser-render-service';
 import { ApiSecurityService } from '../security/api-security';
 import { COMICCRAWLER_VERSION } from '../version';
@@ -40,6 +40,7 @@ import { setupCors } from './middleware/cors';
 import { setupApiSecurity } from './middleware/api-security';
 import { requestPrincipal } from './middleware/api-security';
 import { logger } from '../utils/logger';
+import type { BrowserLeaseClaim } from './routes/adapter-function-runner';
 
 export interface ServerOptions {
   port: number;
@@ -162,7 +163,7 @@ export class ComicCrawlerServer {
       setupBrowserClientRoutes(this.app, this.options.browserClientRegistry, this.options.browserSessionGateway, this.apiSecurity);
     }
     setupSearchRoutes(this.app, this.options.crawlerEngine);
-    setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService);
+    setupFixtureRoutes(this.app, this.options.adapterRegistry, this.options.fixtureCaptureService, this.options.adapterCatalog);
   }
 
   private setupAdapterRoutes(): void {
@@ -189,6 +190,7 @@ export class ComicCrawlerServer {
         this.withBrowserSession(request, target, initialUrl, undefined, action),
       browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
+      apiSecurity: this.apiSecurity,
     });
   }
 
@@ -235,7 +237,7 @@ export class ComicCrawlerServer {
     target: BrowserTarget | undefined,
     initialUrl: string,
     renderContext: EffectiveRenderContext | undefined,
-    action: (sessionId: string) => Promise<T>
+    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>
   ): Promise<T> {
     const browser = (await this.options.configManager.get()).browser;
     const coordinator = this.requireLeaseCoordinator();
@@ -243,10 +245,11 @@ export class ComicCrawlerServer {
     const lease = await coordinator.acquire({ taskId: `operation:${randomUUID()}`,
       ownerUserId: principal.userId, target, initialUrl, renderContext,
       timeoutMs: browser.workerWaitTimeoutMs });
+    const transfer = createBrowserLeaseTransfer(lease);
     try {
-      return await action(lease.sessionId);
+      return await action(lease.sessionId, transfer.claim);
     } finally {
-      await lease.release();
+      if (!transfer.claimed()) await lease.release();
     }
   }
 
@@ -314,4 +317,14 @@ export class ComicCrawlerServer {
       memory: { used: process.memoryUsage().heapUsed, total: process.memoryUsage().heapTotal },
       adapters: { loaded: adapters.length, enabled: adapters.length } };
   }
+}
+
+function createBrowserLeaseTransfer(lease: BrowserWorkerLease) {
+  let claimed = false;
+  const claim: BrowserLeaseClaim = () => {
+    if (claimed) throw new Error('Browser session lease was already transferred.');
+    claimed = true;
+    return { sessionId: lease.sessionId, release: lease.release };
+  };
+  return { claim, claimed: () => claimed };
 }

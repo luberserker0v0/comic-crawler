@@ -3,12 +3,10 @@ import WebSocket from 'ws';
 import {
   BrowserClient,
   ExistingTabExecutor,
-  WebExtensionTabDriver,
+  type BrowserPageDriver,
   type BrowserClientSocket,
   type BrowserClientState,
   type ClientStateStore,
-  type WebExtensionApi,
-  type WebExtensionTab,
 } from '@comiccrawler/browser-client-sdk';
 
 const adapterChapterUrl = 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';
@@ -126,15 +124,15 @@ async function configureSelectorDiscovery(request: any): Promise<void> {
   expect(response.status()).toBe(200);
 }
 
-function createWebExtensionClient(
+function createExistingTabClient(
   stateStore: E2eClientStateStore,
-  api: E2eWebExtensionApi,
+  driver: E2eExistingTabDriver,
   processPrefix: string
 ): BrowserClient {
   let sequence = 0;
   return new BrowserClient({
     serverUrl: 'http://127.0.0.1:4173',
-    executor: new ExistingTabExecutor(new WebExtensionTabDriver(api)),
+    executor: new ExistingTabExecutor(driver),
     stateStore,
     webSocketFactory: {
       create: (url) => new WebSocket(url) as unknown as BrowserClientSocket,
@@ -150,57 +148,55 @@ class E2eClientStateStore implements ClientStateStore {
   async clear(): Promise<void> { this.state = undefined; }
 }
 
-class E2eWebExtensionApi implements WebExtensionApi {
-  private readonly tab: WebExtensionTab;
-  private releaseBlockedScripts?: () => void;
-  private readonly blockedScripts: Promise<void>;
-  readonly tabs: WebExtensionApi['tabs'];
-  readonly scripting: WebExtensionApi['scripting'];
-  readonly windows: NonNullable<WebExtensionApi['windows']>;
+class E2eExistingTabDriver implements BrowserPageDriver<number> {
+  private releaseBlockedCommands?: () => void;
+  private readonly blockedCommands: Promise<void>;
 
-  constructor(url: string, blockScripts: boolean) {
-    this.tab = { id: 1, url, windowId: 1 };
-    this.blockedScripts = blockScripts
-      ? new Promise<void>((resolve) => { this.releaseBlockedScripts = resolve; })
+  constructor(private url: string, blockCommands: boolean) {
+    this.blockedCommands = blockCommands
+      ? new Promise<void>((resolve) => { this.releaseBlockedCommands = resolve; })
       : Promise.resolve();
-    this.tabs = {
-      get: (tabId) => this.getTab(tabId),
-      update: (tabId, properties) => this.updateTab(tabId, properties),
-    };
-    this.scripting = {
-      executeScript: (details) => this.execute(details),
-    };
-    this.windows = {
-      update: async () => ({}),
-    };
   }
 
-  releaseScripts(): void {
-    this.releaseBlockedScripts?.();
-    this.releaseBlockedScripts = undefined;
+  releaseCommands(): void {
+    this.releaseBlockedCommands?.();
+    this.releaseBlockedCommands = undefined;
   }
 
-  private async getTab(tabId: number): Promise<WebExtensionTab> {
-    if (tabId !== this.tab.id) throw new Error('Tab not found.');
-    return { ...this.tab };
+  async currentUrl(_tabId: number, signal: AbortSignal): Promise<string> {
+    assertE2eCommandActive(signal);
+    return this.url;
   }
 
-  private async updateTab(tabId: number, properties: { active?: boolean; url?: string }): Promise<WebExtensionTab> {
-    if (tabId !== this.tab.id) throw new Error('Tab not found.');
-    if (properties.url) this.tab.url = properties.url;
-    return { ...this.tab };
+  async navigate(_tabId: number, url: string, signal: AbortSignal): Promise<string> {
+    assertE2eCommandActive(signal);
+    this.url = url;
+    return url;
   }
 
-  private async execute(details: Parameters<WebExtensionApi['scripting']['executeScript']>[0]) {
-    await this.blockedScripts;
-    const source = details.func.toString();
-    if (source.includes('document.documentElement.outerHTML')) {
-      return [{ result: `<!doctype html><html><body><main id="reader"><img class="recovery-page" data-src="/api/fixtures/discovery-image.jpg" /></main></body></html>` }];
-    }
-    if (source.includes('document.readyState')) return [{ result: true }];
-    return [{ result: undefined }];
+  async content(_tabId: number, signal: AbortSignal): Promise<string> {
+    await this.wait(signal);
+    return '<!doctype html><html><body><main id="reader"><img class="recovery-page" data-src="/api/fixtures/discovery-image.jpg" /></main></body></html>';
   }
 
+  async waitForReady(_tabId: number, _timeoutMs: number | undefined, signal: AbortSignal): Promise<void> {
+    await this.wait(signal);
+  }
+
+  async prepareContent(_tabId: number, _strategy: 'scroll-through',
+    _timeoutMs: number | undefined, signal: AbortSignal): Promise<void> { await this.wait(signal); }
+
+  async focus(_tabId: number, signal: AbortSignal): Promise<void> { assertE2eCommandActive(signal); }
+
+  private async wait(signal: AbortSignal): Promise<void> {
+    assertE2eCommandActive(signal);
+    await this.blockedCommands;
+    assertE2eCommandActive(signal);
+  }
+}
+
+function assertE2eCommandActive(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error('Browser Client command was cancelled.');
 }
 
 function challengeAdapterTestGroup1(): void {
@@ -456,7 +452,7 @@ function ComicCrawlerE2ETestGroup2(): void {
   test('CRAWL-02 使用 fixture adapter', ComicCrawlerE2ETestCRAWL02FixtureAdapter);
   test('ADP-05 依 render context 擷取 responsive 圖片', ComicCrawlerE2ETestADP05RenderContextResponsive);
   test('BC-04 建立未知站點 handoff', ComicCrawlerE2ETestBC04Handoff);
-  test('BC-17 WebExtension process 重啟後明確恢復原 task', ComicCrawlerE2ETestBC17WebExtensionProcessTask);
+  test('BC-17 Browser Client process 重啟後明確恢復原 task', ComicCrawlerE2ETestBC17BrowserClientProcessTask);
 }
 
 function ComicCrawlerE2ETestGroup3(): void {
@@ -767,7 +763,7 @@ async function ComicCrawlerE2ETestBC04Handoff({ request }) {
     expect((await request.delete(`/api/challenge-discovery/${job.id}`)).status()).toBe(200);
 }
 
-async function ComicCrawlerE2ETestBC17WebExtensionProcessTask({ request }) {
+async function ComicCrawlerE2ETestBC17BrowserClientProcessTask({ request }) {
     test.setTimeout(60000);
     const chapterUrl = 'http://127.0.0.1:4173/api/fixtures/browser-target-recovery-chapter';
     const register = await registerRecoveryAdapter(request, chapterUrl);
@@ -787,7 +783,7 @@ async function ComicCrawlerE2ETestBC17WebExtensionProcessTask({ request }) {
 interface RecoveryContext {
     chapterUrl: string;
     firstStore: E2eClientStateStore;
-    firstApi: E2eWebExtensionApi;
+    firstDriver: E2eExistingTabDriver;
     firstClient: BrowserClient;
     firstConnection: any;
     firstResource: any;
@@ -816,12 +812,12 @@ async function registerRecoveryAdapter(request: any, chapterUrl: string) {
 
 async function createRecoveryContext(chapterUrl: string): Promise<RecoveryContext> {
     const firstStore = new E2eClientStateStore();
-    const firstApi = new E2eWebExtensionApi(chapterUrl, true);
-    const firstClient = createWebExtensionClient(firstStore, firstApi, 'restart-a');
-    await firstClient.enroll({ name: 'E2E WebExtension Recovery' });
+    const firstDriver = new E2eExistingTabDriver(chapterUrl, true);
+    const firstClient = createExistingTabClient(firstStore, firstDriver, 'restart-a');
+    await firstClient.enroll({ name: 'E2E Browser Client Recovery' });
     const firstConnection = await firstClient.connect();
     const firstResource = await firstClient.registerResource({ kind: 'tab', url: chapterUrl, localHandle: 1 });
-    return { chapterUrl, firstStore, firstApi, firstClient, firstConnection, firstResource };
+    return { chapterUrl, firstStore, firstDriver, firstClient, firstConnection, firstResource };
 }
 
 function recoveryTarget(connection: any, resource: any) {
@@ -861,13 +857,13 @@ async function queueRecoveryTask(request: any, context: RecoveryContext): Promis
 
 async function restartRecoveryClient(context: RecoveryContext): Promise<void> {
     await context.firstClient.disconnect();
-    context.firstApi.releaseScripts();
+    context.firstDriver.releaseCommands();
     await context.busyRequest?.catch(() => undefined);
     context.busyRequest = undefined;
     const savedState = await context.firstStore.get();
     expect(savedState).toBeDefined();
-    const secondApi = new E2eWebExtensionApi(context.chapterUrl, false);
-    context.secondClient = createWebExtensionClient(new E2eClientStateStore(savedState), secondApi, 'restart-b');
+    const secondDriver = new E2eExistingTabDriver(context.chapterUrl, false);
+    context.secondClient = createExistingTabClient(new E2eClientStateStore(savedState), secondDriver, 'restart-b');
     context.secondConnection = await context.secondClient.connect();
     context.secondResource = await context.secondClient.registerResource({
         kind: 'tab', url: context.chapterUrl, localHandle: 1,
@@ -896,7 +892,7 @@ async function expectRecoveredTask(request: any, context: RecoveryContext): Prom
 }
 
 async function closeRecoveryContext(context: RecoveryContext): Promise<void> {
-    context.firstApi.releaseScripts();
+    context.firstDriver.releaseCommands();
     await context.busyRequest?.catch(() => undefined);
     await context.firstClient.close().catch(() => undefined);
     await context.secondClient?.close().catch(() => undefined);

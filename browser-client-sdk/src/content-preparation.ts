@@ -5,10 +5,10 @@ export type BrowserScriptExecutor = <Argument, Result>(
 
 export async function prepareScrollableContent(execute: BrowserScriptExecutor, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const candidateCount = await execute(initializeScrollPreparation, undefined);
+  await execute(initializeScrollPreparation, undefined);
   try {
     await execute(captureLoadedImageUrls, undefined);
-    await prepareCandidates(execute, candidateCount, deadline);
+    await prepareCandidates(execute, deadline);
     await prepareDocumentBottom(execute, deadline);
   } finally {
     await execute(finishScrollPreparation, undefined);
@@ -19,14 +19,27 @@ export async function prepareScrollableContent(execute: BrowserScriptExecutor, t
 
 async function prepareCandidates(
   execute: BrowserScriptExecutor,
-  count: number,
   deadline: number
 ): Promise<void> {
-  for (let index = 0; index < count && Date.now() < deadline; index += 1) {
-    const waitMs = Math.min(800, deadline - Date.now());
-    await execute(scrollPreparationCandidate, { index, waitMs });
+  let index = 0;
+  let stableChecks = 0;
+  while (Date.now() < deadline) {
+    const count = await execute(countScrollPreparationCandidates, undefined);
+    if (index >= count && preparationIsStable(index, stableChecks)) return;
+    if (index >= count) {
+      await execute(waitForScrollPreparation, Math.min(250, deadline - Date.now()));
+      stableChecks += 1;
+    } else {
+      await execute(scrollPreparationCandidate, { index, waitMs: Math.min(800, deadline - Date.now()) });
+      index += 1;
+      stableChecks = 0;
+    }
     await execute(captureLoadedImageUrls, undefined);
   }
+}
+
+function preparationIsStable(candidateCount: number, stableChecks: number): boolean {
+  return stableChecks >= (candidateCount === 0 ? 8 : 3);
 }
 
 async function prepareDocumentBottom(execute: BrowserScriptExecutor, deadline: number): Promise<void> {
@@ -37,7 +50,7 @@ async function prepareDocumentBottom(execute: BrowserScriptExecutor, deadline: n
   }
 }
 
-export function initializeScrollPreparation(_unused: undefined): number {
+export function initializeScrollPreparation(_unused: undefined): void {
   const root = document.documentElement;
   const pages = Array.from(document.querySelectorAll<HTMLElement>('[data-page]'));
   const lazy = Array.from(document.querySelectorAll<HTMLElement>('img[loading="lazy"], img[data-src], img[data-lazy-src], img[data-original]'));
@@ -51,7 +64,18 @@ export function initializeScrollPreparation(_unused: undefined): number {
       }
     }
   }
-  return candidates.length;
+}
+
+export function countScrollPreparationCandidates(_unused: undefined): number {
+  const pages = document.querySelectorAll<HTMLElement>('[data-page]');
+  if (pages.length > 1) return pages.length;
+  return document.querySelectorAll<HTMLElement>(
+    'img[loading="lazy"], img[data-src], img[data-lazy-src], img[data-original]'
+  ).length;
+}
+
+export async function waitForScrollPreparation(waitMs: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
 }
 
 export function captureLoadedImageUrls(_unused: undefined): void {

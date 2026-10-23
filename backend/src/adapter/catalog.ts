@@ -163,12 +163,22 @@ export function validateAdapterPackageDocument(document: AdapterPackageDocument)
   if (!manifest.domains.length) throw new Error('Adapter package must declare at least one domain.');
   if (!implementationTs.trim()) throw new Error('Adapter package implementation is empty.');
   if (!validation.valid || !validation.syntaxValid) throw new Error('Adapter package validation did not pass.');
+  validateApprovalFixtureIdentity(manifest);
   if (manifest.version !== createAdapterVersion(manifest.createdAt, implementationTs))
     throw new Error('Adapter package version does not match its implementation and creation time.');
   if (checksums.algorithm !== 'sha256' || checksums.implementation !== implementationChecksum(implementationTs))
     throw new Error('Adapter package implementation checksum does not match.');
   if (checksums.manifest !== manifestChecksum(manifest))
     throw new Error('Adapter package manifest checksum does not match.');
+}
+
+function validateApprovalFixtureIdentity(manifest: AdapterPackageManifest): void {
+  const fixture = manifest.approvalFixture;
+  if (!fixture) return;
+  if (fixture.adapterId !== manifest.adapterId) throw new Error(
+    `Approval fixture adapter ID does not match package "${manifest.adapterId}".`);
+  if (fixture.adapterVersion !== manifest.version) throw new Error(
+    `Approval fixture version does not match package "${manifest.version}".`);
 }
 
 function emptyIndex(): AdapterCatalogIndex {

@@ -27,6 +27,7 @@ services:
       - COMICCRAWLER_HOST=0.0.0.0
       - COMICCRAWLER_PORT=4100
       - COMICCRAWLER_DATA_PATH=/app/data
+      - COMICCRAWLER_ADAPTER_TRUST_STORE_PATH=/app/defaults/adapter-registries.json
       - STATIC_DIR=/app/static
       - AO_BUNDLE_PATH=/app/agent/ao/selector-discovery
     volumes:

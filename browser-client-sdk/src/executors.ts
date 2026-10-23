@@ -21,6 +21,7 @@ export interface BrowserPageDriver<PageHandle> {
 
 export interface ManagedProfile<PageHandle> {
   page: PageHandle;
+  terminated?: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -129,7 +130,7 @@ export class ManagedProfileExecutor<PageHandle> extends AbstractBrowserExecutor 
       return new DriverBrowserSession(this.driver, profile.page, async () => {
         this.activeProfiles.delete(profile);
         await profile.close();
-      });
+      }, profile.terminated);
     } catch (error) {
       this.activeProfiles.delete(profile);
       await profile.close().catch(() => undefined);
@@ -150,7 +151,8 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
   constructor(
     private readonly driver: BrowserPageDriver<PageHandle>,
     private readonly page: PageHandle,
-    private readonly closeSession: () => Promise<void>
+    private readonly closeSession: () => Promise<void>,
+    readonly terminated?: Promise<void>
   ) {}
 
   async execute(command: BrowserCommand, signal: AbortSignal): Promise<BrowserCommandResult> {

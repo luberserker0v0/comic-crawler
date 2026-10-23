@@ -6,7 +6,6 @@ import { AdapterRegistry } from './adapter/registry';
 import { registerProjectAdapters } from './adapter/runtime-state';
 import { AdapterCatalog } from './adapter/catalog';
 import { loadCatalogAdapters } from './adapter/catalog-runtime';
-import { migrateLegacyAdapterStorage } from './adapter/catalog-migration';
 import { CrawlerEngine } from './crawler/engine';
 import { TaskManager, type TaskDefinition } from './task/manager';
 import type { TaskItem } from './task/types';
@@ -65,7 +64,6 @@ async function createAdapterRuntime(storage: IStorage, eventBus: EventBus) {
   const registry = new AdapterRegistry(eventBus);
   const catalog = new AdapterCatalog(storage);
   await catalog.initialize();
-  await migrateLegacyAdapterStorage(storage, catalog);
   await registerProjectAdapters(storage, (adapter) => registry.register(adapter));
   await loadCatalogAdapters(catalog, registry);
   return { adapterRegistry: registry, adapterCatalog: catalog };

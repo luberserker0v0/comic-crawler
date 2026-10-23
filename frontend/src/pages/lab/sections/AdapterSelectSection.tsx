@@ -6,10 +6,7 @@ import type {
 } from '@comiccrawler/shared';
 import {
   capabilityOrder,
-  isCapabilityAllowedForUrlKind,
-  urlKindDescription,
   type AdapterChoice,
-  type AdapterLabUrlKind,
 } from '../widgets';
 import { useI18n } from '../../../text/i18n';
 
@@ -22,10 +19,8 @@ interface AdapterSelectProps {
   openDraft: (draftId: string) => void;
   loading: string | null;
   capabilityDetail: AdapterCapabilityDetailResponse | null;
-  urlKind: AdapterLabUrlKind;
   selectedCapability: AdapterFunctionCapability;
   handleCapabilityChange: (capability: AdapterFunctionCapability) => void;
-  selectedCapabilityAllowed: boolean;
   functionsForCapability: Array<{ id: string; label: string; capability: AdapterFunctionCapability; implemented: boolean }>;
   selectedFunctionId: string;
   handleFunctionChange: (functionId: string) => void;
@@ -80,29 +75,27 @@ function SavedDrafts({ props, text }: { props: AdapterSelectProps; text: SelectT
 function CapabilityChoices({ props, text, labels }: { props: AdapterSelectProps; text: SelectText;
   labels: Record<AdapterFunctionCapability, string> }) {
   return <div><h2 className="text-lg font-semibold text-gray-900">{text.lab.capabilityStep}</h2>
-    <p className="mt-1 text-xs text-gray-500">{urlKindDescription(props.urlKind, text.lab)}</p>
+    <p className="mt-1 text-xs text-gray-500">{text.lab.capabilityInputHelp}</p>
     <div className="mt-2 grid grid-cols-1 gap-2">{capabilityOrder.map((capability) =>
-      <CapabilityButton key={capability} capability={capability} props={props} text={text} label={labels[capability]} />)}</div>
+      <CapabilityButton key={capability} capability={capability} props={props} label={labels[capability]} />)}</div>
   </div>;
 }
 
-function CapabilityButton({ capability, props, text, label }: { capability: AdapterFunctionCapability;
-  props: AdapterSelectProps; text: SelectText; label: string }) {
+function CapabilityButton({ capability, props, label }: { capability: AdapterFunctionCapability;
+  props: AdapterSelectProps; label: string }) {
   const implemented = props.capabilityDetail!.functions.some((fn) => fn.capability === capability && fn.implemented);
-  const allowed = isCapabilityAllowedForUrlKind(capability, props.urlKind);
   const color = props.selectedCapability === capability ? 'border-blue-500 bg-blue-50'
-    : allowed && implemented ? 'border-gray-200 bg-white hover:bg-gray-50' : 'border-gray-100 bg-gray-50 text-gray-400';
-  return <button type="button" onClick={() => props.handleCapabilityChange(capability)} disabled={!allowed || !implemented}
+    : implemented ? 'border-gray-200 bg-white hover:bg-gray-50' : 'border-gray-100 bg-gray-50 text-gray-400';
+  return <button type="button" onClick={() => props.handleCapabilityChange(capability)} disabled={!implemented}
     className={`rounded-md border px-3 py-2 text-left text-sm ${color}`}><span className="font-medium">{label}</span>
     <span className={implemented ? 'ml-2 text-emerald-700' : 'ml-2 text-rose-700'}>{implemented ? 'O' : 'X'}</span>
-    {!allowed && <div className="mt-1 text-xs text-gray-400">{text.lab.lockedForUrlType}</div>}
   </button>;
 }
 
 function FunctionChoices({ props, text }: { props: AdapterSelectProps; text: SelectText }) {
   return <div><h2 className="text-lg font-semibold text-gray-900">{text.lab.functionStep}</h2>
-    <div className="mt-2 space-y-2">{!props.selectedCapabilityAllowed && <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">{text.lab.capabilityLocked}</div>}
-      {props.functionsForCapability.map((fn) => <FunctionButton key={fn.id} fn={fn} props={props} text={text} />)}</div>
+    <div className="mt-2 space-y-2">{props.functionsForCapability.map((fn) =>
+      <FunctionButton key={fn.id} fn={fn} props={props} text={text} />)}</div>
   </div>;
 }
 
@@ -111,7 +104,7 @@ function FunctionButton({ fn, props, text }: { fn: AdapterSelectProps['functions
   const color = selected ? 'border-blue-500 bg-blue-50' : fn.implemented
     ? 'border-gray-200 bg-white hover:bg-gray-50' : 'border-gray-100 bg-gray-50 text-gray-400';
   return <button type="button" onClick={() => props.handleFunctionChange(fn.id)}
-    disabled={!fn.implemented || !isCapabilityAllowedForUrlKind(fn.capability, props.urlKind)}
+    disabled={!fn.implemented}
     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${color}`}>
     <div className="font-mono text-xs">{fn.label}</div><div className={fn.implemented ? 'text-emerald-700' : 'text-rose-700'}>
       {fn.implemented ? text.lab.implemented : text.lab.notImplemented}</div>

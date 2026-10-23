@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "registries": [
+    {
+      "id": "official",
+      "indexUrl": "https://luberserker0v0.github.io/comic-crawler/index.json",
+      "keyId": "comiccrawler-official-2026-10",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtLLPNG5MKAKRwTy1XPEsbGNi1wSg28LX48WKFURAIe0=\n-----END PUBLIC KEY-----\n",
+      "enabled": true,
+      "allowedPackageOrigins": [
+        "https://luberserker0v0.github.io"
+      ]
+    }
+  ]
+}

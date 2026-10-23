@@ -141,6 +141,11 @@ Adapter review and version maintenance are intentionally GUI-first workflows.
 Use the adapter management/review screens to inspect drafts, promote approved
 changes, reject bad drafts, or roll back a promoted generated adapter version.
 
+Finished Adapter build jobs can be removed from **Adapter maintenance → Adapter
+build jobs**. Unapproved jobs use **Delete build job**. Promoted jobs use
+**Clear job record**, because the approved Adapter version and its regression
+fixture are preserved. Running or queued jobs cannot be deleted.
+
 Do not promote an adapter solely because a test returned some data. Review the
 source DOM, readiness result, extracted values, and known risks first. A
 challenge page, recommendation card, footer, or partially expanded page is not a
@@ -157,8 +162,11 @@ Accepting a selector-discovery adapter performs these steps:
 5. Save the approved output as `expected.json`.
 6. Promote the adapter only after fixture capture succeeds.
 
-The fixture is stored under the configured agent workspace. A chapter-only
-adapter must return at least one image URL before it can be accepted.
+The fixture is stored at
+`approved-fixtures/<adapterId>/<version>/<fixtureId>/` under the configured
+agent workspace. It belongs to that immutable Adapter version and is not part
+of diagnostic-fixture retention. A chapter-only adapter must return at least
+one image URL before it can be accepted.
 
 Later regression checks replay the current adapter against `page.html` and
 compare its complete normalized output with `expected.json`.
@@ -195,13 +203,15 @@ It does not create crawl tasks.
 
 Enter a URL first:
 
-- Manga catalog URL - Adapter Lab unlocks metadata functions such as title,
-  author, tags, status, and chapter list extraction.
-- Chapter URL - Adapter Lab unlocks chapter image extraction.
+- Adapter Lab resolves the matching adapter without assuming site-specific URL paths.
+- The capability list comes from the matched adapter.
+- Each function states whether it expects a manga or chapter URL.
 
-Common and verification functions remain available for diagnostics. Functions
-that do not match the URL type are locked in the UI, and the Test button is
-disabled for those functions.
+Choose a Browser target before running a DOM-backed function:
+
+- Existing tab - ask the Browser Client to register the exact target URL.
+- Managed profile - choose an online managed-profile Worker.
+- Use Refresh after registering a new tab.
 
 The implementation panel shows the full adapter source or dynamic selector
 manifest. Function selection only chooses the test target; helper functions and
@@ -211,11 +221,18 @@ Editable drafts are user-owned copies. Project-source TypeScript drafts can be
 saved, reset, discarded, and diffed against the active adapter. Generated
 adapter drafts can be tested before promotion.
 
-Adapter Lab tests use the adapter's `playwright` DOM acquisition automatically. If a site requires
+Adapter Lab sends the selected Browser target to the adapter test API. If a site requires
 human verification, use the verification handoff shown in the test result,
 complete verification in the opened browser, then continue the test. Adapter Lab
 runs bounded scrolling to hydrate lazy content, but does not click generic
 "show all" controls or rewrite the page before calling the selected function.
+
+Managed-profile tests close their session-owned browser after a normal result.
+A verification handoff keeps that same browser session open until the test is
+continued or cancelled. Continue uses the handoff ID, so the busy Worker does
+not need to reappear as an idle Browser target. If the user closes the owned
+browser, the Browser Client reports the closed session and stays available for
+the next test.
 
 Adapter Lab is for diagnosis and draft testing. It does not create crawl tasks
 and does not promote adapter versions by itself.
@@ -244,8 +261,8 @@ A Browser Worker exposes one task-scoped browser session for these features:
 - Adapter Lab tests and fixture capture.
 
 See the [Browser Client SDK guide](../browser-client-sdk/README.md) for the
-consumer contract. A browser extension may implement the executor with the
-current tab and existing Chrome profile.
+consumer contract. An existing-tab Browser Client operates the approved tab
+with its current browser profile.
 
 Developers can use the first-party
 [production acceptance consumer](../tools/browser-client-acceptance/README.md)

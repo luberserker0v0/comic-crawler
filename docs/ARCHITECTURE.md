@@ -57,7 +57,7 @@ The AO service is required only for adapter generation.
 |---|---|---|---|
 | ComicCrawler backend | Container process | `npm run dev` | Operator |
 | WebUI | Served by backend | Vite dev server | ComicCrawler launcher |
-| Browser Client | Separate GUI, extension, or local process | Same | User |
+| Browser Client | User-side browser process | Same | User |
 | Browser | Existing or consumer-managed | Existing or consumer-managed | User |
 | AO service | Optional external service | Optional fixture or service | Administrator |
 | Runtime storage | Named volume or app-data path | `repo/data/` | ComicCrawler backend |
@@ -211,14 +211,14 @@ branch on those signals may still return their desktop variant.
 
 ### Browser Client boundary
 
-The Browser Client SDK is the stable integration boundary for a desktop GUI,
-browser extension, or standalone local process. It is runtime-neutral and uses
+The Browser Client SDK is the stable integration boundary for the user-side
+Browser Client process. It is runtime-neutral and uses
 consumer-injected `BrowserExecutor`, `ClientStateStore`, and optional
 `WebSocketFactory` implementations.
 
 ```mermaid
 flowchart LR
-  App[GUI / extension / local process] --> SDK[Browser Client SDK]
+  App[Browser Client] --> SDK[Browser Client SDK]
   SDK -->|outbound command WebSocket| Cloud[ComicCrawler backend]
   Cloud -->|session + semantic commands| SDK
   SDK --> Executor[Consumer BrowserExecutor]

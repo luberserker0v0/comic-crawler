@@ -37,6 +37,7 @@ ENV NODE_ENV=production
 ENV COMICCRAWLER_HOST=0.0.0.0
 ENV COMICCRAWLER_PORT=4100
 ENV COMICCRAWLER_DATA_PATH=/app/data
+ENV COMICCRAWLER_ADAPTER_TRUST_STORE_PATH=/app/defaults/adapter-registries.json
 ENV STATIC_DIR=/app/static
 
 RUN addgroup --system --gid 1001 nodejs
@@ -47,6 +48,7 @@ COPY --from=builder /app/backend/src/adapter/sites ./backend/src/adapter/sites
 COPY --from=builder /app/agent ./agent
 COPY --from=builder /app/frontend/dist ./static
 COPY --from=builder /app/docs ./docs
+COPY --from=builder /app/docker/adapter-registries.json ./defaults/adapter-registries.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/browser-client-sdk/dist ./browser-client-sdk/dist

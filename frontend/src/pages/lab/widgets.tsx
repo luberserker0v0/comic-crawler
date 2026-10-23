@@ -10,31 +10,6 @@ import { formatText } from '../../text/format';
 export const capabilityOrder: AdapterFunctionCapability[] = ['common', 'verification', 'metadata', 'chapterImages'];
 
 export type AdapterChoice = NonNullable<AdapterResolveResponse['adapter']>;
-export type AdapterLabUrlKind = 'manga' | 'chapter' | 'unknown';
-
-export function getUrlKind(value: string): AdapterLabUrlKind {
-  try {
-    const pathname = new URL(value).pathname;
-    if (/\/mangaread\//i.test(pathname)) return 'chapter';
-    if (/\/manga\//i.test(pathname)) return 'manga';
-  } catch {
-    // Treat unparseable input as unknown until resolve validates it.
-  }
-  return 'unknown';
-}
-
-export function isCapabilityAllowedForUrlKind(capability: AdapterFunctionCapability, kind: AdapterLabUrlKind): boolean {
-  if (capability === 'common' || capability === 'verification') return true;
-  if (capability === 'metadata') return kind === 'manga';
-  if (capability === 'chapterImages') return kind === 'chapter';
-  return false;
-}
-
-export function urlKindDescription(kind: AdapterLabUrlKind, text: { mangaUrlDescription: string; chapterUrlDescription: string; unknownUrlDescription: string }): string {
-  if (kind === 'manga') return text.mangaUrlDescription;
-  if (kind === 'chapter') return text.chapterUrlDescription;
-  return text.unknownUrlDescription;
-}
 
 export function formatLineRange(symbol: AdapterImplementationSymbol): string {
   if (!symbol.startLine) return '';

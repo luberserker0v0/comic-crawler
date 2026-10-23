@@ -159,6 +159,8 @@ function SelectorDiscoveryServiceAdapterStrategiesTestGroup2(): void {
   it('rejects TypeScript implementation draft domain conflicts', SelectorDiscoveryServiceAdapterStrategiesTestRejectsTypeScriptImplementationDraftDomainConflicts);
   it('loads promoted TypeScript implementation adapters on startup', SelectorDiscoveryServiceAdapterStrategiesTestLoadsPromotedTypeScriptImplementationAdaptersOnStartup);
   it('records a function revision subtask under an awaiting review implementation draft', SelectorDiscoveryServiceAdapterStrategiesTestRecordsAFunctionRevisionSubtaskUnderAnAwaitingReviewImplementationDraft);
+  it('refuses to delete an active discovery job', SelectorDiscoveryServiceAdapterStrategiesTestRefusesToDeleteAnActiveDiscoveryJob);
+  it('compacts legacy promoted jobs only when their Catalog package exists', SelectorDiscoveryServiceAdapterStrategiesTestCompactsLegacyPromotedJobsOnlyWhenTheirCatalogPackageExists);
 }
 
 async function SelectorDiscoveryServiceAdapterStrategiesTestPersistsTheStableBrowserWorkerTargetOnAnAdapterDiscoveryJob() {
@@ -258,18 +260,48 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestPromotesAnAwaitingRe
     const storage = new MemoryStorage();
     const registry = new AdapterRegistry();
     const service = new SelectorDiscoveryService(storage, registry);
-    await persistJob(storage, reviewJob('disc-ts'));
+    await persistJob(storage, reviewJob('disc-ts', { phase1Markdown: '# phase 1',
+      reviewNotesMarkdown: '# review' }));
+    await storage.write('selector-discovery-implementation-disc-ts', { source: 'temporary' });
     const promoted = await service.promote('disc-ts');
     const active = await new AdapterCatalog(storage).getActivePackage('generated-adapter');
     expect(promoted.adapterId).toBe('generated-adapter');
     expect(registry.findByUrl('https://generated.test/manga/title')?.id).toBe('generated-adapter');
     expect(active?.implementationTs).toContain('GeneratedAdapter');
-    await expect(storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-ts')).resolves.toMatchObject({
-        status: 'promoted',
-        phase: 'complete',
-        adapterId: 'generated-adapter',
-        adapterName: 'Generated Adapter',
-    });
+    const job = await storage.read<SelectorDiscoveryJob>('selector-discovery-job-disc-ts');
+    expectPromotedJobCompacted(job, promoted.version);
+    expect(await storage.read('selector-discovery-implementation-disc-ts')).toBeNull();
+}
+
+function expectPromotedJobCompacted(job: SelectorDiscoveryJob | null, version: string) {
+  expect(job).toMatchObject({ status: 'promoted', phase: 'complete', adapterId: 'generated-adapter',
+    adapterName: 'Generated Adapter', promotedVersion: version });
+  expect(job?.adapterImplementationTs).toBeUndefined();
+  expect(job?.phase1Markdown).toBeUndefined();
+  expect(job?.reviewNotesMarkdown).toBeUndefined();
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestRefusesToDeleteAnActiveDiscoveryJob() {
+  const storage = new MemoryStorage();
+  const service = new SelectorDiscoveryService(storage, new AdapterRegistry());
+  await persistJob(storage, retryJob('disc-running', 'running'));
+  await expect(service.deleteJob('disc-running')).rejects.toThrow('cancel or wait');
+  await expect(service.get('disc-running')).resolves.toMatchObject({ status: 'running' });
+}
+
+async function SelectorDiscoveryServiceAdapterStrategiesTestCompactsLegacyPromotedJobsOnlyWhenTheirCatalogPackageExists() {
+  const storage = new MemoryStorage(), source = createImplementationDraftSource();
+  const adapter = instantiateAdapterImplementationDraft(source), catalog = new AdapterCatalog(storage);
+  const document = createAdapterPackage({ adapter, implementationTs: source,
+    origin: 'local-generated', createdAt: '2026-06-25T00:00:00.000Z', sourceDiscoveryId: 'disc-legacy' });
+  await catalog.installApproved(document);
+  await persistJob(storage, reviewJob('disc-legacy', { status: 'promoted',
+    adapterId: adapter.id, adapterName: adapter.name }));
+  const service = new SelectorDiscoveryService(storage, new AdapterRegistry(), { adapterCatalog: catalog });
+  await service.initializeScheduler();
+  const job = await service.get('disc-legacy');
+  expectPromotedJobCompacted(job, document.manifest.version);
+  service.dispose();
 }
 
 async function SelectorDiscoveryServiceAdapterStrategiesTestCapturesAGoldenFixtureBeforeRegisteringAnApprovedAdapter() {
@@ -283,18 +315,20 @@ async function SelectorDiscoveryServiceAdapterStrategiesTestCapturesAGoldenFixtu
     const promoted = await service.promote('disc-fixture');
     expect(captureOrder).toEqual(['capture:false']);
     expect(promoted.approvalFixture?.id).toBe('fixture-1');
+    expect(promoted.approvalFixture?.adapterVersion).toBe(promoted.version);
     expect(promoted.approvalFixture).not.toHaveProperty('path');
     expect(promoted.approvalFixture).not.toHaveProperty('expectedPath');
     expect(registry.has('generated-adapter')).toBe(true);
 }
 
 function fixtureCapture(registry: AdapterRegistry, captureOrder: string[]) {
-  return async ({ adapter }: { adapter: { id: string } }) => {
+  return async ({ adapter, adapterVersion }: { adapter: { id: string }; adapterVersion: string }) => {
     captureOrder.push(`capture:${registry.has(adapter.id)}`);
     return { id: 'fixture-1', domain: 'generated.test',
       url: 'https://generated.test/manga/title', title: '', htmlLength: 10,
       capturedAt: '2026-06-25T00:00:00.000Z', path: '/fixtures/page.html',
-      expectedPath: '/fixtures/expected.json', readiness: { status: 'ready' as const,
+      expectedPath: '/fixtures/expected.json', adapterId: adapter.id, adapterVersion,
+      readiness: { status: 'ready' as const,
         target: 'metadata' as const, confidence: 1, reasons: [], recommendedAction: 'continue' as const } };
   };
 }

@@ -59,6 +59,11 @@ Adapters are active runtime components. Deleting an adapter immediately removes
 it from the registry. If the adapter is catalog-managed, ComicCrawler clears the
 active pointer and keeps every immutable approved version for restore or rollback.
 
+Adapter build-job cleanup is status-aware. Maintenance retains queued, running,
+and awaiting-review jobs regardless of age. Terminal job records expire through
+the configured discovery retention policy. Approved fixtures live under their
+immutable Adapter version and are outside diagnostic-fixture age cleanup.
+
 If the adapter came from project TypeScript source, deleting it also removes the
 source directory under `backend/src/adapter/sites/`. ComicCrawler does not
 recreate that source. Restore the source with git first, then restore the

@@ -15,14 +15,17 @@ interface BuildJobsSectionProps {
   buildJobsError: string | null;
   reviewError: string | null;
   retryingBuildJobId: string | null;
+  deletingBuildJobId: string | null;
   reviewLoading: ReviewLoading;
   fetchBuildJobs: () => Promise<void>;
   retryBuildJob: (id: string) => Promise<void>;
+  deleteBuildJob: (id: string) => Promise<void>;
   openReviewJob: (id: string) => Promise<void>;
 }
 
 interface ThreadCardProps extends Pick<BuildJobsSectionProps,
-  'retryingBuildJobId' | 'reviewLoading' | 'retryBuildJob' | 'openReviewJob'> {
+  'retryingBuildJobId' | 'deletingBuildJobId' | 'reviewLoading' | 'retryBuildJob' |
+  'deleteBuildJob' | 'openReviewJob'> {
   thread: BuildJobThread;
   collapsed: boolean;
   expandedAttempts: Set<string>;
@@ -31,7 +34,8 @@ interface ThreadCardProps extends Pick<BuildJobsSectionProps,
 }
 
 type AttemptProps = Pick<BuildJobsSectionProps,
-  'retryingBuildJobId' | 'reviewLoading' | 'retryBuildJob' | 'openReviewJob'> & {
+  'retryingBuildJobId' | 'deletingBuildJobId' | 'reviewLoading' | 'retryBuildJob' |
+  'deleteBuildJob' | 'openReviewJob'> & {
     job: SelectorDiscoveryJobSummary;
   };
 
@@ -101,7 +105,8 @@ function BuildJobThreads(props: BuildJobsSectionProps & {
       collapsed={props.collapsed.has(thread.key)} expandedAttempts={props.expanded}
       onToggleThread={() => props.onToggleThread(thread.key)} onToggleAttempt={props.onToggleAttempt}
       retryingBuildJobId={props.retryingBuildJobId} reviewLoading={props.reviewLoading}
-      retryBuildJob={props.retryBuildJob} openReviewJob={props.openReviewJob} />)}
+      deletingBuildJobId={props.deletingBuildJobId} retryBuildJob={props.retryBuildJob}
+      deleteBuildJob={props.deleteBuildJob} openReviewJob={props.openReviewJob} />)}
     {props.threads.length === 0 && !props.buildJobsLoading &&
       <div className="px-6 py-10 text-center text-sm text-slate-500">{text.agent.noBuildJobs}</div>}
   </div>;
@@ -223,17 +228,18 @@ function AttemptDiagnostics({ job }: { job: SelectorDiscoveryJobSummary }) {
 }
 
 function AttemptActions(props: AttemptProps) {
-  return <>
+  return <div className="mt-3 flex flex-wrap gap-2">
     {canRetryBuildJob(props.job) && <RetryButton {...props} />}
     {canReviewBuildJob(props.job) && <ReviewButton {...props} />}
-  </>;
+    {!['queued', 'running'].includes(props.job.status) && <DeleteBuildJobButton {...props} />}
+  </div>;
 }
 
 function RetryButton(props: AttemptProps) {
   const { text } = useI18n();
   const loading = props.retryingBuildJobId === props.job.id;
   return <button type="button" onClick={() => void props.retryBuildJob(props.job.id)} disabled={loading}
-    className="mt-3 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+    className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
     {loading ? `${text.agent.retryBuild}...` : text.agent.retryBuild}
   </button>;
 }
@@ -241,7 +247,20 @@ function RetryButton(props: AttemptProps) {
 function ReviewButton(props: AttemptProps) {
   const { text } = useI18n();
   return <button type="button" onClick={() => void props.openReviewJob(props.job.id)} disabled={props.reviewLoading === 'load'}
-    className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+    className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
     {props.reviewLoading === 'load' ? `${text.agent.reviewAdapterDraft}...` : text.agent.reviewAdapterDraft}
+  </button>;
+}
+
+function DeleteBuildJobButton(props: AttemptProps) {
+  const { text } = useI18n();
+  const promoted = props.job.status === 'promoted';
+  const label = promoted ? text.agent.clearBuildJobRecord : text.agent.deleteBuildJob;
+  const confirmation = promoted ? text.agent.clearBuildJobRecordConfirm : text.agent.deleteBuildJobConfirm;
+  const loading = props.deletingBuildJobId === props.job.id;
+  const remove = () => window.confirm(confirmation) && void props.deleteBuildJob(props.job.id);
+  return <button type="button" onClick={remove} disabled={loading}
+    className="rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">
+    {loading ? `${label}...` : label}
   </button>;
 }

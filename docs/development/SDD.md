@@ -21,7 +21,7 @@ flowchart LR
   end
 
   subgraph Device[User Device]
-    App[Extension / GUI / Local Process]
+    App[Browser Client]
     SDK[Browser Client SDK]
     Executor[BrowserExecutor]
     Browser[User Browser / Tab]
@@ -53,7 +53,7 @@ state; it does not expose arbitrary Playwright operations.
 | Adapter Catalog | Stores immutable approved packages and active versions. |
 | Challenge Discovery | Retains the session for human verification. |
 | Browser Client SDK | Implements enrollment, connection, heartbeat, and dispatch. |
-| BrowserExecutor | Consumer adapter for extension, CDP, or Playwright runtime. |
+| BrowserExecutor | Browser Client adapter for an existing tab or managed Playwright runtime. |
 
 ## 3. Server class relationships
 
@@ -118,7 +118,7 @@ classDiagram
   BrowserExecutor --> BrowserSession
 ```
 
-The SDK has one package root and no Node, Playwright, or WebExtension runtime
+The SDK has one package root and no Node, Playwright, or browser-platform runtime
 dependency. Consumers inject platform-specific adapters.
 
 ## 5. Protocol
@@ -151,6 +151,11 @@ Version 2 commands are:
 Content preparation belongs to Browser Client. Adapter capabilities receive the
 prepared DOM and remain pure extraction code. Virtualized reader URLs remain in
 `data-comiccrawler-src` or `data-comiccrawler-image-url` annotations.
+
+Adapter Lab uses `mode: inspect` to resolve an Adapter without assuming URL path
+conventions. Before a DOM-backed function runs, the UI reads Workers and
+current-user browser resources. An existing-tab target is eligible only when
+its registered URL equals the test URL after removing the fragment.
 
 ## 6. Identity and lifecycle
 
@@ -219,6 +224,9 @@ session command is checked against Worker, session, and lease identity.
 
 Durable Server state includes Client records, tasks, checkpoints, adapter
 packages, catalog pointers, and fixtures. Approved package content is immutable.
+Approved fixtures are version-owned at
+`approved-fixtures/<adapterId>/<version>/<fixtureId>/`; diagnostic captures stay
+under `fixtures/<domain>/<fixtureId>/` and may expire by retention policy.
 Activation, rollback, and deletion update only catalog metadata. Live sockets,
 Workers, leases, and sessions are process memory only.
 Browser profile state belongs to the consumer and is never persisted by the

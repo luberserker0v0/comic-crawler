@@ -50,6 +50,11 @@ one outbound command WebSocket.
 - **ADP-005**: Promotion must capture page HTML and expected output as a fixture.
 - **ADP-006**: Fixture capture failure must prevent promotion.
 - **ADP-007**: Adapter Lab must execute editable project and generated drafts.
+- **ADP-008**: Deleting an Adapter build job must remove intermediate artifacts without deleting an approved Adapter package.
+- **ADP-009**: Maintenance must retain active and awaiting-review Adapter build jobs and approved regression fixtures.
+- **ADP-010**: Each approved regression fixture must belong to one immutable Adapter ID and version.
+- **ADP-011**: Adapter Lab must resolve URLs without site-specific path rules.
+- **ADP-012**: DOM-backed Adapter Lab tests must bind an explicit available Browser target.
 
 ## 6. Security requirements
 

@@ -1,5 +1,6 @@
 import type {
   AdapterPackageDocument,
+  AdapterPackageFixtureSummary,
   AdapterPackageOrigin,
   AdapterPackageValidation,
   FixtureSummary,
@@ -43,7 +44,9 @@ function successfulValidation(): AdapterPackageValidation {
   return { valid: true, syntaxValid: true, errors: [], warnings: [] };
 }
 
-function portableFixture(fixture: FixtureSummary) {
+function portableFixture(fixture: FixtureSummary): AdapterPackageFixtureSummary {
+  if (!fixture.adapterId || !fixture.adapterVersion)
+    throw new Error('Approved fixture must identify its adapter and immutable version.');
   const { path: _path, expectedPath: _expectedPath, ...portable } = fixture;
-  return portable;
+  return portable as AdapterPackageFixtureSummary;
 }

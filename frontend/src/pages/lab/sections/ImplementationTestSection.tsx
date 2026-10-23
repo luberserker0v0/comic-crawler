@@ -2,6 +2,8 @@ import type { AdapterCapabilityDetailResponse, AdapterDraftDetailResponse, Adapt
   AdapterImplementationResponse, AdapterImplementationSymbol, ChallengeHandoffJobSummary } from '@comiccrawler/shared';
 import { ImplementationDiffEditor, ImplementationEditor, type EditorLanguage } from '../../../components/ImplementationEditor';
 import { AdapterFunctionResultSummary, formatLineRange } from '../widgets';
+import type { useBrowserTargets } from '../useBrowserTargets';
+import { BrowserTargetSection } from './BrowserTargetSection';
 import { useI18n } from '../../../text/i18n';
 import { formatText } from '../../../text/format';
 
@@ -13,7 +15,7 @@ interface ImplementationTestProps {
   loading: string | null;
   draft: AdapterDraftDetailResponse | null;
   canExecuteDraft: boolean;
-  selectedFunctionAllowed: boolean;
+  browserTargetRequired: boolean;
   selectedFunctionId: string;
   url: string;
   testStatusMessage: string | null;
@@ -28,6 +30,7 @@ interface ImplementationTestProps {
   testResult: AdapterFunctionTestResponse | null;
   challengeJob: ChallengeHandoffJobSummary | null;
   browserAction: string | null; browserAlreadyOpen: boolean;
+  browserTargets: ReturnType<typeof useBrowserTargets>;
   openVerificationBrowser(): void; continueAfterVerification(): void;
 }
 
@@ -38,6 +41,10 @@ export function ImplementationTestSection(props: ImplementationTestProps) {
   return <section className="rounded-lg bg-white p-5 shadow">
     <TestHeader props={props} text={text} />
     {props.capabilityDetail && <CapabilityInfo props={props} text={text} />}
+    {props.browserTargetRequired && <BrowserTargetSection options={props.browserTargets.options}
+      selectedKey={props.browserTargets.selectedKey} setSelectedKey={props.browserTargets.setSelectedKey}
+      loading={props.browserTargets.loading} error={props.browserTargets.error}
+      refresh={props.browserTargets.refresh} />}
     {props.testStatusMessage && <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800" data-testid="adapter-lab-test-status">{props.testStatusMessage}</div>}
     {props.implementation && <ImplementationBanner props={props} text={text} />}
     <EditorArea props={props} text={text} labels={labels} />
@@ -49,7 +56,8 @@ type TestText = ReturnType<typeof useI18n>['text'];
 type CapabilityLabels = Record<'common' | 'verification' | 'metadata' | 'chapterImages', string>;
 
 function TestHeader({ props, text }: { props: ImplementationTestProps; text: TestText }) {
-  const disabled = !props.selectedFunctionId || !props.selectedFunctionAllowed || !props.url
+  const disabled = !props.selectedFunctionId || !props.url
+    || (props.browserTargetRequired && !props.browserTargets.selectedTarget)
     || props.loading === 'test' || Boolean(props.draft && !props.canExecuteDraft);
   return <div className="flex items-start justify-between gap-4"><div>
     <h2 className="text-lg font-semibold text-gray-900">{text.lab.implementationStep}</h2>

@@ -2,18 +2,27 @@ import type { DomReadinessCheckRequest, FixtureCaptureRequest, FixtureFunctionTe
 import * as cheerio from 'cheerio';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AdapterRegistry } from '../../adapter/registry';
+import type { AdapterCatalog } from '../../adapter/catalog';
+import { instantiateCatalogPackage } from '../../adapter/catalog-runtime';
 import { DomReadinessChecker } from '../../fixtures/dom-readiness';
 import { FixtureCaptureService, runFixtureFunction } from '../../fixtures/fixture-capture-service';
 
-type Context = { registry: AdapterRegistry; service?: FixtureCaptureService; readiness: DomReadinessChecker };
+type Context = { registry: AdapterRegistry; catalog?: AdapterCatalog;
+  service?: FixtureCaptureService; readiness: DomReadinessChecker };
 
-export function setupFixtureRoutes(app: FastifyInstance, registry: AdapterRegistry, service?: FixtureCaptureService): void {
-  const context = { registry, service, readiness: new DomReadinessChecker() };
+export function setupFixtureRoutes(app: FastifyInstance, registry: AdapterRegistry,
+  service?: FixtureCaptureService, catalog?: AdapterCatalog): void {
+  const context = { registry, catalog, service, readiness: new DomReadinessChecker() };
   app.post('/api/dom-readiness/check', async (request, reply) => checkReadiness(request, reply, context));
   app.post('/api/fixtures/capture', async (request, reply) => captureFixture(request, reply, context));
   app.get('/api/fixtures/:domain/:id', async (request, reply) => getFixture(request, reply, context));
   app.post('/api/fixtures/:domain/:id/test-adapter-function', async (request, reply) => testFixture(request, reply, context));
-  app.post('/api/fixtures/:domain/:id/verify-approved-adapter', async (request, reply) => verifyFixture(request, reply, context));
+  app.get('/api/adapters/:adapterId/versions/:version/fixture',
+    async (request, reply) => getApprovedFixture(request, reply, context));
+  app.post('/api/adapters/:adapterId/versions/:version/fixture/test-adapter-function',
+    async (request, reply) => testApprovedFixture(request, reply, context));
+  app.post('/api/adapters/:adapterId/versions/:version/fixture/verify',
+    async (request, reply) => verifyApprovedFixture(request, reply, context));
 }
 
 function checkReadiness(request: FastifyRequest, reply: FastifyReply, context: Context): void {
@@ -57,15 +66,48 @@ async function testFixture(request: FastifyRequest, reply: FastifyReply, context
   } catch (error) { sendError(reply, error, 400); }
 }
 
-async function verifyFixture(request: FastifyRequest, reply: FastifyReply, context: Context): Promise<void> {
+async function getApprovedFixture(request: FastifyRequest, reply: FastifyReply, context: Context): Promise<void> {
   if (!requireService(context, reply)) return;
   try {
-    const { domain, id } = fixtureParams(request);
-    const adapterId = (request.body as { adapterId?: string }).adapterId;
-    const adapter = adapterId ? context.registry.get(adapterId) : undefined;
-    if (!adapter) { reply.code(404).send({ error: 'Adapter not found.' }); return; }
-    reply.send({ data: await context.service.verifyApprovedAdapterFixture(domain, id, adapter) });
+    const document = await approvedPackage(request, reply, context);
+    if (!document) return;
+    const includeHtml = (request.query as { includeHtml?: string }).includeHtml === 'true';
+    reply.send({ data: await context.service.readApprovedAdapterFixture(document.manifest, includeHtml) });
+  } catch (error) { sendError(reply, error, 404); }
+}
+
+async function testApprovedFixture(request: FastifyRequest, reply: FastifyReply, context: Context): Promise<void> {
+  if (!requireService(context, reply)) return;
+  try {
+    const document = await approvedPackage(request, reply, context);
+    if (!document) return;
+    const adapter = instantiateCatalogPackage(document);
+    const detail = await context.service.readApprovedAdapterFixture(document.manifest, true);
+    const functionId = (request.body as { functionId?: string }).functionId ?? '';
+    const result = await runFixtureFunction(adapter, functionId, cheerio.load(detail.html ?? ''), detail.fixture.url);
+    reply.send({ data: { fixture: detail.fixture, adapterId: adapter.id, functionId, result } });
   } catch (error) { sendError(reply, error, 400); }
+}
+
+async function verifyApprovedFixture(request: FastifyRequest, reply: FastifyReply, context: Context): Promise<void> {
+  if (!requireService(context, reply)) return;
+  try {
+    const document = await approvedPackage(request, reply, context);
+    if (!document) return;
+    const adapter = instantiateCatalogPackage(document);
+    reply.send({ data: await context.service.verifyApprovedAdapterFixture(document.manifest, adapter) });
+  } catch (error) { sendError(reply, error, 400); }
+}
+
+async function approvedPackage(request: FastifyRequest, reply: FastifyReply, context: Context) {
+  if (!context.catalog) { reply.code(503).send({ error: 'Adapter Catalog is not available.' }); return null; }
+  const { adapterId, version } = request.params as { adapterId: string; version: string };
+  const document = await context.catalog.getPackage(adapterId, version);
+  if (!document) { reply.code(404).send({ error: 'Adapter package not found.' }); return null; }
+  if (!document.manifest.approvalFixture) {
+    reply.code(404).send({ error: 'Approved fixture not found.' }); return null;
+  }
+  return document;
 }
 
 function requireService(context: Context, reply: FastifyReply, message = 'Fixture service is not available.'):

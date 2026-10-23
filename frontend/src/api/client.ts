@@ -23,6 +23,7 @@ import type {
   CreateTaskRequest,
   CreateTaskResponse,
   BrowserWorkerListResponse,
+  BrowserResourceListResponse,
   FixtureCaptureRequest,
   FixtureCaptureResponse,
   FixtureDetailResponse,
@@ -47,6 +48,7 @@ const API_TIMEOUT_MS = 15 * 60 * 1000;
 const API_ENDPOINTS = {
   tasks: '/api/tasks',
   browserWorkers: '/api/browser-workers',
+  browserResources: '/api/browser-resources',
   adapters: '/api/adapters',
   agentAdapters: '/api/agent/adapters',
   config: '/api/config',
@@ -109,6 +111,11 @@ export class ApiClient {
 
   async getBrowserWorkers(): Promise<ApiResponse<BrowserWorkerListResponse>> {
     const response = await this.client.get(API_ENDPOINTS.browserWorkers);
+    return response.data;
+  }
+
+  async getBrowserResources(): Promise<ApiResponse<BrowserResourceListResponse>> {
+    const response = await this.client.get(API_ENDPOINTS.browserResources);
     return response.data;
   }
 
@@ -372,6 +379,13 @@ export class ApiClient {
 
   async getSelectorDiscovery(id: string): Promise<ApiResponse<SelectorDiscoveryJobSummary>> {
     const response = await this.client.get(`${API_ENDPOINTS.selectorDiscovery}/${id}`);
+    return response.data;
+  }
+
+  async deleteSelectorDiscovery(id: string): Promise<ApiResponse<{
+    id: string; deleted: boolean; adapterPreserved: boolean;
+  }>> {
+    const response = await this.client.delete(`${API_ENDPOINTS.selectorDiscovery}/${id}`);
     return response.data;
   }
 

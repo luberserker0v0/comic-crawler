@@ -27,6 +27,7 @@ function browserClientRoutesTestGroup1(): void {
   afterEach(browserClientRoutesTestScenario2);
   it('discovers, enrolls, lists, rotates, and revokes a Browser Client', browserClientRoutesTestDiscoversEnrollsListsRotatesAndRevokesABrowserClient);
   it('rejects enrollment without capabilities', browserClientRoutesTestRejectsEnrollmentWithoutCapabilities);
+  it('lists only browser resources owned by the requesting user', browserClientRoutesTestListsOwnedResources);
 }
 
 function browserClientRoutesTestScenario1() {
@@ -88,4 +89,18 @@ async function browserClientRoutesTestRejectsEnrollmentWithoutCapabilities() {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toContain('capabilities are required');
+}
+
+async function browserClientRoutesTestListsOwnedResources() {
+    jest.spyOn(gateway, 'listResources').mockReturnValue([{
+        resourceId: 'tab-1', workerId: 'worker-1', ownerUserId: 'public', kind: 'tab',
+        url: 'https://comix.to/title/demo/1-chapter-1', title: 'Chapter 1',
+        registeredAt: '2026-10-23T00:00:00.000Z',
+    }]);
+    const response = await app.inject({ method: 'GET', url: '/api/browser-resources' });
+    expect(gateway.listResources).toHaveBeenCalledWith('public');
+    expect(response.json().data.resources).toEqual([expect.objectContaining({
+        resourceId: 'tab-1', workerId: 'worker-1', title: 'Chapter 1',
+    })]);
+    expect(response.json().data.resources[0].ownerUserId).toBeUndefined();
 }

@@ -63,6 +63,8 @@ class TestExecutor implements BrowserExecutor {
 
 class TestSession implements BrowserSession {
   closed = false;
+  private resolveTermination!: () => void;
+  readonly terminated = new Promise<void>((resolve) => { this.resolveTermination = resolve; });
   private url = 'about:blank';
 
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
@@ -78,6 +80,9 @@ class TestSession implements BrowserSession {
   }
   async close(): Promise<void> {
     this.closed = true;
+  }
+  terminate(): void {
+    this.resolveTermination();
   }
 }
 
@@ -111,6 +116,7 @@ function BrowserSessionGatewayTestGroup1(): void {
   it('runs session commands through a real WebSocket and retains Worker identity on reconnect', BrowserSessionGatewayTestRunsSessionCommandsThroughARealWebSocketAndRetainsWorkerIdentityOnReconnect);
   it('rejects an invalid client credential before registering a Worker', BrowserSessionGatewayTestRejectsAnInvalidClientCredentialBeforeRegisteringAWorker);
   it('rejects resource registration from a managed-profile Worker without disconnecting it', BrowserSessionGatewayTestRejectsResourceRegistrationFromAManagedProfileWorkerWithoutDisconnectingIt);
+  it('clears a session closed locally while keeping its Worker online', BrowserSessionGatewayTestClearsLocallyClosedSession);
 }
 
 async function BrowserSessionGatewayTestScenario1() {
@@ -292,4 +298,19 @@ async function BrowserSessionGatewayTestRejectsResourceRegistrationFromAManagedP
     })).rejects.toThrow('Only an existing-tab Browser Worker');
     expect(gateway.getWorker(connection.workerId)).toMatchObject({ online: true });
     expect(gateway.listResources('alice')).toEqual([]);
+}
+
+async function BrowserSessionGatewayTestClearsLocallyClosedSession() {
+    const registry = new BrowserClientRegistry();
+    const enrollment = await registry.enroll(principal(), { name: 'Closing Client', capabilities });
+    const serverUrl = await startGateway(registry);
+    const executor = new TestExecutor();
+    client = createTestClient(serverUrl, enrollment, executor, 'process-closing');
+    const connection = await client.connect();
+    const resource = await client.registerResource({ kind: 'tab', url: 'https://example.test/chapter' });
+    const session = await openResourceSession(connection.workerId, resource.resourceId, 'lease-closing');
+    executor.session.terminate();
+    await waitFor(() => gateway.getWorker(connection.workerId)?.activeSessionId === undefined);
+    expect(gateway.getWorker(connection.workerId)).toMatchObject({ online: true });
+    await expect(gateway.execute(session.sessionId, { type: 'page.get-url' })).rejects.toThrow('is not active');
 }

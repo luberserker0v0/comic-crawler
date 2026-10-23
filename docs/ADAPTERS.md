@@ -138,9 +138,10 @@ for untrusted TypeScript.
 ## Fixtures and verified DOM
 
 Verified fixtures are runtime artifacts captured from a real browser or handoff
-session after verification. They are useful for diagnosis and repeatable local
-testing, but they are not hand-written fake data and are not committed by
-default.
+session after verification. Diagnostic captures follow retention policy.
+Accepted fixtures belong to one immutable Adapter version under
+`approved-fixtures/<adapterId>/<version>/<fixtureId>/` and remain available for
+repeatable local testing. They are not committed by default.
 
 Selector discovery and Adapter Lab tests must not use challenge, blocked, or
 verification HTML as valid comic DOM.

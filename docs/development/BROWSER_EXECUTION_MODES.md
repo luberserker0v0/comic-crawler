@@ -7,7 +7,7 @@
 - Runtime 使用 Version 2 protocol。
 - Server 不支援 Version 1 相容層。
 - SDK、Gateway、task target 與 page acquisition 已採用本契約。
-- 同一 SDK package 已提供 WebExtension driver、Playwright driver/launcher
+- 同一 SDK package 已提供通用 existing-tab contract、Playwright driver/launcher
   與 fresh/copy Profile provisioner。
 - Browser runtime instance 與 filesystem operation 由 Consumer 注入。
 - 本文件不記錄開發過程或歷史方案。
@@ -19,13 +19,13 @@ Browser Client 必須涵蓋兩類不同情境：
 1. 使用者已在 Chrome 開啟目標頁面。
 2. 使用者尚未開啟任何可供爬取的頁面。
 
-第一類以 `koharu-manga-extension` 為主要 Consumer。它應採用目前 tab、
-目前 Profile 與目前驗證狀態，不應另外啟動 Chrome。
+第一類使用 existing-tab Browser Client。它應採用目前 tab、目前 Profile
+與目前驗證狀態，不應另外啟動 Chrome。
 
 第二類以 CLI、GUI helper 或 local service 為主要 Consumer。它應由本機
 Playwright 啟動 ComicCrawler 管理的 Chrome Profile。
 
-Server 只處理 browser command，不依賴 Chrome Extension API 或 Playwright
+Server 只處理 browser command，不依賴瀏覽器平台 API 或 Playwright
 API。
 
 ## 3. 設計決策
@@ -67,11 +67,11 @@ flowchart LR
   end
 
   subgraph Existing[Existing-tab Consumer]
-    Extension[koharu-manga-extension]
+    ExistingClient[Browser Client]
     ExistingSDK[Browser Client SDK]
     ExistingExecutor[ExistingTabExecutor]
     CurrentTab[Current Chrome Tab]
-    Extension --> ExistingSDK --> ExistingExecutor --> CurrentTab
+    ExistingClient --> ExistingSDK --> ExistingExecutor --> CurrentTab
   end
 
   subgraph Managed[Managed-profile Consumer]
@@ -127,20 +127,20 @@ classDiagram
 
 適用情境：
 
-- 使用者在漫畫頁面按下 Extension action。
+- 使用者透過 Browser Client 批准目前漫畫分頁。
 - 頁面已登入或已通過反爬蟲驗證。
 - 使用者希望在同一頁完成後續人工驗證。
 
 責任：
 
-- Extension 取得使用者批准的目前 tab。
+- Browser Client 取得使用者批准的目前 tab。
 - Executor 將 tab 綁定到 BrowserSession。
 - Session 初次建立時不得重新導頁。
 - Session 結束時不得關閉 tab。
 - Handoff 只聚焦原 tab。
 - DOM 由目前 tab 讀取。
 
-基礎操作優先使用 Chrome Extension API：
+基礎操作由 Browser Client 使用瀏覽器平台 API 完成，例如：
 
 - `chrome.tabs`
 - `chrome.scripting`
@@ -149,7 +149,7 @@ classDiagram
 只有需要 CDP domain 時，Executor 才可使用 `chrome.debugger`。Server 不知道
 Executor 是否使用 `chrome.debugger`。
 
-Existing-tab mode 不把 Extension CDP transport 轉接給 Playwright。
+Existing-tab mode 不把 Browser Client transport 轉接給 Playwright。
 
 ### 6.2 Managed profile
 
@@ -288,7 +288,7 @@ export type BrowserTarget =
 
 約束：
 
-- Extension 建立的 task 必須指定 `workerId + resourceId`。
+- Existing-tab Browser Client 建立的 task 必須指定 `workerId + resourceId`。
 - `resourceId` 只能搭配 existing-tab Worker。
 - Managed-profile task 不帶 `resourceId`。
 - 省略 target 時只選 managed-profile Worker。
@@ -356,20 +356,20 @@ acquisition，navigation 與 DOM snapshot 不再綁死。
 sequenceDiagram
   autonumber
   actor User
-  participant Extension
+  participant BrowserClient
   participant SDK
   participant Server
   participant Tab
 
-  User->>Extension: Click crawl on current page
-  Extension->>Extension: Resolve active tab
-  Extension->>SDK: Register local tab resource
+  User->>BrowserClient: Approve current page
+  BrowserClient->>BrowserClient: Resolve active tab
+  BrowserClient->>SDK: Register local tab resource
   SDK->>Server: resource.register
   Server-->>SDK: resourceId accepted
-  Extension->>Server: Create task with workerId + resourceId
+  BrowserClient->>Server: Create task with workerId + resourceId
   Server->>SDK: session.open(existing-resource)
-  SDK->>Extension: Bind resource to session
-  Extension-->>SDK: session ready
+  SDK->>BrowserClient: Bind resource to session
+  BrowserClient-->>SDK: session ready
   Server->>SDK: page.get-url
   Server->>SDK: page.prepare-content(scroll-through)
   SDK->>Tab: Hydrate lazy content and restore scroll position
@@ -430,7 +430,7 @@ Handoff 禁止：
 
 ## 16. Adapter contract 影響
 
-Adapter 不應知道 DOM 來自 Playwright 或 Extension。
+Adapter 不應知道 DOM 來自 managed profile 或 existing tab。
 
 目標設計移除 `parseMode: 'playwright'`。所有 adapter 直接接收 Browser Client
 回傳的 rendered DOM。
@@ -460,7 +460,7 @@ Protocol 採新版本一次性切換。Server 不同時接受舊 message shape�
 | Failure | Result |
 |---|---|
 | Existing tab 已關閉 | Session 失敗；task 保留錯誤。 |
-| Extension 權限被撤銷 | Session 失敗；不得改用 managed profile。 |
+| Existing-tab Browser Client 權限被撤銷 | Session 失敗；不得改用 managed profile。 |
 | Source Profile locked | Copy provisioning 失敗。 |
 | Managed Profile locked | Worker 回報 busy／profile locked。 |
 | Chrome 啟動失敗 | Session open 失敗。 |
@@ -471,7 +471,7 @@ Protocol 採新版本一次性切換。Server 不同時接受舊 message shape�
 ## 19. Security boundary
 
 1. Existing tab 必須由使用者動作批准。
-2. Extension 只操作已註冊 resource。
+2. Browser Client 只操作已註冊 resource。
 3. Server 不保存本機 tab ID。
 4. Worker 只能註冊自己的 resource。
 5. Task owner 必須等於 Worker owner。
@@ -499,7 +499,7 @@ Protocol 採新版本一次性切換。Server 不同時接受舊 message shape�
 ### 20.2 Existing-tab tests
 
 1. 使用者批准目前 tab。
-2. Extension 註冊 resource。
+2. Browser Client 註冊 resource。
 3. Task 綁定 resource。
 4. 第一次 acquisition 不重新導頁。
 5. Handoff 聚焦相同 tab。

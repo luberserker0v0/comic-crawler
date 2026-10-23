@@ -31,22 +31,27 @@
 22. Preserve runtime data during development cleanup.
 23. Preserve immutable adapter package versions.
 24. Activate, deactivate, restore, and roll back catalog versions.
-25. Migrate the legacy generated implementation once.
-26. Inspect a shared package without executing it.
-27. Reject schema, checksum, and identity mismatches.
-28. Import shared packages inactive by default.
-29. Activate imported packages only when explicitly requested.
-30. Verify registry indexes with administrator-trusted Ed25519 keys.
-31. Reject modified indexes, packages, identities, checksums, and key IDs.
-32. Install signed remote packages inactive by default.
-33. Reject registry redirects, private networks, and oversized responses.
-34. Produce deterministic signed registry artifacts from reviewed packages.
-35. Reject duplicate identities and non-Ed25519 release keys.
-36. Keep private signing keys out of generated registry artifacts.
-37. Derive the published public key from the configured release private key.
-38. Keep signing jobs separate from Pages deployment permissions.
-39. Build project-source adapters only when the Catalog sandbox can load them.
-40. Validate every checked-in Registry source package.
+25. Inspect a shared package without executing it.
+26. Reject schema, checksum, and identity mismatches.
+27. Import shared packages inactive by default.
+28. Activate imported packages only when explicitly requested.
+29. Verify registry indexes with administrator-trusted Ed25519 keys.
+30. Reject modified indexes, packages, identities, checksums, and key IDs.
+31. Install signed remote packages inactive by default.
+32. Reject registry redirects, private networks, and oversized responses.
+33. Produce deterministic signed registry artifacts from reviewed packages.
+34. Reject duplicate identities and non-Ed25519 release keys.
+35. Keep private signing keys out of generated registry artifacts.
+36. Derive the published public key from the configured release private key.
+37. Keep signing jobs separate from Pages deployment permissions.
+38. Build project-source adapters only when the Catalog sandbox can load them.
+39. Validate every checked-in Registry source package.
+40. Verify Adapter build-job deletion preserves promoted Catalog packages and approved fixtures.
+41. Verify approved fixtures use version-owned storage and replay the exact immutable Adapter version.
+42. Verify maintenance skips active and awaiting-review Adapter build jobs.
+43. Resolve a chapter-only Adapter through inspect mode without requiring metadata.
+44. List only the requesting user's process-scoped browser resources.
+45. Select only idle Browser targets registered for the exact test URL.
 
 ### Integration tests
 
@@ -112,6 +117,10 @@
 24. Reject stale, cross-owner, mismatched URL, and invalid-state recovery.
 25. Preserve recovery events and handoff history.
 26. Treat an identical recovery request as idempotent.
+27. Report locally closed managed browser sessions.
+28. Close orphan sessions after Server identity changes.
+29. Wait for dynamically created reader pages.
+30. Resume Adapter Lab handoff without an idle target.
 
 ## 3. Traceability
 
@@ -121,12 +130,12 @@
 | Test file | Primary scenario IDs |
 |---|---|
 | `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15 |
-| `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18 |
+| `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18, BC-20 |
 | `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14, ADP-10, ADP-12, ADP-13 |
 | `backend/tests/unit/server/task-routes.test.ts` | TASK-01～03, BC-17～19 |
 | `backend/tests/integration/browser-target-recovery.test.ts` | BC-17, BC-18 |
 | `backend/tests-e2e/api.test.ts` | BC-04, BC-05, BC-17, REL-01, REL-02 |
-| `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14 |
+| `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14, BC-23 |
 | `backend/tests/unit/server/adapter-draft-routes.test.ts` | ADP-03, ADP-04, ADP-07 |
 | `backend/tests/unit/adapter/chapter-image-identity.test.ts` | ADP-08, ADP-09 |
 | `backend/tests/unit/adapter/catalog.test.ts` | ADP-14～17 |
@@ -138,7 +147,10 @@
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |
 | `backend/tests/integration/chapter-images-handoff.test.ts` | ADP-10, ADP-11 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
-| `browser-client-sdk/tests/webextension-driver.test.ts` | BC-06, BC-15, BC-16 |
+| `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21 |
+| `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16 |
+| `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-22 |
+| `frontend/tests/unit/pages/browser-target-options.test.ts` | BC-23 |
 | `scripts/clean.test.mjs` | DEV-01, DEV-02 |
 
 正式環境 Consumer 驗證對應 BC-13 與 COMIX-02。它不是 merge gate，因為外部

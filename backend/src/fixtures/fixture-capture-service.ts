@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import * as cheerio from 'cheerio';
 import type {
   DomReadinessTarget,
+  AdapterPackageManifest,
   FixtureSummary,
   IComicAdapter,
 } from '@comiccrawler/shared';
@@ -21,6 +22,7 @@ export interface CaptureFixtureInput {
 export interface CaptureApprovedAdapterFixtureInput {
   sourceDiscoveryId: string;
   adapter: IComicAdapter;
+  adapterVersion: string;
   target: 'full' | 'chapter-only';
   url: string;
   html: string;
@@ -30,6 +32,7 @@ export interface CaptureApprovedAdapterFixtureInput {
 export interface ApprovedFixtureExpectation {
   schemaVersion: 1;
   adapterId: string;
+  adapterVersion: string;
   sourceDiscoveryId: string;
   url: string;
   functionIds: string[];
@@ -85,6 +88,16 @@ export class FixtureCaptureService {
       capturedAt: new Date().toISOString() };
   }
 
+  private async createApprovedLocation(input: CaptureApprovedAdapterFixtureInput,
+    suffix: string): Promise<FixtureLocation> {
+    const domain = new URL(input.url).hostname;
+    const id = `${Date.now()}-${sanitizePathSegment(suffix)}`;
+    const directory = this.approvedFixtureDirectory(input.adapter.id, input.adapterVersion, id);
+    await mkdir(directory, { recursive: true });
+    return { id, domain, directory, htmlPath: join(directory, 'page.html'),
+      capturedAt: new Date().toISOString() };
+  }
+
   async captureApprovedAdapterFixture(input: CaptureApprovedAdapterFixtureInput): Promise<FixtureSummary> {
     const target = input.target === 'chapter-only' ? 'chapterImages' : 'metadata';
     const readiness = this.requireApprovedReadiness(input, target);
@@ -92,17 +105,18 @@ export class FixtureCaptureService {
     const results = await runFixtureFunctions(input.adapter, functionIds, input.html, input.url);
     assertUsefulApprovalResult(input.target, results);
     this.requireExtractionReadiness(input, target, results);
-    const location = await this.createLocation(input.url, `${sanitizePathSegment(input.adapter.id)}-${target}`);
+    const location = await this.createApprovedLocation(input, target);
     const expectedPath = join(location.directory, 'expected.json');
     const expectation: ApprovedFixtureExpectation = {
-      schemaVersion: 1, adapterId: input.adapter.id, sourceDiscoveryId: input.sourceDiscoveryId,
+      schemaVersion: 1, adapterId: input.adapter.id, adapterVersion: input.adapterVersion,
+      sourceDiscoveryId: input.sourceDiscoveryId,
       url: input.url, functionIds, results,
     };
     await writeApprovedFixture(location, input, target, expectation);
     return { id: location.id, domain: location.domain, url: input.url, title: input.title ?? '',
       htmlLength: input.html.length, capturedAt: location.capturedAt, path: location.htmlPath,
       expectedPath, adapterId: input.adapter.id, sourceDiscoveryId: input.sourceDiscoveryId,
-      functionIds, readiness };
+      adapterVersion: input.adapterVersion, functionIds, readiness };
   }
 
   private requireApprovedReadiness(input: CaptureApprovedAdapterFixtureInput,
@@ -124,29 +138,48 @@ export class FixtureCaptureService {
       `Accepted adapter extraction is incomplete: ${readiness.reasons.join(' ')}`);
   }
 
-  async verifyApprovedAdapterFixture(domain: string, id: string, adapter: IComicAdapter): Promise<{
+  async verifyApprovedAdapterFixture(manifest: AdapterPackageManifest, adapter: IComicAdapter): Promise<{
     fixture: FixtureSummary;
     passed: boolean;
     expected: Record<string, unknown>;
     actual: Record<string, unknown>;
   }> {
-    const fixtureDir = join(this.workspaceRoot, 'fixtures', sanitizePathSegment(domain), sanitizePathSegment(id));
+    const fixture = requireApprovalFixture(manifest);
+    const fixtureDir = this.approvedFixtureDirectory(manifest.adapterId, manifest.version, fixture.id);
     const expectation = JSON.parse(await readFile(join(fixtureDir, 'expected.json'), 'utf-8')) as ApprovedFixtureExpectation;
-    if (expectation.adapterId !== adapter.id) {
-      throw new Error(`Fixture expects adapter "${expectation.adapterId}", got "${adapter.id}".`);
-    }
-    const detail = await this.readFixture(domain, id, true);
+    assertExpectationIdentity(expectation, manifest, adapter);
+    const detail = await this.readApprovedAdapterFixture(manifest, true);
     const actual = await runFixtureFunctions(adapter, expectation.functionIds,
       detail.html ?? '', expectation.url);
-    const fixture = { ...detail.fixture, expectedPath: join(fixtureDir, 'expected.json'),
+    const summary = { ...detail.fixture, expectedPath: join(fixtureDir, 'expected.json'),
       adapterId: expectation.adapterId, sourceDiscoveryId: expectation.sourceDiscoveryId,
-      functionIds: expectation.functionIds };
-    return { fixture, passed: stableJson(actual) === stableJson(expectation.results),
+      adapterVersion: manifest.version, functionIds: expectation.functionIds };
+    return { fixture: summary, passed: stableJson(actual) === stableJson(expectation.results),
       expected: expectation.results, actual };
+  }
+
+  async readApprovedAdapterFixture(manifest: AdapterPackageManifest, includeHtml = false):
+    Promise<{ fixture: FixtureSummary; html?: string }> {
+    const fixture = requireApprovalFixture(manifest);
+    const directory = this.approvedFixtureDirectory(manifest.adapterId, manifest.version, fixture.id);
+    const detail = await this.readFixtureDirectory(directory, fixture.domain, fixture.id, includeHtml);
+    const paths = { path: join(directory, 'page.html'), expectedPath: join(directory, 'expected.json') };
+    return { ...detail, fixture: { ...detail.fixture, ...fixture, ...paths,
+      adapterId: manifest.adapterId, adapterVersion: manifest.version } };
+  }
+
+  private approvedFixtureDirectory(adapterId: string, version: string, id: string): string {
+    return join(this.workspaceRoot, 'approved-fixtures', sanitizePathSegment(adapterId),
+      sanitizePathSegment(version), sanitizePathSegment(id));
   }
 
   async readFixture(domain: string, id: string, includeHtml = false): Promise<{ fixture: FixtureSummary; html?: string }> {
     const fixtureDir = join(this.workspaceRoot, 'fixtures', sanitizePathSegment(domain), sanitizePathSegment(id));
+    return this.readFixtureDirectory(fixtureDir, domain, id, includeHtml);
+  }
+
+  private async readFixtureDirectory(fixtureDir: string, domain: string, id: string,
+    includeHtml: boolean): Promise<{ fixture: FixtureSummary; html?: string }> {
     const htmlPath = join(fixtureDir, 'page.html');
     const metaPath = join(fixtureDir, 'meta.md');
     const html = await readFile(htmlPath, 'utf-8');
@@ -183,10 +216,25 @@ async function writeApprovedFixture(location: FixtureLocation,
     `- title: ${input.title ?? ''}`, `- domain: ${location.domain}`, `- target: ${target}`,
     `- htmlLength: ${input.html.length}`, `- capturedAt: ${location.capturedAt}`,
     `- adapterId: ${input.adapter.id}`, `- sourceDiscoveryId: ${input.sourceDiscoveryId}`,
+    `- adapterVersion: ${input.adapterVersion}`,
     `- functionIds: ${expectation.functionIds.join(',')}`, ''].join('\n');
   await Promise.all([writeFile(location.htmlPath, normalizeFixtureHtml(input.html), 'utf-8'),
     writeFile(join(location.directory, 'expected.json'), `${JSON.stringify(expectation, null, 2)}\n`, 'utf-8'),
     writeFile(join(location.directory, 'meta.md'), meta, 'utf-8')]);
+}
+
+function requireApprovalFixture(manifest: AdapterPackageManifest) {
+  if (!manifest.approvalFixture) throw new Error(
+    `Adapter package ${manifest.adapterId}@${manifest.version} has no approved fixture.`);
+  return manifest.approvalFixture;
+}
+
+function assertExpectationIdentity(expectation: ApprovedFixtureExpectation,
+  manifest: AdapterPackageManifest, adapter: IComicAdapter): void {
+  if (expectation.adapterId !== adapter.id) throw new Error(
+    `Fixture expects adapter "${expectation.adapterId}", got "${adapter.id}".`);
+  if (expectation.adapterVersion !== manifest.version) throw new Error(
+    `Fixture expects version "${expectation.adapterVersion}", got "${manifest.version}".`);
 }
 
 function validateExpectedUrl(actual: string, expected?: string): void {

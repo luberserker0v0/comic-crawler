@@ -12,13 +12,21 @@ import {
 class FakePage implements PlaywrightPageLike {
   current = 'about:blank';
   focused = false;
+  candidateChecks = 0;
+  preparedCandidates: number[] = [];
 
   url(): string { return this.current; }
   async goto(url: string): Promise<void> { this.current = url; }
   async content(): Promise<string> { return '<main>chapter</main>'; }
   async waitForLoadState(): Promise<void> {}
   async evaluate<R, A>(pageFunction: (argument: A) => R | Promise<R>, _argument: A): Promise<R> {
-    if (pageFunction.name === 'initializeScrollPreparation') return 0 as R;
+    if (pageFunction.name === 'countScrollPreparationCandidates') {
+      this.candidateChecks += 1;
+      return (this.candidateChecks < 3 ? 0 : 3) as R;
+    }
+    if (pageFunction.name === 'scrollPreparationCandidate') {
+      this.preparedCandidates.push((_argument as { index: number }).index);
+    }
     if (pageFunction.name === 'scrollPreparationBottomStep') return true as R;
     return undefined as R;
   }
@@ -95,6 +103,7 @@ test('PlaywrightPageDriver maps semantic page commands', async () => {
   await driver.prepareContent(page, 'scroll-through', 1_000, signal);
   await driver.focus(page, signal);
   assert.equal(page.focused, true);
+  assert.deepEqual(page.preparedCandidates, [0, 1, 2]);
 });
 
 test('CopyProfileProvisioner applies the fixed cache and lock exclusions', async () => {

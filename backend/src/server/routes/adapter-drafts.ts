@@ -3,10 +3,13 @@ import type { AdapterFunctionTestRequest, BrowserTarget, NetworkConfig, SaveAdap
 import type { AdapterDraftService } from '../../adapter-drafts/service';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { DynamicSiteAdapter, type DynamicSiteAdapterManifest } from '../../adapter/dynamic-site-adapter';
-import { isKnownAdapterFunction, testAdapterFunction } from './adapters';
+import { adapterFunctionNeedsBrowser, isKnownAdapterFunction, testAdapterFunction } from './adapters';
 import { instantiateAdapterImplementationDraft, instantiateProjectAdapterDraft } from '../../selector-discovery/adapter-draft-runtime';
 import type { BrowserRenderService } from '../../browser/browser-render-service';
 import type { HtmlRenderer } from '../../crawler/html-renderer';
+import type { ApiSecurityService } from '../../security/api-security';
+import { requestPrincipal } from '../middleware/api-security';
+import type { BrowserLeaseClaim } from './adapter-function-runner';
 
 interface AdapterDraftRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
@@ -14,11 +17,12 @@ interface AdapterDraftRouteOptions {
     request: FastifyRequest,
     target: BrowserTarget | undefined,
     initialUrl: string,
-    action: (sessionId: string) => Promise<T>
+    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>
   ) => Promise<T>;
   browserRenderService?: BrowserRenderService;
   htmlRenderer?: HtmlRenderer;
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
+  apiSecurity?: ApiSecurityService;
 }
 
 interface DraftRouteContext {
@@ -99,12 +103,16 @@ async function executeDraftTest(request: FastifyRequest, functionId: any,
     challengeDiscoveryService: context.options.challengeDiscoveryService, network };
   if (context.options.htmlRenderer) return testAdapterFunction(adapter, functionId, body.url,
     { ...testOptions, htmlRenderer: context.options.htmlRenderer });
+  if (!adapterFunctionNeedsBrowser(functionId)) return testAdapterFunction(adapter, functionId, body.url, testOptions);
   if (body.challengeDiscoveryId) return testAdapterFunction(adapter, functionId, body.url, testOptions);
   const { withBrowserSession, browserRenderService } = context.options;
   if (!withBrowserSession || !browserRenderService) throw new Error('Browser Worker service is not configured.');
-  return withBrowserSession(request, body.browserTarget, body.url, (sessionId) =>
+  const ownerUserId = context.options.apiSecurity
+    ? requestPrincipal(request, context.options.apiSecurity).userId : 'public';
+  return withBrowserSession(request, body.browserTarget, body.url, (sessionId, claimBrowserLease) =>
     testAdapterFunction(adapter, functionId, body.url,
-      { ...testOptions, htmlRenderer: createSessionRenderer(browserRenderService, sessionId) }));
+      { ...testOptions, htmlRenderer: createSessionRenderer(browserRenderService, sessionId),
+        verificationHandoff: { ownerUserId, browserTarget: body.browserTarget, claimBrowserLease } }));
 }
 
 function instantiateDraft(draft: NonNullable<Awaited<ReturnType<AdapterDraftService['get']>>>,

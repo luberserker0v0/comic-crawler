@@ -25,6 +25,7 @@ const driver: BrowserPageDriver<Page> = {
 
 test('ExistingTabExecutor adopts and preserves a registered tab', testExistingTabLifecycle);
 test('ExistingTabExecutor rejects a moved or concurrently leased tab', testExistingTabRejection);
+test('ExistingTabExecutor forwards command cancellation to the BrowserPageDriver', testExistingTabCancellation);
 test('ManagedProfileExecutor opens a profile without navigation and closes its owned profile', testManagedProfileLifecycle);
 
 async function testExistingTabLifecycle(): Promise<void> {
@@ -59,6 +60,19 @@ async function testExistingTabRejection(): Promise<void> {
   await first.close();
   page.url = 'https://example.test/another-chapter';
   await assert.rejects(() => executor.openSession(request, signal()), /not on the requested URL/);
+}
+
+async function testExistingTabCancellation(): Promise<void> {
+  const page = createPage('https://example.test/chapter');
+  const abortDriver = { ...driver, async content(_page: Page, commandSignal: AbortSignal) {
+    if (commandSignal.aborted) throw new Error('Browser Client command was cancelled.');
+    return page.html;
+  } };
+  const executor = new ExistingTabExecutor(abortDriver);
+  await executor.registerResource(resource(page.url), page);
+  const session = await executor.openSession(existingRequest(page.url), signal());
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(() => session.execute({ type: 'page.get-content' }, controller.signal), /cancelled/);
 }
 
 async function testManagedProfileLifecycle(): Promise<void> {

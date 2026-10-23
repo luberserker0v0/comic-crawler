@@ -22,14 +22,14 @@ Execution mode 與 browser resource 契約見 `BROWSER_EXECUTION_MODES.md`。
 ## 2. 設計目標
 
 1. ComicCrawler 提供單一 `@comiccrawler/browser-client-sdk` 套件。
-2. Extension、GUI、CLI 與 local service 使用相同 SDK API。
-3. SDK 不依賴 Node、Playwright 或 WebExtension API。
+2. 所有 Browser Client implementation 使用相同 SDK API。
+3. SDK 不依賴 Node、Playwright 或特定瀏覽器平台 API。
 4. Consumer 注入 browser executor 與 state store。
 5. 使用者端只建立 outbound connection。
 6. Cloud 不直接連入使用者裝置。
 7. 第一版每個 Worker 同時只執行一個工作。
 8. Crawler adapter 繼續在 Cloud 端解析 rendered DOM。
-9. Extension 可以使用使用者批准的現有 Chrome tab。
+9. Existing-tab Browser Client 可以使用使用者批准的 Chrome tab。
 10. Browser operation protocol 保持小型、明確與可稽核。
 
 ## 3. 非目標
@@ -62,7 +62,7 @@ flowchart LR
   end
 
   subgraph Device["User Device"]
-    Consumer["Consumer Application<br/>Extension / GUI / CLI / Local Service"]
+    Consumer["Browser Client"]
     SDK["@comiccrawler/browser-client-sdk"]
     Executor["Consumer BrowserExecutor"]
     State["Consumer ClientStateStore"]
@@ -527,7 +527,7 @@ sequenceDiagram
   Task->>Runtime: resume checkpoint
 ```
 
-Cloud 不嘗試自動解決 CAPTCHA。Extension Executor 使用目前 Profile 與使用者批准的 tab，因此驗證狀態保留在本機 browser。
+Cloud 不嘗試自動解決 CAPTCHA。Existing-tab Browser Client 使用目前 Profile 與使用者批准的 tab，因此驗證狀態保留在本機 browser。
 
 ## 13. Adapter task 流程
 
@@ -582,16 +582,14 @@ stateDiagram-v2
   Closed --> [*]
 ```
 
-## 15. Consumer 實作
+## 15. Browser Client 實作
 
-### 15.1 WebExtension Consumer
+### 15.1 Existing-tab Browser Client
 
-`koharu-manga-extension` 是 SDK consumer，不是 ComicCrawler runtime dependency。
-
-Consumer 負責：
+Browser Client 負責：
 
 1. 取得使用者 tab 授權。
-2. 將 `chrome` API 注入 `WebExtensionTabDriver`。
+2. 實作通用 `BrowserPageDriver`。
 3. 使用 `ExistingTabExecutor`。
 4. 以 `client.registerResource()` 發佈目前 tab。
 5. 實作 `ClientStateStore`。
@@ -599,7 +597,7 @@ Consumer 負責：
 7. Session 結束時解除控制。
 8. 不關閉使用者 Chrome 或刪除使用者 Profile。
 
-### 15.2 Node Consumer
+### 15.2 Managed-profile Browser Client
 
 CLI、GUI helper 或 local service 負責：
 
@@ -611,7 +609,7 @@ CLI、GUI helper 或 local service 負責：
 6. Session 結束時只清理自己擁有的 Profile 與 browser process。
 
 SDK 定義 execution、Playwright 與 Profile Strategy。Node filesystem 與
-Playwright instance 仍由 Consumer 注入，因此 WebExtension bundle 不載入
+Playwright instance 仍由 Browser Client 注入，因此 existing-tab Browser Client 不載入
 Node 或 Playwright runtime。
 
 ## 16. Security boundary
@@ -622,7 +620,7 @@ Node 或 Playwright runtime。
 4. Cloud 必須檢查 client owner。
 5. Worker 只能執行其 owner 的工作。
 6. Command 必須綁定 active lease 與 session。
-7. Extension 必須限制操作在使用者批准的 tab。
+7. Existing-tab Browser Client 必須限制操作在使用者批准的 tab。
 8. SDK 不保存完整 DOM 到 log。
 9. 第一版不允許任意 script execution。
 10. Cloud deployment 必須使用 HTTPS 與 WSS。
@@ -679,9 +677,9 @@ Cloud integration test 必須驗證：
 ## 19. 驗收條件
 
 1. 所有 Consumer 使用同一 SDK package root。
-2. SDK build 不包含 Node、Playwright 或 WebExtension runtime dependency。
+2. SDK build 不包含 Node、Playwright 或特定瀏覽器平台 runtime dependency。
 3. 使用者裝置不開放 inbound port。
-4. Extension 可以使用批准 tab 的現有 Profile state。
+4. Existing-tab Browser Client 可以使用批准 tab 的現有 Profile state。
 5. Node Consumer 可以用獨立 Executor 管理 browser。
 6. Crawler 與 adapter task 共用同一 command protocol。
 7. Scheduler 保證每個 Worker 一次一個工作。

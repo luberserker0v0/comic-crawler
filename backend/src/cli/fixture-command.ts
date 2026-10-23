@@ -36,6 +36,6 @@ async function verifyFixture(ctx: CliCommandContext, document: AdapterPackageDoc
   const adapterId = document.manifest.adapterId;
   const adapter = ctx.options.adapterRegistry.get(adapterId);
   if (!adapter) return [adapterId, fixture.id, 'missing adapter'];
-  const result = await ctx.options.fixtureCaptureService!.verifyApprovedAdapterFixture(fixture.domain, fixture.id, adapter);
+  const result = await ctx.options.fixtureCaptureService!.verifyApprovedAdapterFixture(document.manifest, adapter);
   return [adapterId, fixture.id, result.passed ? 'passed' : 'failed'];
 }

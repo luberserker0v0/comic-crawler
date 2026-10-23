@@ -94,12 +94,14 @@
 
 ### ADP-04 測試 adapter 函式
 
-1. 選擇 adapter function。
-2. 輸入符合用途的 URL。
-3. 執行 function test。
-4. 檢查 structured result。
+1. 輸入 Comix 章節 URL。
+2. 解析 matching adapter。
+3. 選擇 chapter image function。
+4. 選擇相符的 existing-tab resource。
+5. 執行 function test。
+6. 檢查完整 image URL result。
 
-預期：測試結果包含 readiness 與 timing。
+預期：Comix 不會被 URL path 規則鎖定，結果包含 readiness 與 timing。
 
 ### ADP-05 擷取 responsive chapter
 
@@ -257,16 +259,7 @@
 
 預期：active pointer 依序切換且 package 不變。
 
-### ADP-17 遷移 generated implementation
-
-1. 建立舊 implementation record。
-2. 啟動 catalog migration。
-3. 讀取 active package。
-4. 檢查舊 storage key。
-
-預期：內容完整遷移且舊 key 被移除。
-
-### ADP-18 靜態檢查分享 package
+### ADP-17 靜態檢查分享 package
 
 1. 讀取 package JSON。
 2. 驗證 schema。
@@ -275,7 +268,7 @@
 
 預期：檢查完成且不執行 package code。
 
-### ADP-19 拒絕遭修改的 package
+### ADP-18 拒絕遭修改的 package
 
 1. 匯出有效 package。
 2. 修改 manifest。
@@ -283,7 +276,7 @@
 
 預期：系統拒絕 checksum 不符的 package。
 
-### ADP-20 匯入分享 package
+### ADP-19 匯入分享 package
 
 1. 檢查有效 package。
 2. 執行 import。
@@ -292,7 +285,7 @@
 
 預期：version 已安裝但尚未啟用。
 
-### ADP-21 明確啟用 imported package
+### ADP-20 明確啟用 imported package
 
 1. 匯入有效 package。
 2. 指定 activate。
@@ -302,7 +295,7 @@
 
 預期：驗證通過後 package 才成為 active。
 
-### ADP-22 打包 project-source adapter
+### ADP-21 打包 project-source adapter
 
 1. 讀取 project-source TypeScript。
 2. 執行 portable runtime 驗證。
@@ -311,7 +304,7 @@
 
 預期：package 不依賴 Server 內部模組且可在 Catalog sandbox 執行。
 
-### ADP-23 驗證 Registry source packages
+### ADP-22 驗證 Registry source packages
 
 1. 掃描 `registry/packages/`。
 2. 驗證每個 package schema。
@@ -319,6 +312,15 @@
 4. 在 Catalog sandbox 建立 adapter。
 
 預期：所有納入 Git 的 package 都可安全載入。
+
+### ADP-23 驗證版本所屬 fixture
+
+1. 接受一個 adapter draft。
+2. 取得產生的 version。
+3. 讀取該 version 的 fixture。
+4. 執行完整 fixture replay。
+
+預期：fixture 路徑包含 adapter ID 與 version，replay 使用同一版程式。
 
 ### COMIX-01 擷取 Comix fixture
 
@@ -415,6 +417,33 @@
 4. 檢查正式 adapter registry。
 
 預期：draft 可測試但不會提前發布。
+
+### DISC-09 刪除未接受工作
+
+1. 建立失敗的 discovery job。
+2. 儲存 implementation artifact。
+3. 刪除 build job。
+4. 查詢工作與 artifact。
+
+預期：工作與中間產物一同消失。
+
+### DISC-10 清除已接受工作
+
+1. 接受 adapter draft。
+2. 確認 Catalog package。
+3. 清除 build job 紀錄。
+4. 重新載入正式 adapter。
+
+預期：工作消失，正式 adapter 保留。
+
+### DISC-11 保護待審工作與版本 fixture
+
+1. 建立過期的待審工作。
+2. 建立版本所屬的 approval fixture。
+3. 執行 maintenance cleanup。
+4. 查詢工作與 fixture。
+
+預期：待審工作保留，正式 fixture 不受診斷資料 retention 影響。
 
 ### CRAWL-01 使用新 adapter
 
@@ -573,10 +602,10 @@
 
 預期：每頁保留 `data-comiccrawler-*` 圖片 URL。
 
-### BC-16 中止 WebExtension command
+### BC-16 中止 existing-tab Browser Client command
 
 1. 建立已中止的 command signal。
-2. 呼叫 WebExtension driver。
+2. 呼叫測試用 BrowserPageDriver。
 3. 檢查 tab API 呼叫。
 
 預期：Driver 回報取消且不操作 tab。
@@ -611,6 +640,42 @@
 5. 讀取 handoff。
 
 預期：handoff history 保留並綁定新 target。
+
+### BC-20 關閉 managed browser
+
+1. 建立 managed-profile session。
+2. 使用者關閉 browser。
+3. 等待 Client 回報。
+4. 讀取 Worker 狀態。
+
+預期：session 清除且 Worker 回到 idle。
+
+### BC-21 Server 重啟後清除 orphan session
+
+1. 建立 managed-profile session。
+2. 重啟 Server。
+3. 讓 Client 重新連線。
+4. 取得新的 Worker ID。
+
+預期：Client 關閉舊 session 並接受新工作。
+
+### BC-22 等待動態 reader
+
+1. 開啟延遲建立的 reader。
+2. 執行 `page.prepare-content`。
+3. 等待 reader page 出現。
+4. 捲動每個動態 page。
+
+預期：prepared DOM 保留全部圖片 URL。
+
+### BC-23 以 handoff ID 繼續 Adapter Lab
+
+1. 建立 Adapter Lab handoff。
+2. 保留 busy Worker lease。
+3. 完成人工驗證。
+4. 按下繼續測試。
+
+預期：沿用原 session 並完成測試。
 
 ## 6. WebUI
 

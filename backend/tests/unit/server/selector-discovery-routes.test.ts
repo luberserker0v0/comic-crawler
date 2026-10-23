@@ -10,6 +10,7 @@ function createDiscoveryService(overrides: Partial<Record<string, any>> = {}) {
       retry: async () => { throw new Error('not used'); },
       promote: async () => { throw new Error('not used'); },
       reject: async () => { throw new Error('not used'); },
+      deleteJob: async () => false,
       ...overrides,
     } as any;
   }
@@ -30,6 +31,21 @@ describe('Selector discovery routes', () => {
 function SelectorDiscoveryRoutesTestGroup1(): void {
   it('queues discovery through the canonical /api/selector-discovery endpoint', SelectorDiscoveryRoutesTestQueuesDiscoveryThroughTheCanonicalApiSelectorDiscoveryEndpoint);
   it('exposes and tests AO-generated TypeScript implementation drafts', SelectorDiscoveryRoutesTestExposesAndTestsAOGeneratedTypeScriptImplementationDrafts);
+  it('clears a promoted job without deleting its adapter', SelectorDiscoveryRoutesTestClearsPromotedJobWithoutDeletingItsAdapter);
+}
+
+async function SelectorDiscoveryRoutesTestClearsPromotedJobWithoutDeletingItsAdapter() {
+  const app = fastify();
+  const deleted: string[] = [];
+  setupSelectorDiscoveryRoutes(app, createDiscoveryService({
+    get: async () => ({ id: 'disc-promoted', status: 'promoted' }),
+    deleteJob: async (id: string) => { deleted.push(id); return true; },
+  }), createSettingsStore());
+  const response = await app.inject({ method: 'DELETE', url: '/api/selector-discovery/disc-promoted' });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().data).toEqual({ id: 'disc-promoted', deleted: true, adapterPreserved: true });
+  expect(deleted).toEqual(['disc-promoted']);
+  await app.close();
 }
 
 async function SelectorDiscoveryRoutesTestQueuesDiscoveryThroughTheCanonicalApiSelectorDiscoveryEndpoint() {

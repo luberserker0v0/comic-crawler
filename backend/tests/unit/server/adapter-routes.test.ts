@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AdapterRegistry } from '../../../src/adapter/registry';
 import { HappyMhAdapter } from '../../../src/adapter/sites/happymh';
+import { ComixAdapter } from '../../../src/adapter/sites/comix';
 import { DynamicSiteAdapter } from '../../../src/adapter/dynamic-site-adapter';
 import { AdapterBase } from '../../../src/adapter/base';
 import { setupAdaptersRoutes } from '../../../src/server/routes/adapters';
@@ -190,6 +191,7 @@ function AdapterRoutesTestGroup1(): void {
   afterEach(AdapterRoutesTestScenario2);
   it('resolves HappyMH as a full adapter for manga catalog URLs', AdapterRoutesTestResolvesHappyMHAsAFullAdapterForMangaCatalogURLs);
   it('resolves HappyMH for specific chapter URLs', AdapterRoutesTestResolvesHappyMHForSpecificChapterURLs);
+  it('inspects a Comix chapter URL without requiring metadata', AdapterRoutesTestInspectsAComixChapterURLWithoutRequiringMetadata);
   it('extracts the complete ordered image URL list directly through the matched adapter', AdapterRoutesTestExtractsTheCompleteOrderedImageURLListDirectlyThroughTheMatchedAdapter);
   it('extracts chapter images through the task-bound Browser Worker session', AdapterRoutesTestExtractsChapterImagesThroughTheTaskBoundBrowserWorkerSession);
   it('reuses the verified challenge session instead of leasing a second Browser Worker session', AdapterRoutesTestReusesTheVerifiedChallengeSessionInsteadOfLeasingASecondBrowserWorkerSession);
@@ -221,6 +223,8 @@ function AdapterRoutesTestGroup2(): void {
 }
 
 function AdapterRoutesTestGroup3(): void {
+  it('keeps the selected Browser target on Adapter Lab verification handoff', AdapterRoutesTestKeepsSelectedBrowserTargetOnHandoff);
+  it('uses the attached renderer while testing verification', AdapterRoutesTestUsesAttachedRendererWhileTestingVerification);
   it('starts verification handoff for rendered extraction failures with verification message', AdapterRoutesTestStartsVerificationHandoffForRenderedExtractionFailuresWithVerificationMessage);
   it('detects verification from HTTP 403 fetch failures and opens handoff', AdapterRoutesTestDetectsVerificationFromHTTP403FetchFailuresAndOpensHandoff);
   it('offers verification handoff when Playwright rendering times out', AdapterRoutesTestOffersVerificationHandoffWhenPlaywrightRenderingTimesOut);
@@ -228,6 +232,44 @@ function AdapterRoutesTestGroup3(): void {
   it('tests chapter-list extraction without hidden catalog expansion or fixture capture', AdapterRoutesTestTestsChapterListExtractionWithoutHiddenCatalogExpansionOrFixtureCapture);
   it('does not treat residual challenge keywords inside verified manga HTML as active verification', AdapterRoutesTestDoesNotTreatResidualChallengeKeywordsInsideVerifiedMangaHTMLAsActiveVerification);
   it('rejects verified browser snapshots from a different page path', AdapterRoutesTestRejectsVerifiedBrowserSnapshotsFromADifferentPagePath);
+}
+
+async function AdapterRoutesTestUsesAttachedRendererWhileTestingVerification() {
+  const htmlRenderer = { render: jest.fn(async () => '<html><main>Chapter</main></html>'),
+    dispose: jest.fn(async () => undefined) };
+  const app = appWithAdapter(new RenderedDemoAdapter(), { htmlRenderer });
+  const response = await postFunction(app, 'rendered-demo', 'detectVerificationRequired',
+    { url: 'https://example.com/read/1' });
+  expect(response.json().data).toMatchObject({ ok: true, status: 'passed',
+    resultSummary: { verificationRequired: false, source: 'fetched-html' } });
+  expect(response.json().data.resultSummary).not.toHaveProperty('error');
+  expect(htmlRenderer.render).toHaveBeenCalledWith('https://example.com/read/1');
+  await app.close();
+}
+
+async function AdapterRoutesTestKeepsSelectedBrowserTargetOnHandoff() {
+    const browserTarget = { mode: 'existing-tab' as const, workerId: 'worker-1', resourceId: 'tab-1' };
+    const browserLease = { sessionId: 'session-1', release: jest.fn(async () => undefined) };
+    const createDeferred = jest.fn(async (input) => ({ id: 'chal-comix', status: 'queued',
+        normalizedUrl: input.url, ownerUserId: input.ownerUserId, browserTarget: input.browserTarget }));
+    const withBrowserSession = jest.fn(async (_request, _target, _url, _context, action) =>
+      action('session-1', () => browserLease));
+    const app = appWithAdapter(new ComixAdapter(), { challengeDiscoveryService: { createDeferred } as any,
+        browserRenderService: new BrowserRenderService({ execute: verificationBrowserCommandResult }),
+        withBrowserSession: withBrowserSession as any });
+    const url = 'https://comix.to/title/demo/11212633-chapter-51.1';
+    const response = await postFunction(app, 'comix', 'extractChapterImageUrls', { url, browserTarget });
+    expect(response.json().data).toMatchObject({ status: 'verification_required',
+        challenge: { ownerUserId: 'public', browserTarget } });
+    expect(createDeferred).toHaveBeenCalledWith({ url, ownerUserId: 'public', browserTarget, browserLease });
+    await app.close();
+}
+
+async function verificationBrowserCommandResult(_sessionId: string, command: { type: string; url?: string }) {
+    if (command.type === 'page.get-content') return { type: command.type as 'page.get-content',
+        url: command.url ?? 'https://comix.to/', html: '<title>Cloudflare</title><p>Verify you are human</p>' };
+    if (command.type === 'page.get-url') return { type: command.type as 'page.get-url', url: 'about:blank' };
+    return { type: command.type, url: command.url ?? 'https://comix.to/' } as any;
 }
 
 async function AdapterRoutesTestScenario1() {
@@ -289,6 +331,18 @@ async function AdapterRoutesTestResolvesHappyMHForSpecificChapterURLs() {
     expect(response.statusCode).toBe(200);
     expect(response.json().data.status).toBe('matched');
     expect(response.json().data.adapter.id).toBe('happymh');
+    await app.close();
+}
+
+async function AdapterRoutesTestInspectsAComixChapterURLWithoutRequiringMetadata() {
+    const app = appWithAdapter(new ComixAdapter());
+    const response = await app.inject({ method: 'POST', url: '/api/adapters/resolve', payload: {
+        url: 'https://comix.to/title/nl58n-im-the-evil-lord-of-an-intergalactic-empire/11212633-chapter-51.1',
+        mode: 'inspect',
+    } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ status: 'matched', mode: 'inspect',
+        requiredCapabilities: {}, adapter: { id: 'comix', capabilities: { chapterImages: true } } });
     await app.close();
 }
 
@@ -397,8 +451,9 @@ async function AdapterRoutesTestReusesTheVerifiedChallengeSessionInsteadOfLeasin
         throw new Error('A second Browser Worker session must not be acquired.');
     });
     const readRemotePageSnapshot = jest.fn(readyChapterSnapshot);
+    const releaseBrowserLease = jest.fn(async () => undefined);
     const app = appWithAdapter(new RenderedDemoAdapter(),
-      reuseChallengeOptions(readRemotePageSnapshot, withBrowserSession));
+      reuseChallengeOptions(readRemotePageSnapshot, withBrowserSession, releaseBrowserLease));
     const response = await app.inject({ method: 'POST', url: '/api/adapters/chapter-images',
       payload: { url: 'https://example.com/read/1', challengeDiscoveryId: 'chal-1' } });
     expect(response.statusCode).toBe(200);
@@ -408,12 +463,14 @@ async function AdapterRoutesTestReusesTheVerifiedChallengeSessionInsteadOfLeasin
     expect(readRemotePageSnapshot).toHaveBeenCalledWith('chal-1',
       { settle: true, allowNavigate: false });
     expect(withBrowserSession).not.toHaveBeenCalled();
+    expect(releaseBrowserLease).toHaveBeenCalledWith('chal-1');
     await app.close();
 }
 
-function reuseChallengeOptions(readRemotePageSnapshot: jest.Mock, withBrowserSession: jest.Mock): RouteOptions {
+function reuseChallengeOptions(readRemotePageSnapshot: jest.Mock, withBrowserSession: jest.Mock,
+  releaseBrowserLease: jest.Mock): RouteOptions {
   return { challengeDiscoveryService: { get: jest.fn(async () => ({ id: 'chal-1', status: 'ready' })),
-    readRemotePageSnapshot } as any,
+    readRemotePageSnapshot, releaseBrowserLease } as any,
     browserRenderService: new BrowserRenderService({ execute: async () => {
       throw new Error('Unexpected BrowserRenderService call.');
     } }), withBrowserSession: withBrowserSession as any };

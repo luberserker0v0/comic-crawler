@@ -54,15 +54,16 @@ Catalog data lives below the configured ComicCrawler data root:
 adapter-catalog/
   index
   adapters/<adapter-id>/versions/<version>/package
+agent-workspaces/
+  approved-fixtures/<adapter-id>/<version>/<fixture-id>/
 ```
 
 `npm run clean` never removes this data. Use application-specific maintenance
 or backup procedures for runtime data instead of build cleanup commands.
 
-At startup, ComicCrawler performs the bounded migration of the former generated
-TypeScript implementation record, verifies the new package, and removes the old
-key. Runtime loading never falls back to that old record. Old selector-manifest
-records are rejected and must be converted to TypeScript packages explicitly.
+ComicCrawler reads only Adapter Catalog packages and version-owned approval
+fixtures. It has no runtime fallback or migration path for former generated
+Adapter records or domain-owned approval fixtures.
 
 ## Export and import
 

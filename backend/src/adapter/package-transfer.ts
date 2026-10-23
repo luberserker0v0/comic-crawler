@@ -16,7 +16,8 @@ const Readiness = z.object({
     'capture_verified_fixture', 'manual_review']),
 }).strict();
 const Fixture = z.object({ id: z.string(), domain: z.string(), url: z.string(), title: z.string(),
-  htmlLength: z.number().int().nonnegative(), capturedAt: z.string(), adapterId: z.string().optional(),
+  htmlLength: z.number().int().nonnegative(), capturedAt: z.string(), adapterId: Identifier,
+  adapterVersion: Identifier,
   sourceDiscoveryId: z.string().optional(), functionIds: z.array(z.string()).optional(),
   readiness: Readiness }).strict();
 const Manifest = z.object({ schemaVersion: z.literal(1), adapterId: Identifier, version: Identifier,

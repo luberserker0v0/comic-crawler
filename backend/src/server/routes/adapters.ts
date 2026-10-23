@@ -36,7 +36,7 @@ import { instantiateCatalogPackage } from '../../adapter/catalog-runtime';
 import { activateAdapterPackage, importAdapterPackage } from '../../adapter/package-transfer';
 import type { ChallengeDiscoveryService } from '../../challenge';
 import { getAdapterImplementation } from './adapter-function-source';
-import { testAdapterFunction } from './adapter-function-runner';
+import { testAdapterFunction, type BrowserLeaseClaim } from './adapter-function-runner';
 import type { AdapterFunctionId } from './adapter-function-types';
 import type { BrowserTarget, NetworkConfig } from '@comiccrawler/shared';
 import type { BrowserRenderService } from '../../browser/browser-render-service';
@@ -54,7 +54,7 @@ interface AdapterRouteOptions {
     target: BrowserTarget | undefined,
     initialUrl: string,
     renderContext: EffectiveRenderContext | undefined,
-    action: (sessionId: string) => Promise<T>
+    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>
   ) => Promise<T>;
   browserRenderService?: BrowserRenderService;
   htmlRenderer?: HtmlRenderer;
@@ -280,17 +280,17 @@ async function restoreActiveAdapter(
 
 function resolveAdapter(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): void {
   try {
-    const body = request.body as { url?: string; mode?: 'all' | 'chapters' };
+    const body = request.body as { url?: string; mode?: 'all' | 'chapters' | 'inspect' };
     if (!body.url) return void reply.code(400).send({ error: 'URL is required' });
     const mode = body.mode ?? 'all';
-    if (mode !== 'all' && mode !== 'chapters')
-      return void reply.code(400).send({ error: 'Mode must be "all" or "chapters"' });
+    if (!['all', 'chapters', 'inspect'].includes(mode))
+      return void reply.code(400).send({ error: 'Mode must be "all", "chapters", or "inspect"' });
     reply.send({ data: createAdapterResolution(ctx.registry, new URL(body.url), mode) });
   } catch (error) { reply.code(400).send({ error: error instanceof Error ? error.message : String(error) }); }
 }
 
-function createAdapterResolution(registry: AdapterRegistry, url: URL, mode: 'all' | 'chapters') {
-  const requiredCapabilities = mode === 'chapters' ? { chapterImages: true } : { metadata: true, chapterImages: true };
+function createAdapterResolution(registry: AdapterRegistry, url: URL, mode: 'all' | 'chapters' | 'inspect') {
+  const requiredCapabilities = resolutionCapabilities(mode);
   const matched = registry.findByUrlWithCapabilities(url.href, requiredCapabilities);
   const anyMatched = registry.findByUrl(url.href);
   return { url: url.href, hostname: url.hostname, mode, requiredCapabilities,
@@ -298,6 +298,11 @@ function createAdapterResolution(registry: AdapterRegistry, url: URL, mode: 'all
     adapter: matched ? describeAdapter(matched) : undefined,
     matchedAdapter: anyMatched ? describeAdapter(anyMatched) : undefined,
     discoveryTarget: mode === 'chapters' ? 'chapter-only' : 'full' };
+}
+
+function resolutionCapabilities(mode: 'all' | 'chapters' | 'inspect') {
+  if (mode === 'inspect') return {};
+  return mode === 'chapters' ? { chapterImages: true } : { metadata: true, chapterImages: true };
 }
 
 async function extractChapterImages(
@@ -349,9 +354,9 @@ async function runChapterImageExtraction(
   const ownerUserId = ctx.options.apiSecurity
     ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
   return ctx.options.withBrowserSession(request, input.body.browserTarget, input.chapterUrl,
-    input.renderContext, (sessionId) => testAdapterFunction(input.adapter, 'extractChapterImageUrls',
+    input.renderContext, (sessionId, claimBrowserLease) => testAdapterFunction(input.adapter, 'extractChapterImageUrls',
       input.chapterUrl, { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId),
-        verificationHandoff: { ownerUserId, browserTarget: input.body.browserTarget } }));
+        verificationHandoff: { ownerUserId, browserTarget: input.body.browserTarget, claimBrowserLease } }));
 }
 
 async function getAdapterDetails(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -399,11 +404,19 @@ async function runAdapterRouteFunction(
     network: await ctx.options.getNetworkConfig?.() };
   if (ctx.options.htmlRenderer) return testAdapterFunction(adapter, functionId, body.url,
     { ...base, htmlRenderer: ctx.options.htmlRenderer });
+  if (!adapterFunctionNeedsBrowser(functionId)) return testAdapterFunction(adapter, functionId, body.url, base);
   if (body.challengeDiscoveryId || !ctx.options.withBrowserSession || !ctx.options.browserRenderService)
     return testAdapterFunction(adapter, functionId, body.url, base);
+  const ownerUserId = ctx.options.apiSecurity
+    ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
   return ctx.options.withBrowserSession(request, body.browserTarget, body.url, undefined,
-    (sessionId) => testAdapterFunction(adapter, functionId, body.url,
-      { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId) }));
+    (sessionId, claimBrowserLease) => testAdapterFunction(adapter, functionId, body.url,
+      { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId),
+        verificationHandoff: { ownerUserId, browserTarget: body.browserTarget, claimBrowserLease } }));
+}
+
+export function adapterFunctionNeedsBrowser(functionId: AdapterFunctionId): boolean {
+  return functionId !== 'matchUrl' && functionId !== 'describeVerificationHandoff';
 }
 
 function sendChapterImagesResponse(

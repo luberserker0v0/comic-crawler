@@ -49,6 +49,9 @@ export interface SelectorDiscoveryJob {
   phase?: 'known_adapter' | 'phase1' | 'phase2' | SelectorDiscoveryCapabilityStage | 'compose' | 'complete';
   createdAt: string;
   updatedAt: string;
+  finishedAt?: string;
+  promotedVersion?: string;
+  artifactsCleanedAt?: string;
   error?: string;
   retriedFromId?: string;
   phase1Markdown?: string;

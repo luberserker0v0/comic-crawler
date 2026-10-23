@@ -51,7 +51,7 @@ async function resolvePreview(url: string, mode: TaskMode, state: PreviewSetters
   try {
     const response = await api.resolveAdapter({ url, mode });
     if (cancelled()) return;
-    state.setAdapterPreview(response.data);
+    state.setAdapterPreview({ ...response.data, mode });
     state.setAdapterPreviewError(null);
   } catch (error) {
     if (cancelled()) return;

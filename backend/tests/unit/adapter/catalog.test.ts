@@ -3,7 +3,6 @@ import type { AdapterPackageDocument } from '@comiccrawler/shared';
 import { AdapterCatalog } from '../../../src/adapter/catalog';
 import { createAdapterPackage } from '../../../src/adapter/package-builder';
 import { instantiateAdapterImplementationDraft } from '../../../src/selector-discovery/adapter-draft-runtime';
-import { migrateLegacyAdapterStorage, LEGACY_IMPLEMENTATIONS_KEY } from '../../../src/adapter/catalog-migration';
 
 class MemoryStorage implements IStorage {
   readonly values = new Map<string, unknown>();
@@ -18,7 +17,6 @@ describe('AdapterCatalog', () => {
   it('stores immutable approved versions and activates the latest version', storesImmutableVersions);
   it('rolls back, deactivates, and restores approved versions', rollsBackAndRestores);
   it('rejects different content for an existing immutable version', rejectsVersionMutation);
-  it('migrates legacy generated adapters and deletes the legacy key', migratesLegacyGeneratedAdapter);
 });
 
 async function storesImmutableVersions() {
@@ -53,16 +51,6 @@ async function rejectsVersionMutation() {
   await expect(catalog.installApproved(mutated)).rejects.toThrow('immutable');
 }
 
-async function migratesLegacyGeneratedAdapter() {
-  const storage = new MemoryStorage();
-  const catalog = new AdapterCatalog(storage);
-  const source = implementationSource('img.page');
-  await storage.write(LEGACY_IMPLEMENTATIONS_KEY, [legacyRecord(source)]);
-  expect(await migrateLegacyAdapterStorage(storage, catalog)).toBe(1);
-  expect(await storage.exists(LEGACY_IMPLEMENTATIONS_KEY)).toBe(false);
-  expect((await catalog.getActivePackage('demo'))?.implementationTs).toBe(source);
-}
-
 async function createCatalog(): Promise<AdapterCatalog> {
   const catalog = new AdapterCatalog(new MemoryStorage());
   await catalog.initialize();
@@ -74,13 +62,6 @@ function packageFor(selector: string): AdapterPackageDocument {
   const adapter = instantiateAdapterImplementationDraft(source);
   return createAdapterPackage({ adapter, implementationTs: source, origin: 'local-generated',
     createdAt: '2026-10-21T12:00:00.000Z', sourceDiscoveryId: `discovery-${selector}` });
-}
-
-function legacyRecord(source: string) {
-  return { adapterId: 'demo', name: 'Demo', domains: ['demo.invalid'],
-    capabilities: { verification: true, metadata: false, chapterImages: true },
-    sourceDiscoveryId: 'legacy-discovery', adapterImplementationTs: source,
-    promotedAt: '2026-10-20T12:00:00.000Z' };
 }
 
 function implementationSource(selector: string): string {

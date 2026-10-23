@@ -3,7 +3,11 @@ import type { AdapterCapabilities } from './adapter';
 
 export type AdapterPackageOrigin = 'bundled' | 'local-generated' | 'imported' | 'official';
 export type AdapterVersionStatus = 'approved' | 'active';
-export type AdapterPackageFixtureSummary = Omit<FixtureSummary, 'path' | 'expectedPath'>;
+export type AdapterPackageFixtureSummary = Omit<FixtureSummary,
+  'path' | 'expectedPath' | 'adapterId' | 'adapterVersion'> & {
+    adapterId: string;
+    adapterVersion: string;
+  };
 
 export interface AdapterPackageManifest {
   schemaVersion: 1;

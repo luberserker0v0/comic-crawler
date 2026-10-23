@@ -45,7 +45,9 @@ The default path is:
 ```
 
 Override it with `COMICCRAWLER_ADAPTER_TRUST_STORE_PATH`. In Docker, the
-default file is already inside the persistent `/app/data` volume.
+image sets this path to the pinned, read-only official trust store at
+`/app/defaults/adapter-registries.json`. Mount a custom file and override the
+environment variable when additional registries are required.
 
 ```json
 {

@@ -74,5 +74,5 @@ Copy failure does not fall back to a fresh Profile.
 ## Boundary
 
 This CLI cannot adopt a tab from an already-open Chrome window. Production
-acceptance for `existing-tab` requires a WebExtension Consumer using the same
+acceptance for `existing-tab` requires a Browser Client implementation using the same
 SDK contract.

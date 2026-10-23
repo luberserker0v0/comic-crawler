@@ -4,11 +4,14 @@ import type { TaskManager } from '../task/manager';
 import type { SelectorDiscoveryService } from '../selector-discovery';
 import type { ChallengeDiscoveryService } from '../challenge';
 import type { MaintenanceScopeResult } from './service';
+import { isTerminalSelectorDiscoveryJob } from '../selector-discovery/lifecycle';
 
 export interface DiscoveryCandidate {
   kind: 'selector' | 'challenge';
   id: string;
   updatedAt?: string;
+  status?: string;
+  readable?: boolean;
 }
 
 export interface DiscoveryCleanupDeps {
@@ -79,6 +82,8 @@ async function candidateSkipReason(deps: DiscoveryCleanupDeps, candidate: Discov
   state: CleanupState): Promise<string | undefined> {
   if (state.processed >= state.batchLimit) return 'batch limit reached';
   if (state.referenced.has(candidate.id)) return 'referenced by active task';
+  if (candidate.kind === 'selector' && candidate.readable && !isTerminalSelectorDiscoveryJob(candidate))
+    return `status ${candidate.status ?? 'unknown'} requires review or completion`;
   const updatedAt = await resolveCandidateTime(deps, candidate);
   if (!Number.isFinite(updatedAt)) return 'unknown age, kept for manual review';
   if (updatedAt > state.cutoff) return 'within retention';
@@ -118,7 +123,8 @@ async function collectIndexedCandidates(deps: DiscoveryCleanupDeps, kind: Discov
   try {
     for (const job of await service.list()) {
       seen.add(`${kind}:${job.id}`);
-      out.push({ kind, id: job.id, updatedAt: job.updatedAt });
+      out.push({ kind, id: job.id, updatedAt: job.updatedAt,
+        status: 'status' in job ? job.status : undefined, readable: true });
     }
   } catch { /* Fall back to storage listing. */ }
   const indexKey = kind === 'selector' ? SELECTOR_INDEX_KEY : CHALLENGE_INDEX_KEY;
@@ -144,7 +150,8 @@ async function appendOrphanCandidate(deps: DiscoveryCleanupDeps, key: string,
   if (seen.has(`${kind}:${id}`)) return;
   const service = kind === 'selector' ? deps.selectorDiscoveryService : deps.challengeDiscoveryService;
   const job = await service?.get(id).catch(() => null);
-  out.push({ kind, id, updatedAt: job?.updatedAt });
+  out.push({ kind, id, updatedAt: job?.updatedAt,
+    status: job && 'status' in job ? job.status : undefined, readable: Boolean(job) });
 }
 
 export async function repairIndex(deps: DiscoveryCleanupDeps, indexKey: string, prefix: string): Promise<void> {

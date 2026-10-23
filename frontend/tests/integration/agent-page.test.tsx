@@ -194,6 +194,27 @@ function registerAgentPageTests() {
   registerCandidateTests();
   registerDeleteAdapterTest();
   registerRestoreAdapterTest();
+  registerBuildJobDeleteTest();
+}
+
+function registerBuildJobDeleteTest() {
+  it('should delete an unapproved adapter build job with confirmation', async () => {
+    jest.mocked(api.listSelectorDiscoveries).mockResolvedValue({ data: { jobs: [buildJob()] } } as any);
+    const deleteSpy = jest.spyOn(api, 'deleteSelectorDiscovery').mockResolvedValue({
+      data: { id: 'disc-failed', deleted: true, adapterPreserved: false } });
+    jest.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<AgentPage />);
+    fireEvent.click(await screen.findByText(uiText.agent.buildJobsTab));
+    fireEvent.click(await screen.findByText(uiText.agent.deleteBuildJob));
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith('disc-failed'));
+  });
+}
+
+function buildJob() {
+  return { id: 'disc-failed', url: 'https://example.com/chapter/1',
+    normalizedUrl: 'https://example.com/chapter/1', hostname: 'example.com', status: 'failed',
+    target: 'chapter-only' as const, promotionMode: 'create' as const,
+    createdAt: '2026-10-23T00:00:00.000Z', updatedAt: '2026-10-23T00:00:00.000Z' };
 }
 
 function registerCandidateTests() {

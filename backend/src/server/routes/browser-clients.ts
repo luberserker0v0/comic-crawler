@@ -14,6 +14,7 @@ export function setupBrowserClientRoutes(app: FastifyInstance, registry: Browser
   app.post('/api/browser-clients/enroll', async (request, reply) => enroll(request, reply, context));
   app.get('/api/browser-clients', async (request, reply) => listClients(request, reply, context));
   app.get('/api/browser-workers', async (request, reply) => listWorkers(request, reply, context));
+  app.get('/api/browser-resources', async (request, reply) => listResources(request, reply, context));
   app.delete('/api/browser-clients/:clientId', async (request, reply) => revoke(request, reply, context));
   app.post('/api/browser-clients/:clientId/credentials/rotate', async (request, reply) => rotate(request, reply, context));
 }
@@ -48,6 +49,12 @@ function listWorkers(request: FastifyRequest, reply: FastifyReply, context: Cont
     ...worker, status: worker.online ? (worker.activeSessionId ? 'busy' : 'idle') : 'offline',
   }));
   reply.send({ data: { workers } });
+}
+
+function listResources(request: FastifyRequest, reply: FastifyReply, context: Context): void {
+  const principal = requestPrincipal(request, context.security);
+  const resources = context.gateway.listResources(principal.userId).map(({ ownerUserId: _, ...resource }) => resource);
+  reply.send({ data: { resources } });
 }
 
 function mayReadAll(principal: ApiPrincipal, security: ApiSecurityService): boolean {

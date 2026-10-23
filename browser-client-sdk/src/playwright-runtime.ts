@@ -91,6 +91,7 @@ export interface PlaywrightBrowserContextLike<Page extends PlaywrightPageLike> {
   pages(): Page[];
   newPage(): Promise<Page>;
   close(): Promise<void>;
+  once?(event: 'close', listener: () => void): void;
 }
 
 export interface PlaywrightChromiumLike<Page extends PlaywrightPageLike> {
@@ -194,7 +195,7 @@ function managedProfile<Page extends PlaywrightPageLike>(
   prepared: PreparedProfile
 ): ManagedProfile<Page> {
   let closed = false;
-  return { page, close: async () => {
+  return { page, terminated: contextCloseSignal(context), close: async () => {
     if (closed) return;
     closed = true;
     try {
@@ -203,6 +204,13 @@ function managedProfile<Page extends PlaywrightPageLike>(
       await prepared.release();
     }
   } };
+}
+
+function contextCloseSignal<Page extends PlaywrightPageLike>(
+  context: PlaywrightBrowserContextLike<Page>
+): Promise<void> | undefined {
+  if (!context.once) return undefined;
+  return new Promise((resolve) => context.once!('close', resolve));
 }
 
 function disposableProfile(userDataDir: string, directories: ProfileDirectoryAccess): PreparedProfile {

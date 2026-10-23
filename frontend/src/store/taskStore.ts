@@ -130,10 +130,10 @@ function createTaskState(set: StoreSet, get: StoreGet): TaskState {
   return { tasks: [], stats: null, loading: false, error: null,
     fetchTasks: createFetchTasks(set), applyRealtimeEvent: createRealtimeHandler(set),
     createTask: createTaskCreator(set, get),
-    pauseTask: createTaskCommand(set, get, api.pauseTask),
-    resumeTask: createTaskCommand(set, get, api.resumeTask, true),
-    cancelTask: createTaskCommand(set, get, api.cancelTask),
-    deleteTask: createTaskCommand(set, get, api.deleteTask),
+    pauseTask: createTaskCommand(set, get, (id) => api.pauseTask(id)),
+    resumeTask: createTaskCommand(set, get, (id) => api.resumeTask(id), true),
+    cancelTask: createTaskCommand(set, get, (id) => api.cancelTask(id)),
+    deleteTask: createTaskCommand(set, get, (id) => api.deleteTask(id)),
     clearError: () => set({ error: null }) };
 }
 

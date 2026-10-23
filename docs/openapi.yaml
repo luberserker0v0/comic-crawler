@@ -671,6 +671,32 @@ paths:
                         $ref: "#/components/schemas/SelectorDiscoveryJob"
         "404":
           $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete an Adapter build job and its intermediate artifacts
+      description: Active jobs must finish first. Clearing a promoted job preserves its immutable Adapter Catalog package and approved fixture.
+      parameters:
+        - $ref: "#/components/parameters/DiscoveryId"
+      responses:
+        "200":
+          description: Build job deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [id, deleted, adapterPreserved]
+                        properties:
+                          id: { type: string }
+                          deleted: { type: boolean }
+                          adapterPreserved: { type: boolean }
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /api/selector-discovery/{id}/promote:
     post:
       summary: Capture a golden fixture and promote a reviewed TypeScript adapter draft
@@ -691,31 +717,85 @@ paths:
                         $ref: "#/components/schemas/AdapterPackageManifest"
         "400":
           $ref: "#/components/responses/Error"
-  /api/fixtures/{domain}/{id}/verify-approved-adapter:
-    post:
-      summary: Replay an approved adapter fixture
-      description: Runs every function recorded in expected.json against page.html and compares the complete normalized result.
+  /api/adapters/{adapterId}/versions/{version}/fixture:
+    get:
+      summary: Read an approved fixture owned by an Adapter version
       parameters:
-        - name: domain
+        - name: adapterId
           in: path
           required: true
-          schema:
-            type: string
-        - name: id
+          schema: { type: string }
+        - name: version
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
+        - name: includeHtml
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Approved fixture metadata and optional HTML
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          fixture:
+                            $ref: "#/components/schemas/FixtureSummary"
+                          html:
+                            type: string
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/adapters/{adapterId}/versions/{version}/fixture/test-adapter-function:
+    post:
+      summary: Test one function from an immutable Adapter version against its approved fixture
+      parameters:
+        - name: adapterId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: version
+          in: path
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [adapterId]
+              required: [functionId]
               properties:
-                adapterId:
-                  type: string
+                functionId: { type: string }
+      responses:
+        "200":
+          description: Function result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/adapters/{adapterId}/versions/{version}/fixture/verify:
+    post:
+      summary: Replay an approved Adapter version fixture
+      description: Loads the exact immutable Adapter version, runs every function recorded in expected.json against page.html, and compares the complete normalized result.
+      parameters:
+        - name: adapterId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: version
+          in: path
+          required: true
+          schema: { type: string }
       responses:
         "200":
           description: Fixture replay result; passed is false when output differs
@@ -969,6 +1049,27 @@ paths:
                             type: array
                             items:
                               $ref: "#/components/schemas/BrowserWorker"
+  /api/browser-resources:
+    get:
+      summary: List current-user browser tabs registered by existing-tab Workers
+      responses:
+        "200":
+          description: Process-scoped browser resources available to the requesting user
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [resources]
+                        properties:
+                          resources:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/BrowserResource"
   /api/browser-clients/{clientId}:
     delete:
       summary: Revoke one Browser Client credential and disconnect its Workers
@@ -1089,6 +1190,9 @@ components:
     CrawlMode:
       type: string
       enum: [all, chapters]
+    AdapterResolveMode:
+      type: string
+      enum: [all, chapters, inspect]
     Capabilities:
       type: object
       properties:
@@ -1302,6 +1406,24 @@ components:
         lastHeartbeatAt:
           type: string
           format: date-time
+    BrowserResource:
+      type: object
+      required: [resourceId, workerId, kind, url, registeredAt]
+      properties:
+        resourceId:
+          type: string
+        workerId:
+          type: string
+        kind:
+          const: tab
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        registeredAt:
+          type: string
+          format: date-time
     Adapter:
       type: object
       required: [id, name, domains, parseMode, capabilities]
@@ -1360,7 +1482,7 @@ components:
           type: string
           format: uri
         mode:
-          $ref: "#/components/schemas/CrawlMode"
+          $ref: "#/components/schemas/AdapterResolveMode"
     AdapterResolveResponse:
       type: object
       required: [url, hostname, mode, requiredCapabilities, status, discoveryTarget]
@@ -1371,7 +1493,7 @@ components:
         hostname:
           type: string
         mode:
-          $ref: "#/components/schemas/CrawlMode"
+          $ref: "#/components/schemas/AdapterResolveMode"
         requiredCapabilities:
           type: object
         status:
@@ -1785,6 +1907,8 @@ components:
           type: string
         adapterId:
           type: string
+        adapterVersion:
+          type: string
         sourceDiscoveryId:
           type: string
         functionIds:
@@ -1831,7 +1955,7 @@ components:
           $ref: "#/components/schemas/AdapterPackageFixtureSummary"
     AdapterPackageFixtureSummary:
       type: object
-      required: [id, domain, url, title, htmlLength, capturedAt, readiness]
+      required: [id, domain, url, title, htmlLength, capturedAt, adapterId, adapterVersion, readiness]
       description: Portable fixture provenance without local filesystem paths or fixture contents.
       properties:
         id:
@@ -1849,6 +1973,8 @@ components:
           type: string
           format: date-time
         adapterId:
+          type: string
+        adapterVersion:
           type: string
         sourceDiscoveryId:
           type: string

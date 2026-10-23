@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { AdapterCapabilityDetailResponse, AdapterFunctionCapability, AdapterImplementationResponse,
   AdapterFunctionTestResponse, AdapterResolveResponse, ChallengeHandoffJobSummary } from '@comiccrawler/shared';
 import { api, getApiErrorMessage } from '../api/client';
-import { capabilityOrder, getUrlKind, isCapabilityAllowedForUrlKind, urlKindDescription,
-  type AdapterChoice } from './lab/widgets';
+import { capabilityOrder, type AdapterChoice } from './lab/widgets';
 import { useDraftFlow } from './lab/useDraftFlow';
+import { browserTargetMissingForRun, useBrowserTargets } from './lab/useBrowserTargets';
 import { ResolveSection } from './lab/sections/ResolveSection';
 import { AdapterSelectSection } from './lab/sections/AdapterSelectSection';
 import { ImplementationTestSection } from './lab/sections/ImplementationTestSection';
@@ -18,10 +18,11 @@ function useAdapterLabModel() {
   const text = useI18n().text;
   const draft = useDraftFlow({ selectedAdapterId: state.selectedAdapterId,
     setLoading: state.setLoading, setError: state.setError });
+  const browserTargets = useBrowserTargets(state.url);
   const derived = useLabDerived(state, draft);
   useChallengeJob(derived.challengeDiscoveryId, state.setChallengeJob);
-  const context = { state, draft, derived, text };
-  return { state, draft, derived, text, resolveUrl: () => resolveUrl(context),
+  const context = { state, draft, derived, browserTargets, text };
+  return { state, draft, derived, browserTargets, text, resolveUrl: () => resolveUrl(context),
     runTest: (id?: string) => runTest(context, id),
     openVerificationBrowser: () => openVerificationBrowser(context),
     continueAfterVerification: () => continueAfterVerification(context),
@@ -53,17 +54,15 @@ type LabState = ReturnType<typeof useAdapterLabState>;
 type DraftFlow = ReturnType<typeof useDraftFlow>;
 
 function useLabDerived(state: LabState, draft: DraftFlow) {
-  const urlKind = useMemo(() => getUrlKind(state.url), [state.url]);
-  const selectedCapabilityAllowed = isCapabilityAllowedForUrlKind(state.selectedCapability, urlKind);
-  const functionsForCapability = useMemo(() => selectedCapabilityAllowed
-    ? state.capabilityDetail?.functions.filter((item) => item.capability === state.selectedCapability) ?? [] : [],
-  [state.capabilityDetail, state.selectedCapability, selectedCapabilityAllowed]);
+  const functionsForCapability = useMemo(() => state.capabilityDetail?.functions.filter(
+    (item) => item.capability === state.selectedCapability) ?? [],
+  [state.capabilityDetail, state.selectedCapability]);
   const selectedFunction = useMemo(() => state.capabilityDetail?.functions.find(
     (item) => item.id === state.selectedFunctionId), [state.capabilityDetail, state.selectedFunctionId]);
   const selectedSymbol = useMemo(() => state.implementation?.outline.find(
     (item) => item.id === state.selectedFunctionId), [state.implementation, state.selectedFunctionId]);
-  return { urlKind, selectedCapabilityAllowed, functionsForCapability, selectedFunction, selectedSymbol,
-    selectedFunctionAllowed: selectedFunction ? isCapabilityAllowedForUrlKind(selectedFunction.capability, urlKind) : false,
+  return { functionsForCapability, selectedFunction, selectedSymbol,
+    browserTargetRequired: functionNeedsBrowser(state.selectedFunctionId),
     editorContent: draft.draft ? draft.draftContent : state.implementation?.content ?? '',
     editorLanguage: draft.draft?.language ?? state.implementation?.language ?? 'markdown',
     challengeDiscoveryId: state.testResult?.challengeDiscoveryId,
@@ -71,7 +70,13 @@ function useLabDerived(state: LabState, draft: DraftFlow) {
 }
 
 type LabDerived = ReturnType<typeof useLabDerived>;
-type LabContext = { state: LabState; draft: DraftFlow; derived: LabDerived; text: ReturnType<typeof useI18n>['text'] };
+type BrowserTargets = ReturnType<typeof useBrowserTargets>;
+type LabContext = { state: LabState; draft: DraftFlow; derived: LabDerived; browserTargets: BrowserTargets;
+  text: ReturnType<typeof useI18n>['text'] };
+
+function functionNeedsBrowser(functionId: string): boolean {
+  return Boolean(functionId) && !['matchUrl', 'describeVerificationHandoff'].includes(functionId);
+}
 
 function useChallengeJob(challengeId: string | undefined, setChallengeJob: (job: ChallengeHandoffJobSummary | null) => void) {
   useEffect(() => {
@@ -88,7 +93,7 @@ async function resolveUrl(context: LabContext) {
   resetForResolve(context);
   try {
     const response = await api.resolveAdapter({ url: context.state.url,
-      mode: context.state.url.includes('/mangaread/') ? 'chapters' : 'all' });
+      mode: 'inspect' });
     context.state.setResolveResult(response.data);
     const choices = uniqueAdapterChoices(response.data);
     context.state.setAdapterChoices(choices);
@@ -135,20 +140,21 @@ function resetForAdapterLoad(context: LabContext) {
 }
 
 function applyInitialFunction(context: LabContext, detail: AdapterCapabilityDetailResponse) {
-  const capability = capabilityOrder.find((item) => isCapabilityAllowedForUrlKind(item, getUrlKind(context.state.url))
-    && detail.functions.some((fn) => fn.capability === item && fn.implemented)) ?? 'common';
+  const capability = capabilityOrder.find((item) =>
+    detail.functions.some((fn) => fn.capability === item && fn.implemented)) ?? 'common';
   const firstFunction = detail.functions.find((fn) => fn.capability === capability && fn.implemented);
   context.state.setSelectedCapability(capability);
   context.state.setSelectedFunctionId(firstFunction?.id ?? '');
 }
 
 async function runTest(context: LabContext, challengeId?: string) {
-  if (!validateTestSelection(context)) return;
   const challengeIdForTest = challengeId ?? context.state.verifiedChallengeId ?? undefined;
+  if (!validateTestSelection(context, challengeIdForTest)) return;
   beginTest(context, challengeIdForTest);
   try {
     const draftId = await saveDraftForTest(context);
-    const request = { url: context.state.url, challengeDiscoveryId: challengeIdForTest };
+    const request = { url: context.state.url, challengeDiscoveryId: challengeIdForTest,
+      browserTarget: context.browserTargets.selectedTarget };
     const response = draftId ? await api.testAdapterDraftFunction(draftId, context.state.selectedFunctionId, request)
       : await api.testAdapterFunction(context.state.selectedAdapterId, context.state.selectedFunctionId, request);
     context.state.setTestResult(response.data);
@@ -159,12 +165,13 @@ async function runTest(context: LabContext, challengeId?: string) {
   }
 }
 
-function validateTestSelection(context: LabContext) {
+function validateTestSelection(context: LabContext, challengeId?: string) {
   if (!context.state.selectedAdapterId || !context.state.selectedFunctionId) {
     context.state.setError(context.text.lab.selectAdapterFunction); return false;
   }
-  if (!context.derived.selectedFunctionAllowed) {
-    context.state.setError(urlKindDescription(context.derived.urlKind, context.text.lab)); return false;
+  if (browserTargetMissingForRun(context.derived.browserTargetRequired,
+    challengeId, context.browserTargets.selectedTarget)) {
+    context.state.setError(context.text.lab.browserTargetRequired); return false;
   }
   return true;
 }
@@ -225,19 +232,12 @@ function handleAdapterChange(context: LabContext, adapterId: string) {
 }
 
 function handleCapabilityChange(context: LabContext, capability: AdapterFunctionCapability) {
-  if (!isCapabilityAllowedForUrlKind(capability, context.derived.urlKind)) {
-    context.state.setError(urlKindDescription(context.derived.urlKind, context.text.lab)); return;
-  }
   context.state.setSelectedCapability(capability);
   const first = context.state.capabilityDetail?.functions.find((fn) => fn.capability === capability && fn.implemented);
   context.state.setSelectedFunctionId(first?.id ?? ''); context.state.setTestResult(null);
 }
 
 function handleFunctionChange(context: LabContext, functionId: string) {
-  const fn = context.state.capabilityDetail?.functions.find((item) => item.id === functionId);
-  if (fn && !isCapabilityAllowedForUrlKind(fn.capability, context.derived.urlKind)) {
-    context.state.setError(urlKindDescription(context.derived.urlKind, context.text.lab)); return;
-  }
   context.state.setSelectedFunctionId(functionId); context.state.setTestResult(null);
 }
 
@@ -264,9 +264,8 @@ function LabAdapterSelect({ model }: { model: LabModel }) {
   return <AdapterSelectSection adapterChoices={model.state.adapterChoices} selectedAdapterId={model.state.selectedAdapterId}
     handleAdapterChange={model.handleAdapterChange} draftsForSelectedAdapter={model.draft.draftsForSelectedAdapter}
     draft={model.draft.draft} openDraft={model.draft.openDraft} loading={model.state.loading}
-    capabilityDetail={model.state.capabilityDetail} urlKind={model.derived.urlKind}
+    capabilityDetail={model.state.capabilityDetail}
     selectedCapability={model.state.selectedCapability} handleCapabilityChange={model.handleCapabilityChange}
-    selectedCapabilityAllowed={model.derived.selectedCapabilityAllowed}
     functionsForCapability={model.derived.functionsForCapability} selectedFunctionId={model.state.selectedFunctionId}
     handleFunctionChange={model.handleFunctionChange} />;
 }
@@ -275,7 +274,7 @@ function LabImplementationTest({ model }: { model: LabModel }) {
   return <ImplementationTestSection selectedFunction={model.derived.selectedFunction}
     selectedSymbol={model.derived.selectedSymbol} capabilityDetail={model.state.capabilityDetail}
     runTest={model.runTest} loading={model.state.loading} draft={model.draft.draft}
-    canExecuteDraft={model.draft.canExecuteDraft} selectedFunctionAllowed={model.derived.selectedFunctionAllowed}
+    canExecuteDraft={model.draft.canExecuteDraft} browserTargetRequired={model.derived.browserTargetRequired}
     selectedFunctionId={model.state.selectedFunctionId} url={model.state.url}
     testStatusMessage={model.state.testStatusMessage} implementation={model.state.implementation}
     isDraftMode={model.draft.isDraftMode} hasUnsavedDraftChanges={model.draft.hasUnsavedDraftChanges}
@@ -286,5 +285,6 @@ function LabImplementationTest({ model }: { model: LabModel }) {
     editorContent={model.derived.editorContent} editorLanguage={model.derived.editorLanguage}
     testResult={model.state.testResult} challengeJob={model.state.challengeJob}
     browserAction={model.state.browserAction} browserAlreadyOpen={model.derived.browserAlreadyOpen}
+    browserTargets={model.browserTargets}
     openVerificationBrowser={model.openVerificationBrowser} continueAfterVerification={model.continueAfterVerification} />;
 }

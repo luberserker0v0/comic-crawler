@@ -109,6 +109,7 @@ export type BrowserResultEnvelope =
     };
 
 export interface BrowserSession {
+  readonly terminated?: Promise<void>;
   execute(command: BrowserCommand, signal: AbortSignal): Promise<BrowserCommandResult>;
   close(): Promise<void>;
 }

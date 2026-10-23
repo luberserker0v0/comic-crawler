@@ -71,7 +71,8 @@ Replace `{comic_site}`, `{manga_name}`, and `{manga_chapter}` with the real
 comic site domain, manga slug/name, and chapter slug/name used by that site.
 
 `mode: "all"` requires both `metadata` and `chapterImages`. `mode: "chapters"`
-requires only `chapterImages`.
+requires only `chapterImages`. `mode: "inspect"` matches the URL without
+requiring a crawl capability and is intended for Adapter Lab.
 
 Possible `data.status` values:
 
@@ -253,7 +254,7 @@ optional managed-profile Worker:
 }
 ```
 
-An extension first registers its current tab through the SDK, then binds the
+An existing-tab Browser Client registers its current tab through the SDK, then binds the
 task to that exact process-memory resource:
 
 ```json
@@ -444,6 +445,12 @@ It runs the draft, stores `page.html` and `expected.json`, and only then enables
 the adapter. A fixture or extraction failure leaves the discovery job in
 `awaiting_review` and does not register the adapter.
 
+Delete a finished Adapter build job with
+`DELETE /api/selector-discovery/:id`. `queued` and `running` jobs must finish
+first. Deleting an unapproved job removes its stored implementation and review
+artifacts. Clearing a `promoted` job only removes the job record; its immutable
+Adapter Catalog package and approved fixture remain available.
+
 Then create the crawl task again.
 
 ### 7. Result and previews
@@ -514,6 +521,7 @@ Use these lifecycle endpoints to inspect Workers or manage credentials:
 ```http
 GET /api/browser-clients
 GET /api/browser-workers
+GET /api/browser-resources
 POST /api/browser-clients/{clientId}/credentials/rotate
 ```
 
@@ -559,18 +567,21 @@ Use HTTPS/WSS for remote deployments.
 | `POST` | `/api/browser-clients/enroll` | Enroll a Browser Client and return its credential once. |
 | `GET` | `/api/browser-clients` | List visible registered Browser Client identities. |
 | `GET` | `/api/browser-workers` | List process-scoped Workers and their availability. |
+| `GET` | `/api/browser-resources` | List current-user tabs registered by existing-tab Workers. |
 | `DELETE` | `/api/browser-clients/:clientId` | Revoke one Browser Client and disconnect its Workers. |
 | `POST` | `/api/browser-clients/:clientId/credentials/rotate` | Rotate one Browser Client credential and return the replacement once. |
 
-Adapter Lab function tests are diagnostic support APIs. The WebUI locks
-metadata tests to manga catalog URLs and chapter image tests to chapter URLs;
-API callers should follow the same input contract. `extractChapterImageUrls`
+Adapter Lab function tests are diagnostic support APIs. The WebUI shows every
+capability implemented by the matched adapter. Each function descriptor states
+whether it expects a manga or chapter URL. `extractChapterImageUrls`
 returns the full `imageUrls` list plus `imageUrlCount`; it does not return a
 shortened `firstImageUrls` preview. Test responses may include timing breakdown
 entries such as `dom_acquisition`, `extraction`, and `readiness`.
 Browser-backed test and chapter-image requests may use the same
 `browserTarget` object as crawl tasks. The Server owns and releases their
 short-lived browser lease when the request finishes.
+Adapter Lab lists `/api/browser-resources` and sends the selected `browserTarget`.
+Existing-tab resources must be registered for the exact target URL.
 
 Verified fixture routes also exist for diagnostics:
 
@@ -580,18 +591,21 @@ Verified fixture routes also exist for diagnostics:
 | `POST` | `/api/fixtures/capture` | Capture verified DOM from a ready handoff browser session. |
 | `GET` | `/api/fixtures/:domain/:id` | Read captured fixture metadata, optionally with HTML. |
 | `POST` | `/api/fixtures/:domain/:id/test-adapter-function` | Test an adapter function against a captured fixture. |
-| `POST` | `/api/fixtures/:domain/:id/verify-approved-adapter` | Replay all approved functions and compare them with `expected.json`. |
+| `GET` | `/api/adapters/:adapterId/versions/:version/fixture` | Read the approved fixture owned by an immutable Adapter version. |
+| `POST` | `/api/adapters/:adapterId/versions/:version/fixture/test-adapter-function` | Run one function from that exact version against its fixture. |
+| `POST` | `/api/adapters/:adapterId/versions/:version/fixture/verify` | Replay that exact version and compare all approved results. |
 
-Approved-fixture verification accepts this request body:
+The function-test endpoint accepts this request body:
 
 ```json
 {
-  "adapterId": "comix"
+  "functionId": "extractChapterImageUrls"
 }
 ```
 
-The response includes `passed`, `expected`, and `actual`. A mismatch returns a
-normal `200` response with `passed: false`, so test runners can show the diff.
+The verification endpoint needs no request body. Its response includes `passed`,
+`expected`, and `actual`. A mismatch returns a normal `200` response with
+`passed: false`, so test runners can show the diff.
 
 ## Internal or diagnostic endpoints
 

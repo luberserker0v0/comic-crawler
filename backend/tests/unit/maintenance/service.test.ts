@@ -31,8 +31,9 @@ async function createCompletedTask(id: string, completedAt: Date, outputSubdir?:
     await flush();
   }
 
-function stubDiscovery(jobs: Array<{ id: string; updatedAt: string }>) {
-    const store = new Map(jobs.map((job) => [job.id, { ...job }]));
+function stubDiscovery(jobs: Array<{ id: string; updatedAt: string; status?: string }>) {
+    const normalized = jobs.map((job) => ({ status: 'failed', ...job }));
+    const store = new Map(normalized.map((job) => [job.id, { ...job }]));
     return {
       list: async () => Array.from(store.values()),
       get: async (id: string) => store.get(id) ?? null,
@@ -59,6 +60,7 @@ function MaintenanceServiceTestGroup1(): void {
   it('dry-run deletes nothing', MaintenanceServiceTestDryRunDeletesNothing);
   it('deletes expired tasks with files and expired discovery jobs', MaintenanceServiceTestDeletesExpiredTasksWithFilesAndExpiredDiscoveryJobs);
   it('skips discovery jobs referenced by remaining tasks', MaintenanceServiceTestSkipsDiscoveryJobsReferencedByRemainingTasks);
+  it('keeps adapter jobs that still require review', MaintenanceServiceTestKeepsAdapterJobsThatStillRequireReview);
   it('deleteJob removes the implementation key without residual JSON', MaintenanceServiceTestDeleteJobRemovesTheImplementationKeyWithoutResidualJSON);
   it('cleans expired fixtures and agent sessions but keeps live adapter state', MaintenanceServiceTestCleansExpiredFixturesAndAgentSessionsButKeepsLiveAdapterState);
   it('prunes stale index entries and deletes corrupt job files via mtime fallback', MaintenanceServiceTestPrunesStaleIndexEntriesAndDeletesCorruptJobFilesViaMtimeFallback);
@@ -144,6 +146,14 @@ async function MaintenanceServiceTestSkipsDiscoveryJobsReferencedByRemainingTask
     expect(result.discoveryJobs.skipped.join(' ')).toMatch(/referenced/);
 }
 
+async function MaintenanceServiceTestKeepsAdapterJobsThatStillRequireReview() {
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+  const selector = stubDiscovery([{ id: 'review-disc', updatedAt: old.toISOString(), status: 'awaiting_review' }]);
+  const result = await maintenanceService({ selectorDiscoveryService: selector as any }).run();
+  expect(result.discoveryJobs.deleted).not.toContain('review-disc');
+  expect(result.discoveryJobs.skipped.join(' ')).toContain('requires review or completion');
+}
+
 async function MaintenanceServiceTestDeleteJobRemovesTheImplementationKeyWithoutResidualJSON() {
     const service = new SelectorDiscoveryService(storage, new AdapterRegistry(new EventBus()));
     const job: any = { id: 'disc-1', url: 'https://example.com/', normalizedUrl: 'https://example.com/', hostname: 'example.com', status: 'awaiting_review', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -167,14 +177,13 @@ async function MaintenanceServiceTestCleansExpiredFixturesAndAgentSessionsButKee
 }
 
 async function seedExpiredWorkspaceFiles(workspaces: string, old: Date) {
-    const oldFixture = join(workspaces, 'fixtures', 'example.com', '111-old');
-    const youngFixture = join(workspaces, 'fixtures', 'example.com', '999-new');
+    const oldFixture = fixturePath(workspaces, '111-old'), youngFixture = fixturePath(workspaces, '999-new');
     await fs.mkdir(oldFixture, { recursive: true });
     await fs.writeFile(join(oldFixture, 'page.html'), '<html></html>');
     await fs.mkdir(youngFixture, { recursive: true });
     await fs.writeFile(join(youngFixture, 'page.html'), '<html></html>');
     await fs.utimes(oldFixture, old, old);
-    // Live adapter state that must never be touched.
+  const approvedFixture = await seedApprovedFixture(workspaces, old);
     const adapterDir = join(workspaces, 'kuronavi');
     await fs.mkdir(join(adapterDir, 'versions', 'v1'), { recursive: true });
     await fs.writeFile(join(adapterDir, 'session.json'), '{}');
@@ -185,16 +194,30 @@ async function seedExpiredWorkspaceFiles(workspaces: string, old: Date) {
     await fs.writeFile(join(oldSession, 'error-context.json'), '{}');
     await fs.mkdir(join(youngSession, 'attempts'), { recursive: true });
     await fs.utimes(oldSession, old, old);
-    return { oldFixture, youngFixture, adapterDir, oldSession };
+  return { oldFixture, youngFixture, approvedFixture, adapterDir, oldSession };
+}
+
+function fixturePath(workspaces: string, id: string): string {
+  return join(workspaces, 'fixtures', 'example.com', id);
+}
+
+async function seedApprovedFixture(workspaces: string, old: Date): Promise<string> {
+  const directory = join(workspaces, 'approved-fixtures', 'demo', 'v1', '222-approved');
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(join(directory, 'page.html'), '<html></html>');
+  await fs.utimes(directory, old, old);
+  return directory;
 }
 
 async function expectWorkspaceCleanup(result: Awaited<ReturnType<MaintenanceService['run']>>,
   paths: Awaited<ReturnType<typeof seedExpiredWorkspaceFiles>>) {
-    const { oldFixture, youngFixture, adapterDir, oldSession } = paths;
+    const { oldFixture, youngFixture, approvedFixture, adapterDir, oldSession } = paths;
     expect(result.fixtures.deleted).toContain('example.com/111-old');
     expect(result.fixtures.deleted).not.toContain('example.com/999-new');
     await expect(fs.stat(oldFixture)).rejects.toThrow();
     await expect(fs.stat(join(youngFixture, 'page.html'))).resolves.toBeDefined();
+    await expect(fs.stat(join(approvedFixture, 'page.html'))).resolves.toBeDefined();
+    expect(result.fixtures.scanned).toBe(2);
     expect(result.agentSessions.deleted).toContain('kuronavi/session-111');
     expect(result.agentSessions.deleted).not.toContain('kuronavi/session-999');
     await expect(fs.stat(oldSession)).rejects.toThrow();

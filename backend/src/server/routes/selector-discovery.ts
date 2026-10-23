@@ -12,6 +12,7 @@ import { setupDiscoveryDraftFunctionRoutes } from './selector-discovery-function
 import type { BrowserWorkerLeaseCoordinator } from '../../browser/browser-worker-lease-coordinator';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
+import { isActiveSelectorDiscoveryJob } from '../../selector-discovery/lifecycle';
 
 interface DiscoveryRouteOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
@@ -67,6 +68,7 @@ function setupDiscoveryJobRoutes(
   app.post(`${prefix}/snapshot`, (request, reply) => createSnapshotDiscovery(request, reply, context));
   app.get(prefix, (_request, reply) => listDiscoveries(reply, discoveryService));
   app.get(`${prefix}/:id`, (request, reply) => getDiscovery(request, reply, discoveryService));
+  app.delete(`${prefix}/:id`, (request, reply) => deleteDiscovery(request, reply, discoveryService));
   setupDiscoveryDraftFunctionRoutes(app, prefix, discoveryService, options);
   app.post(`${prefix}/:id/retry`, (request, reply) => mutateDiscovery('retry', request, reply, discoveryService));
   app.post(`${prefix}/:id/promote`, (request, reply) => mutateDiscovery('promote', request, reply, discoveryService));
@@ -139,6 +141,17 @@ async function getDiscovery(request: FastifyRequest, reply: FastifyReply,
   const job = await service.get(routeId(request));
   if (!job) return void reply.code(404).send({ error: 'Discovery job not found.' });
   reply.send({ data: job });
+}
+
+async function deleteDiscovery(request: FastifyRequest, reply: FastifyReply,
+  service: SelectorDiscoveryService): Promise<void> {
+  const id = routeId(request);
+  const job = await service.get(id);
+  if (!job) return void reply.code(404).send({ error: 'Discovery job not found.' });
+  if (isActiveSelectorDiscoveryJob(job)) return void reply.code(409).send({
+    error: `Discovery job "${id}" is ${job.status}; cancel or wait for it to finish before deletion.` });
+  await service.deleteJob(id);
+  reply.send({ data: { id, deleted: true, adapterPreserved: job.status === 'promoted' } });
 }
 
 async function mutateDiscovery(action: 'retry' | 'promote' | 'reject', request: FastifyRequest,

@@ -35,8 +35,16 @@ export interface AdapterFunctionTestOptions {
   verificationHandoff?: {
     ownerUserId: string;
     browserTarget?: BrowserTarget;
+    claimBrowserLease?: BrowserLeaseClaim;
   };
 }
+
+export interface TransferableBrowserLease {
+  sessionId: string;
+  release(): Promise<void>;
+}
+
+export type BrowserLeaseClaim = () => TransferableBrowserLease;
 
 class TimingCollector {
   private readonly entries: AdapterFunctionTiming[] = [];
@@ -71,17 +79,26 @@ async function runAdapterFunctionTest(
   options: AdapterFunctionTestOptions
 ): Promise<AdapterFunctionTestResponse> {
   const context = createRunContext(adapter, functionId, url, options);
+  let verified: VerifiedChallengeDocument | undefined;
   try {
     attachAdapterRenderer(context);
-    const verified = await loadRunVerifiedDocument(context);
+    verified = await loadRunVerifiedDocument(context);
     const result = await executeAdapterFunction(context, verified);
     return createRunResultResponse(context, result, verified);
   } catch (error) {
     return createRunErrorResponse(context, error);
   } finally {
-    detachAdapterRenderer(context.adapter);
-    await context.renderer.dispose().catch(() => undefined);
+    await cleanupRunContext(context, Boolean(verified));
   }
+}
+
+async function cleanupRunContext(context: RunContext, consumedChallenge: boolean): Promise<void> {
+  detachAdapterRenderer(context.adapter);
+  await context.renderer.dispose().catch(() => undefined);
+  if (!consumedChallenge || !context.options.challengeDiscoveryId) return;
+  const service = context.options.challengeDiscoveryService;
+  if (!service?.releaseBrowserLease) return;
+  await service.releaseBrowserLease(context.options.challengeDiscoveryId).catch(() => undefined);
 }
 
 interface RunContext {
@@ -281,6 +298,7 @@ interface VerificationResponseInput {
   verificationHandoff?: {
     ownerUserId: string;
     browserTarget?: BrowserTarget;
+    claimBrowserLease?: BrowserLeaseClaim;
   };
 }
 
@@ -303,9 +321,17 @@ export async function createVerificationRequiredResponse(
 async function getVerificationJob(input: VerificationResponseInput) {
   if (input.existingChallengeDiscoveryId)
     return input.challengeDiscoveryService?.get(input.existingChallengeDiscoveryId);
-  return input.challengeDiscoveryService?.createDeferred({ url: input.url,
-    ownerUserId: input.verificationHandoff?.ownerUserId,
-    browserTarget: input.verificationHandoff?.browserTarget });
+  const service = input.challengeDiscoveryService;
+  if (!service) return undefined;
+  const browserLease = input.verificationHandoff?.claimBrowserLease?.();
+  try {
+    return await service.createDeferred({ url: input.url, browserLease,
+      ownerUserId: input.verificationHandoff?.ownerUserId,
+      browserTarget: input.verificationHandoff?.browserTarget });
+  } catch (error) {
+    await browserLease?.release().catch(() => undefined);
+    throw error;
+  }
 }
 
 function createVerificationResponseBase(input: VerificationResponseInput) {
@@ -518,7 +544,7 @@ export async function detectVerificationRequiredForUrl(
   if (!maybeFetcher.fetchHtml) return { ...createDetectionResult(
     await detect(urlOrHtml), 'url-only', crawlerMode),
     warning: 'Adapter does not expose the internal HTML fetcher, so only the URL text was inspected.' };
-  return detectFromFetchedHtml(maybeFetcher.fetchHtml, urlOrHtml, crawlerMode);
+  return detectFromFetchedHtml(maybeFetcher.fetchHtml.bind(adapter), urlOrHtml, crawlerMode);
 }
 
 async function detectFromFetchedHtml(

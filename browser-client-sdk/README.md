@@ -7,7 +7,7 @@
 - 單一 package root。
 - 不依賴 Playwright。
 - 不依賴 Node API。
-- 不依賴 WebExtension API。
+- 不依賴任何特定瀏覽器平台 API。
 - Consumer 注入 `BrowserExecutor`。
 - Consumer 注入 `ClientStateStore`。
 - 缺少原生 WebSocket 時注入 `WebSocketFactory`。
@@ -56,10 +56,10 @@ console.log(connection.workerId);
 
 SDK 提供兩個 execution strategy：
 
-- `ExistingTabExecutor` + `WebExtensionTabDriver`：操作使用者批准的 tab。
+- `ExistingTabExecutor` + consumer-provided `BrowserPageDriver`：操作使用者批准的 tab。
 - `ManagedProfileExecutor` + `PlaywrightManagedProfileLauncher`：操作 SDK 管理的 Profile。
 
-Extension 不必暴露 Chrome `tabId`：
+Existing-tab Browser Client 不必暴露 Chrome `tabId`：
 
 ```ts
 const resource = await client.registerResource({
@@ -72,11 +72,11 @@ const resource = await client.registerResource({
 // 建立 task 時傳入 connection.workerId 與 resource.resourceId。
 ```
 
-WebExtension consumer 的組裝方式：
+Existing-tab Browser Client 的組裝方式：
 
 ```ts
 const executor = new ExistingTabExecutor(
-  new WebExtensionTabDriver(chrome),
+  browserPageDriver,
 );
 ```
 
@@ -98,7 +98,7 @@ const executor = new ManagedProfileExecutor(
 Profile lock，並執行實際複製。SDK 會固定排除 cache 與 lock 檔案；複製失敗
 不會自動 fallback 成 fresh Profile。
 
-SDK 不直接依賴 Playwright、Node API 或 WebExtension API。Consumer 只需把
+SDK 不直接依賴 Playwright、Node API 或特定瀏覽器平台 API。Browser Client 只需把
 對應 runtime 操作包成 driver 或 launcher。
 
 `page.prepare-content` 會觸發 lazy content，並以

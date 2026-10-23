@@ -7,9 +7,10 @@ export function useBuildJobs() {
   const state = useBuildJobState();
   const fetchBuildJobs = useFetchBuildJobs(state);
   const retryBuildJob = useRetryBuildJob(state, fetchBuildJobs);
+  const deleteBuildJob = useDeleteBuildJob(state, fetchBuildJobs);
   useInitialBuildJobFetch(fetchBuildJobs);
   useBuildJobPolling(state.buildJobs, fetchBuildJobs);
-  return { ...state, fetchBuildJobs, retryBuildJob };
+  return { ...state, fetchBuildJobs, retryBuildJob, deleteBuildJob };
 }
 
 function useBuildJobState() {
@@ -17,8 +18,23 @@ function useBuildJobState() {
   const [buildJobsLoading, setBuildJobsLoading] = useState(false);
   const [buildJobsError, setBuildJobsError] = useState<string | null>(null);
   const [retryingBuildJobId, setRetryingBuildJobId] = useState<string | null>(null);
+  const [deletingBuildJobId, setDeletingBuildJobId] = useState<string | null>(null);
   return { buildJobs, setBuildJobs, buildJobsLoading, setBuildJobsLoading,
-    buildJobsError, setBuildJobsError, retryingBuildJobId, setRetryingBuildJobId };
+    buildJobsError, setBuildJobsError, retryingBuildJobId, setRetryingBuildJobId,
+    deletingBuildJobId, setDeletingBuildJobId };
+}
+
+function useDeleteBuildJob(state: ReturnType<typeof useBuildJobState>, fetchBuildJobs: () => Promise<void>) {
+  const { setBuildJobsError, setDeletingBuildJobId } = state;
+  return useCallback(async (id: string) => {
+    setDeletingBuildJobId(id);
+    try {
+      await api.deleteSelectorDiscovery(id);
+      await fetchBuildJobs();
+    } catch (error) {
+      setBuildJobsError(getApiErrorMessage(error));
+    } finally { setDeletingBuildJobId(null); }
+  }, [fetchBuildJobs, setBuildJobsError, setDeletingBuildJobId]);
 }
 
 function useFetchBuildJobs(state: ReturnType<typeof useBuildJobState>) {

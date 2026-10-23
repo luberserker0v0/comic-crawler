@@ -56,6 +56,9 @@ class FakeGateway {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  emitChange(): void {
+    for (const listener of this.listeners) listener();
+  }
 }
 
 function worker(
@@ -80,10 +83,12 @@ function BrowserWorkerLeaseCoordinatorTestGroup1(): void {
   it('reserves one Worker per task and owns its session lifecycle', BrowserWorkerLeaseCoordinatorTestReservesOneWorkerPerTaskAndOwnsItsSessionLifecycle);
   it('does not allow a user to target another owner Worker', BrowserWorkerLeaseCoordinatorTestDoesNotAllowAUserToTargetAnotherOwnerWorker);
   it('binds an existing-tab task to its exact Worker resource', BrowserWorkerLeaseCoordinatorTestBindsAnExistingTabTaskToItsExactWorkerResource);
+  it('rejects a mismatched existing-tab URL before waiting', BrowserWorkerLeaseCoordinatorTestRejectsMismatchedExistingTabUrl);
   it('rejects a resource owned by another Worker of the same user', BrowserWorkerLeaseCoordinatorTestRejectsAResourceOwnedByAnotherWorkerOfTheSameUser);
   it('validates an idle, owned existing-tab recovery target on the task URL', BrowserWorkerLeaseCoordinatorTestValidatesAnIdleOwnedExistingTabRecoveryTargetOnTheTaskURL);
   it('reopens a session on the same process after reconnect', BrowserWorkerLeaseCoordinatorTestReopensASessionOnTheSameProcessAfterReconnect);
   it('stops reconnect waiting when explicit recovery releases the old task lease', BrowserWorkerLeaseCoordinatorTestStopsReconnectWaitingWhenExplicitRecoveryReleasesTheOldTaskLease);
+  it('releases an online Worker lease when its browser session is closed locally', BrowserWorkerLeaseCoordinatorTestReleasesLocallyClosedSession);
 }
 
 async function BrowserWorkerLeaseCoordinatorTestReservesOneWorkerPerTaskAndOwnsItsSessionLifecycle() {
@@ -140,6 +145,17 @@ async function BrowserWorkerLeaseCoordinatorTestBindsAnExistingTabTaskToItsExact
         navigationPolicy: 'adopt-current-page',
     });
     await lease.release();
+    await coordinator.dispose();
+}
+
+async function BrowserWorkerLeaseCoordinatorTestRejectsMismatchedExistingTabUrl() {
+    const target = worker('worker-tab', 'alice', 'existing-tab');
+    const resource = browserResource('resource-1', target);
+    const coordinator = new BrowserWorkerLeaseCoordinator(new FakeGateway([target], [resource]));
+    await expect(coordinator.acquire({ taskId: 'task-tab', ownerUserId: 'alice',
+        target: { mode: 'existing-tab', workerId: target.workerId, resourceId: resource.resourceId },
+        initialUrl: 'https://example.test/different-chapter', timeoutMs: 60_000,
+    })).rejects.toThrow('is not on the requested URL');
     await coordinator.dispose();
 }
 
@@ -216,5 +232,17 @@ async function BrowserWorkerLeaseCoordinatorTestStopsReconnectWaitingWhenExplici
     await coordinator.releaseTask('task-1');
     await expect(waiting).resolves.toBe(false);
     expect(lease.state).toBe('released');
+    await coordinator.dispose();
+}
+
+async function BrowserWorkerLeaseCoordinatorTestReleasesLocallyClosedSession() {
+    const targetWorker = worker('worker-a', 'alice');
+    const gateway = new FakeGateway([targetWorker]);
+    const coordinator = new BrowserWorkerLeaseCoordinator(gateway);
+    const lease = await coordinator.acquire({ taskId: 'task-1', ownerUserId: 'alice' });
+    targetWorker.activeSessionId = undefined;
+    gateway.emitChange();
+    expect(lease.state).toBe('released');
+    expect(coordinator.listWorkers('alice')[0]).toMatchObject({ status: 'idle' });
     await coordinator.dispose();
 }

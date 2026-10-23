@@ -67,6 +67,7 @@ export class BrowserClient {
   private readonly pendingControls = new Map<string, Deferred<BrowserResourceDescriptor | string>>();
   private readonly registeredResources = new Map<string, BrowserResourceDescriptor>();
   private readonly randomUUID: () => string;
+  private lastWorkerId?: string;
   private closing = false;
 
   constructor(private readonly options: BrowserClientOptions) {
@@ -143,9 +144,16 @@ export class BrowserClient {
       this.connectTimeoutMs,
       'Browser Client authentication timed out.'
     );
+    await this.reconcileWorkerIdentity(authenticated.workerId);
     this.connection = toConnection(state, authenticated.workerId, this.processInstanceId);
     await this.restoreResources();
     return this.connection;
+  }
+
+  private async reconcileWorkerIdentity(workerId: string): Promise<void> {
+    const serverLostSession = Boolean(this.lastWorkerId && this.lastWorkerId !== workerId);
+    this.lastWorkerId = workerId;
+    if (serverLostSession) await this.closeActiveSession();
   }
 
   private sendAuthentication(
@@ -334,7 +342,28 @@ export class BrowserClient {
 
   private activateSession(session: ActiveSession): void {
     this.activeSession = session;
+    this.watchSessionClosure(session);
     this.sendSessionReady(session.sessionId, session.leaseId);
+  }
+
+  private watchSessionClosure(session: ActiveSession): void {
+    if (!session.session.terminated) return;
+    void session.session.terminated.then(() => this.handleUnexpectedSessionClosure(session)).catch(() => undefined);
+  }
+
+  private async handleUnexpectedSessionClosure(session: ActiveSession): Promise<void> {
+    if (this.activeSession !== session) return;
+    this.activeSession = undefined;
+    session.abortController.abort();
+    await session.session.close().catch(() => undefined);
+    this.sendSessionClosed(session.sessionId, session.leaseId);
+  }
+
+  private sendSessionClosed(sessionId: string, leaseId: string): void {
+    try {
+      this.send({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+        type: 'session.closed', sessionId, leaseId });
+    } catch { /* The transport close path owns Server cleanup. */ }
   }
 
   private sendSessionReady(sessionId: string, leaseId: string): void {
@@ -380,12 +409,7 @@ export class BrowserClient {
     const active = this.activeSession;
     if (!active || active.sessionId !== sessionId || active.leaseId !== leaseId) return;
     await this.closeActiveSession();
-    this.send({
-      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-      type: 'session.closed',
-      sessionId,
-      leaseId,
-    });
+    this.sendSessionClosed(sessionId, leaseId);
   }
 
   private async closeActiveSession(): Promise<void> {

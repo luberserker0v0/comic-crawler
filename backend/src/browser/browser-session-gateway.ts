@@ -487,11 +487,17 @@ export class BrowserSessionGateway {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.assertMatchingSession(session, workerId, leaseId);
+    if (session.state === 'active') return this.handleClientClosedSession(sessionId);
     if (session.state !== 'closing') throw new Error('Browser session is not closing.');
     const pending = this.pendingSessionClose.get(sessionId);
     if (!pending) return;
     if (pending.workerId !== workerId) throw new Error('Browser session close Worker does not match.');
     pending.resolve();
+  }
+
+  private handleClientClosedSession(sessionId: string): void {
+    this.rejectPendingCommands(sessionId, new Error(`Browser session "${sessionId}" was closed by the user.`));
+    this.removeSession(sessionId);
   }
 
   private resolveCommand(

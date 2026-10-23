@@ -2,7 +2,7 @@ import type { AdapterRegistry } from '../adapter/registry';
 import { getAdapterCapabilities } from '../adapter/registry';
 import type { AdapterPackageManifest, BrowserConfig, FixtureSummary, IComicAdapter, NetworkConfig } from '@comiccrawler/shared';
 import type { IStorage } from '../storage/types';
-import { AdapterCatalog } from '../adapter/catalog';
+import { AdapterCatalog, createAdapterVersion } from '../adapter/catalog';
 import { createAdapterPackage } from '../adapter/package-builder';
 import { loadCatalogAdapters } from '../adapter/catalog-runtime';
 import { AoClient } from './ao-client';
@@ -43,6 +43,7 @@ import {
 } from './types';
 import { ConcurrentSchedulingPolicy, TaskScheduler, type SchedulingPolicy } from '../scheduler';
 import type { TaskItem } from '../task/types';
+import { compactPromotedSelectorDiscoveryJob, isActiveSelectorDiscoveryJob } from './lifecycle';
 
 const JOB_PREFIX = 'selector-discovery-job-';
 const INDEX_KEY = 'selector-discovery-index';
@@ -334,7 +335,8 @@ interface SelectorDiscoveryServiceOptions {
   getNetworkConfig?: () => NetworkConfig | Promise<NetworkConfig>;
   renderBrowserPage?: (sessionId: string, url: string, options: { timeoutMs: number }) =>
     Promise<{ url: string; html: string }>;
-  captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter }) => Promise<FixtureSummary>;
+  captureApprovalFixture?: (input: { job: SelectorDiscoveryJob; adapter: IComicAdapter;
+    adapterVersion: string }) => Promise<FixtureSummary>;
   schedulingPolicy?: SchedulingPolicy<DiscoveryInput>;
 }
 
@@ -355,6 +357,7 @@ export class SelectorDiscoveryService {
   private readonly captureApprovalFixture?: (input: {
     job: SelectorDiscoveryJob;
     adapter: IComicAdapter;
+    adapterVersion: string;
   }) => Promise<FixtureSummary>;
   private readonly scheduler: TaskScheduler<DiscoveryInput>;
   private readonly adapterCatalog: AdapterCatalog;
@@ -377,6 +380,7 @@ export class SelectorDiscoveryService {
   }
 
   async initializeScheduler(): Promise<void> {
+    await this.compactLegacyPromotedJobs();
     const resumable = (await this.list()).filter((job) => job.status === 'queued' || job.status === 'running');
     for (const job of resumable) {
       await this.updateJob(job.id, { status: 'queued' });
@@ -390,6 +394,21 @@ export class SelectorDiscoveryService {
         browserSessionId: job.browserSessionId,
       });
     }
+  }
+
+  private async compactLegacyPromotedJobs(): Promise<void> {
+    const jobs = (await this.list()).filter((job) => job.status === 'promoted' && !job.artifactsCleanedAt);
+    await Promise.all(jobs.map((job) => this.compactLegacyPromotedJob(job)));
+  }
+
+  private async compactLegacyPromotedJob(job: SelectorDiscoveryJob): Promise<void> {
+    if (!job.adapterId) return;
+    const entry = await this.adapterCatalog.getEntry(job.adapterId);
+    const version = job.promotedVersion ?? entry?.versions.find(
+      (item) => item.sourceDiscoveryId === job.id)?.version;
+    if (!version) return;
+    const document = await this.adapterCatalog.getPackage(job.adapterId, version);
+    if (document) await this.saveCompactedPromotedJob(job, document.manifest);
   }
 
   dispose(): void {
@@ -523,6 +542,9 @@ export class SelectorDiscoveryService {
   async deleteJob(id: string): Promise<boolean> {
     const existing = await this.get(id);
     if (!existing) return false;
+    if (isActiveSelectorDiscoveryJob(existing)) {
+      throw new Error(`Discovery job "${id}" is ${existing.status}; cancel or wait for it to finish before deletion.`);
+    }
     const ids = (await this.storage.read<string[]>(INDEX_KEY)) ?? [];
     await this.storage.write(INDEX_KEY, ids.filter((entry) => entry !== id));
     await this.storage.delete(`${JOB_PREFIX}${id}`);
@@ -919,10 +941,11 @@ export class SelectorDiscoveryService {
     validatePromotionJob(job);
     const adapter = instantiateAdapterImplementationDraft(job.adapterImplementationTs);
     const registeredAdapter = this.validatePromotionTarget(job, adapter);
+    const adapterVersion = createAdapterVersion(job.createdAt, job.adapterImplementationTs);
     const approvalFixture = this.captureApprovalFixture
-      ? await this.captureApprovalFixture({ job, adapter }) : undefined;
+      ? await this.captureApprovalFixture({ job, adapter, adapterVersion }) : undefined;
     const document = createAdapterPackage({ adapter, implementationTs: job.adapterImplementationTs,
-      origin: 'local-generated', sourceDiscoveryId: job.id, approvalFixture,
+      origin: 'local-generated', createdAt: job.createdAt, sourceDiscoveryId: job.id, approvalFixture,
       validation: job.implementationValidation });
     await this.adapterCatalog.installApproved(document);
     if (registeredAdapter) this.adapterRegistry.replace(adapter);
@@ -946,8 +969,16 @@ export class SelectorDiscoveryService {
   private async persistPromotedAdapter(
     job: SelectorDiscoveryJob, manifest: AdapterPackageManifest
   ): Promise<void> {
-    await this.updateJob(job.id, { adapterId: manifest.adapterId, adapterName: manifest.name,
-      status: 'promoted', phase: 'complete', error: undefined });
+    await this.saveCompactedPromotedJob(job, manifest);
+  }
+
+  private async saveCompactedPromotedJob(
+    job: SelectorDiscoveryJob, manifest: AdapterPackageManifest
+  ): Promise<void> {
+    const compact = compactPromotedSelectorDiscoveryJob(
+      job, manifest.adapterId, manifest.name, manifest.version);
+    await this.saveJob(compact);
+    await this.storage.delete(`selector-discovery-implementation-${job.id}`);
   }
 
   private findRegisteredAdapterByDomains(domains: string[]): ReturnType<AdapterRegistry['getAll']>[number] | undefined {

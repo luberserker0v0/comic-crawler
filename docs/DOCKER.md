@@ -66,6 +66,37 @@ Invoke-RestMethod http://127.0.0.1:4100/api/status
 The Dockerfile contains the same `/api/status` health check as Compose, so a
 container started without Compose still reports its health.
 
+Check that the signed official Adapter Registry is reachable and trusted:
+
+```bash
+curl --fail http://127.0.0.1:4100/api/adapter-registry/packages
+```
+
+The request downloads the signed index from GitHub Pages. Registry availability
+is not part of the container health check, so a temporary external network
+failure does not restart an otherwise healthy ComicCrawler Server.
+
+## Adapter Registry trust store
+
+The image pins the official Ed25519 public key in
+`/app/defaults/adapter-registries.json`. The image never contains the Registry
+private key. Adapter packages remain inactive after installation unless an
+administrator explicitly activates them.
+
+To use a custom trust store, mount it read-only and override the container path:
+
+```yaml
+services:
+  app:
+    environment:
+      COMICCRAWLER_ADAPTER_TRUST_STORE_PATH: /app/config/adapter-registries.json
+    volumes:
+      - ./adapter-registries.json:/app/config/adapter-registries.json:ro
+```
+
+Rebuild the image when the pinned official key changes. Existing runtime data
+in `comic-data` does not need to be deleted.
+
 ## Image name and metadata
 
 Compose builds `luberserker/comiccrawler:latest` by default. Override the local
@@ -107,8 +138,8 @@ and 1 GB of memory.
 ## Runtime boundary
 
 The production image contains the backend, WebUI, documentation, AO bundle,
-shared contracts, and Browser Client SDK runtime. It does not install or launch
-Chromium.
+shared contracts, Browser Client SDK runtime, and the official Registry public
+trust entry. It does not install or launch Chromium.
 
 Browser-backed tasks use an outbound connection from a user-side Browser Client.
 The Browser Client controls the user's browser or selected tab and handles human

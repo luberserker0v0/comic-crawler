@@ -51,7 +51,7 @@ export class BrowserWorkerLeaseCoordinator {
     private readonly gateway: GatewayPort,
     private readonly defaultTimeoutMs = 30 * 60 * 1000
   ) {
-    this.unsubscribeGateway = gateway.onChange(() => this.notifyChanged());
+    this.unsubscribeGateway = gateway.onChange(() => this.handleGatewayChange());
   }
 
   listWorkers(ownerUserId?: string): Array<Record<string, unknown>> {
@@ -112,6 +112,7 @@ export class BrowserWorkerLeaseCoordinator {
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
     this.validateTarget(request.ownerUserId, target);
+    this.validateTargetUrl(target, request.initialUrl);
     const deadline = Date.now() + normalizeTimeout(request.timeoutMs ?? this.defaultTimeoutMs);
     return this.acquireUntil(request, target, deadline);
   }
@@ -151,6 +152,7 @@ export class BrowserWorkerLeaseCoordinator {
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
     this.validateTarget(request.ownerUserId, target);
+    this.validateTargetUrl(target, request.initialUrl);
     const worker = this.selectAvailableWorker(request.ownerUserId, target);
     if (!worker) return undefined;
     const lease = this.reserve(request, worker);
@@ -205,6 +207,13 @@ export class BrowserWorkerLeaseCoordinator {
       && worker.capabilities.executionMode === target.mode
       && (target.mode !== 'managed-profile' || !target.workerId || target.workerId === worker.workerId)
       && (target.mode !== 'existing-tab' || target.workerId === worker.workerId));
+  }
+
+  private validateTargetUrl(target: BrowserTarget, initialUrl: string | undefined): void {
+    if (target.mode !== 'existing-tab' || !initialUrl) return;
+    const resource = this.gateway.getResource(target.resourceId)!;
+    if (normalizeBrowserResourceUrl(resource.url) === normalizeBrowserResourceUrl(initialUrl)) return;
+    throw new Error(`Browser resource "${resource.resourceId}" is not on the requested URL.`);
   }
 
   private reserve(request: AcquireBrowserWorkerLeaseRequest, worker: BrowserWorker): BrowserWorkerLease {
@@ -270,6 +279,18 @@ export class BrowserWorkerLeaseCoordinator {
 
   private notifyChanged(): void {
     for (const listener of [...this.listeners]) listener();
+  }
+
+  private handleGatewayChange(): void {
+    for (const lease of [...this.leasesByWorker.values()]) {
+      const worker = this.gateway.getWorker(lease.workerId);
+      if (lease.sessionId && worker?.online && worker.activeSessionId !== lease.sessionId) {
+        lease.state = 'released';
+        this.leasesByWorker.delete(lease.workerId);
+        this.leasesByTask.delete(lease.taskId);
+      }
+    }
+    this.notifyChanged();
   }
 }
 
