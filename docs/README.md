@@ -28,6 +28,8 @@ This directory contains user- and contributor-facing documentation for the
   `AdapterBase` output contract, and AO API lifecycle.
 - `RELIABILITY.md` - checkpoints, queue slot release, retry behavior, resume,
   forced task order, and adapter lifecycle recovery.
+- `../tools/browser-client-acceptance/README.md` - deployed acceptance flow for
+  existing-tab and managed-profile Browser Clients.
 - `development/` - version-controlled SRS, SDD, TDD, test scenarios, and
   authentication credential contract.
 

@@ -20,7 +20,10 @@ Browser Client 必須涵蓋兩類不同情境：
 2. 使用者尚未開啟任何可供爬取的頁面。
 
 第一類使用 existing-tab Browser Client。它應採用目前 tab、目前 Profile
-與目前驗證狀態，不應另外啟動 Chrome。
+與目前驗證狀態。建立 session 時不得另外啟動 Chrome。
+
+第一方 acceptance Consumer 可以在連線時建立自己擁有的 Chrome，讓使用者先
+開啟頁面。頁面註冊後仍採用相同 existing-tab 契約。
 
 第二類以 CLI、GUI helper 或 local service 為主要 Consumer。它應由本機
 Playwright 啟動 ComicCrawler 管理的 Chrome Profile。
@@ -69,19 +72,21 @@ flowchart LR
   subgraph Existing[Existing-tab Consumer]
     ExistingClient[Browser Client]
     ExistingSDK[Browser Client SDK]
-    ExistingExecutor[ExistingTabExecutor]
+    ExistingExecutor[DriverBrowserExecutor]
+    ExistingStrategy[ExistingTabAcquisitionStrategy]
     CurrentTab[Current Chrome Tab]
-    ExistingClient --> ExistingSDK --> ExistingExecutor --> CurrentTab
+    ExistingClient --> ExistingSDK --> ExistingExecutor --> ExistingStrategy --> CurrentTab
   end
 
   subgraph Managed[Managed-profile Consumer]
     LocalApp[CLI / GUI helper / local service]
     ManagedSDK[Browser Client SDK]
-    ManagedExecutor[ManagedChromeExecutor]
+    ManagedExecutor[DriverBrowserExecutor]
+    ManagedStrategy[ManagedProfileAcquisitionStrategy]
     Provisioner[Profile Provisioner]
     ManagedChrome[Managed Chrome]
-    LocalApp --> ManagedSDK --> ManagedExecutor --> ManagedChrome
-    Provisioner --> ManagedExecutor
+    LocalApp --> ManagedSDK --> ManagedExecutor --> ManagedStrategy --> ManagedChrome
+    Provisioner --> ManagedStrategy
   end
 
   API --> Scheduler --> Lease --> Gateway
@@ -106,8 +111,19 @@ classDiagram
     +openSession(request, signal)
     +close()
   }
-  class ExistingTabExecutor
-  class ManagedChromeExecutor
+  class DriverBrowserExecutor
+  class BrowserPageAcquisitionStrategy {
+    <<interface>>
+    +acquire(request, signal)
+    +close()
+  }
+  class ExistingTabAcquisitionStrategy
+  class ManagedProfileAcquisitionStrategy
+  class ManagedProfileLauncher {
+    <<interface>>
+    +open(options)
+    +close()
+  }
   class ProfileProvisioner {
     <<interface>>
     +prepare()
@@ -116,9 +132,12 @@ classDiagram
   class FreshProfileProvisioner
   class CopyProfileProvisioner
 
-  BrowserExecutor <|.. ExistingTabExecutor
-  BrowserExecutor <|.. ManagedChromeExecutor
-  ManagedChromeExecutor --> ProfileProvisioner
+  BrowserExecutor <|.. DriverBrowserExecutor
+  DriverBrowserExecutor --> BrowserPageAcquisitionStrategy
+  BrowserPageAcquisitionStrategy <|.. ExistingTabAcquisitionStrategy
+  BrowserPageAcquisitionStrategy <|.. ManagedProfileAcquisitionStrategy
+  ManagedProfileAcquisitionStrategy --> ManagedProfileLauncher
+  ManagedProfileLauncher --> ProfileProvisioner
   ProfileProvisioner <|.. FreshProfileProvisioner
   ProfileProvisioner <|.. CopyProfileProvisioner
 ```
@@ -140,16 +159,9 @@ classDiagram
 - Handoff 只聚焦原 tab。
 - DOM 由目前 tab 讀取。
 
-基礎操作由 Browser Client 使用瀏覽器平台 API 完成，例如：
-
-- `chrome.tabs`
-- `chrome.scripting`
-- `activeTab` 或明確 host permission
-
-只有需要 CDP domain 時，Executor 才可使用 `chrome.debugger`。Server 不知道
-Executor 是否使用 `chrome.debugger`。
-
-Existing-tab mode 不把 Browser Client transport 轉接給 Playwright。
+基礎操作由 Consumer 注入的 `BrowserPageDriver` 完成。Driver 可以包裝
+Consumer 所在平台提供的 page handle，或包裝 acceptance runtime 擁有的
+Playwright page。Server 只傳送 semantic commands，不知道底層 API。
 
 ### 6.2 Managed profile
 
@@ -202,7 +214,7 @@ export type ManagedProfileProvisioning =
 1. 建立新的 user data directory。
 2. 建立 `Default` Profile。
 3. 不讀取使用者既有 Chrome 資料。
-4. 將目錄交給 ManagedChromeExecutor。
+4. 將目錄交給 `ManagedProfileAcquisitionStrategy` 的 launcher。
 
 ### 7.2 Copy provisioner
 
@@ -213,7 +225,7 @@ export type ManagedProfileProvisioning =
 5. 排除 cache、lock 與 telemetry 檔案。
 6. 同步根目錄 `Local State`。
 7. 驗證複製後的 Profile 結構。
-8. 將新目錄交給 ManagedChromeExecutor。
+8. 將新目錄交給 `ManagedProfileAcquisitionStrategy` 的 launcher。
 
 Copy 失敗時回傳明確錯誤。Runtime 不得自動改用 fresh Profile。
 
@@ -242,8 +254,9 @@ export interface BrowserCapabilities {
 
 Capability 規則：
 
-- ExistingTabExecutor 宣告 `executionMode: 'existing-tab'`。
-- ManagedChromeExecutor 宣告 `executionMode: 'managed-profile'`。
+- `ExistingTabAcquisitionStrategy` 設定 `executionMode: 'existing-tab'`。
+- `ManagedProfileAcquisitionStrategy` 設定 `executionMode: 'managed-profile'`。
+- `DriverBrowserExecutor` 回報所注入策略的 capability。
 - Worker 不得在同一次 process lifetime 改變 execution mode。
 - Server 派送前必須檢查 task requirement。
 
@@ -346,8 +359,8 @@ acquisition，navigation 與 DOM snapshot 不再綁死。
 - Existing tab 第一次 acquisition 比對目前 URL，符合時直接讀取 DOM。
 - Existing tab 第一次 acquisition 不符合 task URL 時回傳 mismatch error。
 - Managed profile launcher 只建立 Profile 與 page。
-- Managed profile 第一次 acquisition 依 session source 開啟初始 URL。
-- 後續 render 只在目前 URL 不同時 navigation。
+- Managed profile acquisition 只建立 page，不負責 navigation。
+- Browser Render Service 在目前 URL 不同時送出 `page.navigate`。
 - Handoff 只 focus 或 snapshot，不執行 navigation。
 
 ## 13. Existing-tab task 流程
@@ -387,16 +400,22 @@ sequenceDiagram
   autonumber
   participant Server
   participant SDK
-  participant Executor as ManagedChromeExecutor
+  participant Executor as DriverBrowserExecutor
+  participant Strategy as ManagedProfileAcquisitionStrategy
+  participant Launcher as ManagedProfileLauncher
   participant Provisioner
   participant Chrome
 
   Server->>SDK: session.open(managed-profile)
   SDK->>Executor: openSession
-  Executor->>Provisioner: prepare profile
-  Provisioner-->>Executor: userDataDir
-  Executor->>Chrome: launchPersistentContext
-  Chrome-->>Executor: page ready
+  Executor->>Strategy: acquire
+  Strategy->>Launcher: open
+  Launcher->>Provisioner: prepare profile
+  Provisioner-->>Launcher: userDataDir
+  Launcher->>Chrome: launchPersistentContext
+  Chrome-->>Launcher: page ready
+  Launcher-->>Strategy: managed profile
+  Strategy-->>Executor: page lease
   Executor-->>SDK: session ready
   Server->>SDK: page.navigate
   SDK->>Executor: execute
@@ -517,33 +536,30 @@ Protocol 採新版本一次性切換。Server 不同時接受舊 message shape�
 
 ### 20.4 Live acceptance
 
-Live anti-bot acceptance 不進入一般 CI。
+Live anti-bot acceptance 不進入一般 CI。第一方 acceptance Consumer 使用正式
+SDK、WebSocket、Server、Adapter Lab 與 Chrome。
 
-1. 建立完全 fresh Profile。
-2. 開啟指定 Comix chapter。
-3. 等待 reader readiness。
-4. 檢查 challenge marker 已消失。
-5. 檢查 reader page element 存在。
-6. 檢查 image URL 數量大於零。
-7. 記錄 Chrome 與 Playwright 版本。
-8. 重複執行 fresh case。
-9. 重複執行 copied case。
-10. 執行 existing-tab handoff case。
+1. 使用獨立 config enroll 兩種 execution mode。
+2. 以 existing-tab 註冊並選定目標 tab。
+3. 以 managed-profile 建立 session-owned page。
+4. 驗證兩種模式的 adapter result。
+5. 驗證 handoff 沿用原 browser session。
+6. 驗證各模式的資源清理規則。
 
+完整操作步驟見
+[`tools/browser-client-acceptance/README.md`](../../tools/browser-client-acceptance/README.md)。
 測試不得只以 navigation 未拋出錯誤作為通過條件。
 
 ## 21. 固定決策
 
 1. Managed Profile 預設 lifecycle 使用 `session`。
 2. Copy provisioner 複製完整 Profile，但排除 cache。
-3. Existing tab 第一版不使用 `chrome.debugger`。
+3. Existing tab 不限定 Consumer 使用的 browser API。
 4. Resource registration 使用既有 control WebSocket。
 5. Existing tab 第一次 acquisition 必須符合 task URL。
 6. Mobile Consumer 第一版只作 task controller。
 
 ## 22. References
 
-- [Chrome Tabs API](https://developer.chrome.com/docs/extensions/reference/api/tabs)
-- [Chrome Scripting API](https://developer.chrome.com/docs/extensions/reference/api/scripting)
-- [Chrome Debugger API](https://developer.chrome.com/docs/extensions/reference/api/debugger)
+- [Browser Client acceptance guide](../../tools/browser-client-acceptance/README.md)
 - [Playwright BrowserType](https://playwright.dev/docs/api/class-browsertype)

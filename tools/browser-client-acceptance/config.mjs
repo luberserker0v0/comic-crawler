@@ -1,7 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
-const ROOT_KEYS = new Set(['serverUrl', 'clientName', 'statePath', 'reconnectDelayMs', 'browser']);
+const ROOT_KEYS = new Set([
+  'serverUrl', 'clientName', 'statePath', 'reconnectDelayMs', 'executionMode', 'browser',
+]);
 const BROWSER_KEYS = new Set(['channel', 'headless', 'args', 'profile']);
 const PROFILE_KEYS = new Set(['type', 'sourceUserDataRoot', 'sourceProfile']);
 
@@ -19,6 +21,7 @@ function validateConfig(raw) {
   rejectUnknownKeys(raw, ROOT_KEYS, 'config');
   requireString(raw.serverUrl, 'serverUrl');
   new URL(raw.serverUrl);
+  validateExecutionMode(raw.executionMode);
   const browser = raw.browser ?? {};
   assertRecord(browser, 'browser');
   rejectUnknownKeys(browser, BROWSER_KEYS, 'browser');
@@ -26,6 +29,12 @@ function validateConfig(raw) {
   validateBrowserOptions(browser);
   validateRootOptions(raw);
   return browser;
+}
+
+function validateExecutionMode(value) {
+  if (value !== 'managed-profile' && value !== 'existing-tab') {
+    throw new Error('executionMode must be "managed-profile" or "existing-tab".');
+  }
 }
 
 function validateBrowserOptions(browser) {
@@ -61,6 +70,7 @@ function buildAcceptanceConfig(raw, browser, profile, baseDirectory, stateOverri
   return {
     serverUrl: new URL(raw.serverUrl).toString(),
     clientName: raw.clientName ?? 'production-acceptance-worker',
+    executionMode: raw.executionMode,
     statePath,
     reconnectDelayMs: raw.reconnectDelayMs ?? 2_000,
     browser: {

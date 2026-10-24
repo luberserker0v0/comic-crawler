@@ -3,11 +3,11 @@ import { z } from 'zod';
 import type { ProviderDocument } from './types';
 
 const ProviderDocumentSchema = z.object({
-  provider: z.record(z.object({
+  provider: z.record(z.string(), z.object({
     name: z.string().optional(),
     npm: z.string().optional(),
-    options: z.record(z.unknown()).optional(),
-    models: z.record(z.object({ name: z.string().optional() })).optional(),
+    options: z.record(z.string(), z.unknown()).optional(),
+    models: z.record(z.string(), z.object({ name: z.string().optional() })).optional(),
   })),
 });
 

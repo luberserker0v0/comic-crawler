@@ -121,6 +121,7 @@
 28. Close orphan sessions after Server identity changes.
 29. Wait for dynamically created reader pages.
 30. Resume Adapter Lab handoff without an idle target.
+31. Register an acceptance-browser tab for Adapter Lab selection.
 
 ## 3. Traceability
 
@@ -151,10 +152,11 @@
 | `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16 |
 | `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-22 |
 | `frontend/tests/unit/pages/browser-target-options.test.ts` | BC-23 |
+| `tools/browser-client-acceptance/tests/existing-tab-runtime.test.mjs` | BC-24 |
 | `scripts/clean.test.mjs` | DEV-01, DEV-02 |
 
-正式環境 Consumer 驗證對應 BC-13 與 COMIX-02。它不是 merge gate，因為外部
-網站與 challenge 狀態不穩定。
+正式環境 Consumer 驗證對應 BC-13、BC-24 與 COMIX-02。它不是 merge gate，
+因為外部網站與 challenge 狀態不穩定。
 
 ## 4. Test commands
 
@@ -172,6 +174,7 @@ npm run test:all
 - `test:e2e` runs every configured Playwright project.
 - `test:all` runs all non-E2E suites, then Playwright E2E.
 - `test:e2e:chromium` runs only the Chromium project.
+- `test:browser-client-acceptance` runs the automated Consumer checks.
 
 Use the suffixed commands to narrow the target:
 

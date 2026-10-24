@@ -131,16 +131,25 @@ A user-side Browser Client supplies one task-scoped browser session at a time.
 
 Setup requires three actions:
 
-1. Configure the client.
+1. Choose an execution mode and configure the client.
 2. Enroll once, then connect it to the Server.
-3. Create a task and select the Worker, or choose any available Worker.
+3. Select its registered tab or managed Worker in the WebUI.
+
+| Execution mode | WebUI target | Browser lifecycle |
+|---|---|---|
+| `existing-tab` | One exact tab registered by the Browser Client | The task adopts the tab and leaves it open. |
+| `managed-profile` | One online Worker | The Worker creates a page for the task and cleans it up afterward. |
+
+The WebUI never scans a user's browser. Existing tabs appear only after the
+Browser Client registers their title and URL.
 
 See the [Browser Client SDK guide](browser-client-sdk/README.md) for embedding
 instructions and the injected executor contract.
 
 For production environment verification, use the first-party
 [Browser Client acceptance consumer](tools/browser-client-acceptance/README.md).
-It connects the real SDK and a real headed Chrome to a deployed Server.
+It connects the real SDK and a real headed Chrome to a deployed Server. It can
+test both managed-profile tasks and Adapter Lab selection of a registered tab.
 
 ## GUI preview
 
@@ -185,7 +194,7 @@ Inspect and test individual adapter functions.
 - [Browser Client SDK](browser-client-sdk/README.md): enroll, connect, and
   provide a user-side browser.
 - [Acceptance Consumer](tools/browser-client-acceptance/README.md): verify a
-  deployed Server with the real SDK, WebSocket, and Chrome.
+  deployed Server with both execution modes, the real SDK, WebSocket, and Chrome.
 - [API Reference](docs/API.md): REST endpoints and automation flow.
 - [API Security](docs/API_SECURITY.md): authentication policy, roles,
   permissions, and credential handling.

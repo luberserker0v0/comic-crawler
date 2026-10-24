@@ -22,6 +22,7 @@
 ## Browser execution contract
 
 - `BROWSER_EXECUTION_MODES.md`：existing tab、managed Profile、resource binding 與 handoff 的現行設計。
+- `../../tools/browser-client-acceptance/README.md`：兩種 execution mode 的正式環境測試流程。
 
 不適合放在這裡：
 

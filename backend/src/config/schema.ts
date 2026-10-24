@@ -77,7 +77,7 @@ export const GlobalConfigSchema = z.object({
   server: ServerConfigSchema,
   log: LogConfigSchema,
   i18n: I18nConfigSchema,
-  maintenance: MaintenanceConfigSchema.default({}),
+  maintenance: MaintenanceConfigSchema.prefault({}),
   apiSecurity: ApiSecurityPolicySchema.default({ ...DEFAULTS.apiSecurity, rules: [] }),
 });
 

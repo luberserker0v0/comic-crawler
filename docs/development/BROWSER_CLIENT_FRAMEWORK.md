@@ -244,15 +244,16 @@ export interface BrowserCapabilities {
 
 Scheduler 必須在派送前確認 Worker capabilities 滿足工作需求。
 
-Existing-tab Executor 可以宣告：
+注入 existing-tab acquisition strategy 時，Executor 宣告：
 
 ```text
 executionMode      existing-tab
 humanHandoff       true
 ```
 
-Managed-profile Executor 宣告 `executionMode: managed-profile`。Profile 的
-provisioning 與 lifecycle 不放在 capability boolean。
+注入 managed-profile acquisition strategy 時，Executor 宣告
+`executionMode: managed-profile`。Profile provisioning 與 lifecycle 不放在
+capability boolean。
 
 ## 8. Version 2 command protocol
 
@@ -590,12 +591,13 @@ Browser Client 負責：
 
 1. 取得使用者 tab 授權。
 2. 實作通用 `BrowserPageDriver`。
-3. 使用 `ExistingTabExecutor`。
-4. 以 `client.registerResource()` 發佈目前 tab。
-5. 實作 `ClientStateStore`。
-6. 限制操作在批准的 tab。
-7. Session 結束時解除控制。
-8. 不關閉使用者 Chrome 或刪除使用者 Profile。
+3. 建立 `ExistingTabAcquisitionStrategy`。
+4. 將 driver 與 strategy 注入 `DriverBrowserExecutor`。
+5. 以 `client.registerResource()` 發佈目前 tab。
+6. 實作 `ClientStateStore`。
+7. 限制操作在批准的 tab。
+8. Session 結束時解除控制。
+9. 不關閉使用者 Chrome 或刪除使用者 Profile。
 
 ### 15.2 Managed-profile Browser Client
 
@@ -603,14 +605,15 @@ CLI、GUI helper 或 local service 負責：
 
 1. 將 Playwright `chromium` 注入 `PlaywrightManagedProfileLauncher`。
 2. 選擇 `FreshProfileProvisioner` 或 `CopyProfileProvisioner`。
-3. 將 launcher 與 `PlaywrightPageDriver` 注入 `ManagedProfileExecutor`。
-4. 實作 profile directory access。
-5. 實作 file、database 或 secure state store。
-6. Session 結束時只清理自己擁有的 Profile 與 browser process。
+3. 建立 `ManagedProfileAcquisitionStrategy`。
+4. 將 driver 與 strategy 注入 `DriverBrowserExecutor`。
+5. 實作 profile directory access。
+6. 實作 file、database 或 secure state store。
+7. Session 結束時只清理自己擁有的 Profile 與 browser process。
 
-SDK 定義 execution、Playwright 與 Profile Strategy。Node filesystem 與
-Playwright instance 仍由 Browser Client 注入，因此 existing-tab Browser Client 不載入
-Node 或 Playwright runtime。
+SDK 定義 execution、Playwright 與 Profile Strategy。Node filesystem、
+Playwright instance 或其他平台 runtime 皆由 Browser Client 注入。SDK 不要求
+existing-tab Consumer 使用特定 browser API 或特定 runtime。
 
 ## 16. Security boundary
 

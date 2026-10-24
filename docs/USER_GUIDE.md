@@ -209,9 +209,14 @@ Enter a URL first:
 
 Choose a Browser target before running a DOM-backed function:
 
-- Existing tab - ask the Browser Client to register the exact target URL.
-- Managed profile - choose an online managed-profile Worker.
+- Existing tab - select an exact tab registered by the Browser Client.
+- Managed profile - select an online Worker that can create a page.
 - Use Refresh after registering a new tab.
+
+The WebUI does not inspect every browser tab. An existing-tab option appears
+only after its Browser Client publishes an opaque resource with a title and URL.
+The target URL must match after removing its fragment. A managed-profile option
+represents a Worker because its page does not exist until the test starts.
 
 The implementation panel shows the full adapter source or dynamic selector
 manifest. Function selection only chooses the test target; helper functions and
@@ -234,6 +239,9 @@ not need to reappear as an idle Browser target. If the user closes the owned
 browser, the Browser Client reports the closed session and stays available for
 the next test.
 
+Existing-tab tests use the exact selected resource. They do not open another
+browser and do not close the approved tab when the session ends.
+
 Adapter Lab is for diagnosis and draft testing. It does not create crawl tasks
 and does not promote adapter versions by itself.
 
@@ -248,10 +256,11 @@ No inbound user port is required.
 Setup follows this order:
 
 1. Configure the Server security policy.
-2. Configure the consumer's SDK state store.
-3. Enroll the Browser Client once.
-4. Connect its outbound command WebSocket.
-5. Select an available Browser Worker when creating a task.
+2. Choose `existing-tab` or `managed-profile`.
+3. Configure the consumer's SDK state store.
+4. Enroll the Browser Client once.
+5. Connect its outbound command WebSocket.
+6. Register an approved tab or select a managed Worker.
 
 A Browser Worker exposes one task-scoped browser session for these features:
 
@@ -266,8 +275,8 @@ with its current browser profile.
 
 Developers can use the first-party
 [production acceptance consumer](../tools/browser-client-acceptance/README.md)
-to enroll a real managed-profile Worker against a deployed Server. The tool
-uses headed Chrome and supports manual verification.
+to test both execution modes against a deployed Server and Adapter Lab. The tool
+uses an owned headed Chrome and supports manual verification.
 
 ## Human verification
 

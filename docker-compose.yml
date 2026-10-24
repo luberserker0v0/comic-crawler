@@ -7,7 +7,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        COMICCRAWLER_VERSION: '${COMICCRAWLER_IMAGE_VERSION:-0.2.0}'
+        COMICCRAWLER_VERSION: '${COMICCRAWLER_IMAGE_VERSION:-0.3.0}'
         COMICCRAWLER_REVISION: '${COMICCRAWLER_IMAGE_REVISION:-local}'
     container_name: comiccrawler
     init: true

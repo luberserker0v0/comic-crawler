@@ -181,10 +181,28 @@ The client performs these actions:
 3. Opens one outbound command WebSocket.
 4. Executes semantic page commands through the injected executor.
 
+Both modes use `DriverBrowserExecutor` and `BrowserPageDriver`. Only page
+acquisition changes:
+
+- `ExistingTabAcquisitionStrategy` leases a registered page handle.
+- `ManagedProfileAcquisitionStrategy` asks a local launcher for a page.
+
+After acquisition, both modes use the same `DriverBrowserSession` command path.
+
 ComicCrawler never launches Chromium in the backend process.
 
 See [Browser Client SDK](../browser-client-sdk/README.md) for the executor and
 state-store contracts.
+
+Use the [Browser Client acceptance guide](../tools/browser-client-acceptance/README.md)
+to test both `existing-tab` and `managed-profile` against a deployed Server and
+Adapter Lab.
+
+Run the automated Consumer checks from `repo/`:
+
+```bash
+npm run test:browser-client-acceptance
+```
 
 ## 7. Container image
 
@@ -205,7 +223,7 @@ The multi-stage Dockerfile performs these actions:
 Set image metadata for release builds:
 
 ```bash
-COMICCRAWLER_IMAGE_VERSION=0.2.0 \
+COMICCRAWLER_IMAGE_VERSION=0.3.0 \
 COMICCRAWLER_IMAGE_REVISION=<git-commit> \
 docker compose build app
 ```
@@ -213,7 +231,7 @@ docker compose build app
 PowerShell:
 
 ```powershell
-$env:COMICCRAWLER_IMAGE_VERSION = "0.2.0"
+$env:COMICCRAWLER_IMAGE_VERSION = "0.3.0"
 $env:COMICCRAWLER_IMAGE_REVISION = git rev-parse HEAD
 docker compose build app
 ```

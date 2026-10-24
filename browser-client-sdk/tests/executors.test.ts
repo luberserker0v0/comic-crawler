@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  ExistingTabExecutor,
-  ManagedProfileExecutor,
+  DriverBrowserExecutor,
+  ExistingTabAcquisitionStrategy,
+  ManagedProfileAcquisitionStrategy,
   type BrowserPageDriver,
   type BrowserSession,
   type ManagedProfile,
@@ -23,14 +24,14 @@ const driver: BrowserPageDriver<Page> = {
   async focus(page) { page.focused = true; },
 };
 
-test('ExistingTabExecutor adopts and preserves a registered tab', testExistingTabLifecycle);
-test('ExistingTabExecutor rejects a moved or concurrently leased tab', testExistingTabRejection);
-test('ExistingTabExecutor forwards command cancellation to the BrowserPageDriver', testExistingTabCancellation);
-test('ManagedProfileExecutor opens a profile without navigation and closes its owned profile', testManagedProfileLifecycle);
+test('existing-tab acquisition adopts and preserves a registered tab', testExistingTabLifecycle);
+test('existing-tab acquisition rejects a moved or concurrently leased tab', testExistingTabRejection);
+test('the shared executor forwards cancellation to the BrowserPageDriver', testExistingTabCancellation);
+test('managed-profile acquisition opens and closes its owned profile', testManagedProfileLifecycle);
 
 async function testExistingTabLifecycle(): Promise<void> {
   const page = createPage('https://example.test/chapter');
-  const executor = new ExistingTabExecutor(driver);
+  const executor = existingTabExecutor(driver);
   await executor.registerResource(resource(page.url), page);
   const session = await executor.openSession(existingRequest(page.url), signal());
   await assertExistingTabCommands(session, page);
@@ -52,7 +53,7 @@ async function assertExistingTabCommands(session: BrowserSession, page: Page): P
 
 async function testExistingTabRejection(): Promise<void> {
   const page = createPage('https://example.test/chapter');
-  const executor = new ExistingTabExecutor(driver);
+  const executor = existingTabExecutor(driver);
   await executor.registerResource(resource(page.url), page);
   const request = existingRequest(page.url);
   const first = await executor.openSession(request, signal());
@@ -68,7 +69,7 @@ async function testExistingTabCancellation(): Promise<void> {
     if (commandSignal.aborted) throw new Error('Browser Client command was cancelled.');
     return page.html;
   } };
-  const executor = new ExistingTabExecutor(abortDriver);
+  const executor = existingTabExecutor(abortDriver);
   await executor.registerResource(resource(page.url), page);
   const session = await executor.openSession(existingRequest(page.url), signal());
   const controller = new AbortController(); controller.abort();
@@ -79,11 +80,16 @@ async function testManagedProfileLifecycle(): Promise<void> {
   const page = createPage('about:blank');
   let profileClosed = false;
   const profile: ManagedProfile<Page> = { page, async close() { profileClosed = true; } };
-  const executor = new ManagedProfileExecutor(driver, { async open() { return profile; } });
+  const strategy = new ManagedProfileAcquisitionStrategy({ async open() { return profile; } });
+  const executor = new DriverBrowserExecutor(driver, strategy);
   const session = await executor.openSession(managedRequest(), signal());
   assert.equal(page.url, 'about:blank');
   await session.close();
   assert.equal(profileClosed, true);
+}
+
+function existingTabExecutor(pageDriver: BrowserPageDriver<Page>) {
+  return new DriverBrowserExecutor(pageDriver, new ExistingTabAcquisitionStrategy(pageDriver));
 }
 
 function createPage(url: string): Page {

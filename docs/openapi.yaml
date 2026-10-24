@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ComicCrawler REST API
-  version: 0.2.0
+  version: 0.3.0
   description: REST contract for ComicCrawler clients. Access may be public or protected by the configured API security policy.
 servers:
   - url: http://127.0.0.1:4100
@@ -64,7 +64,13 @@ paths:
   /api/adapters/chapter-images:
     post:
       summary: Extract stable chapter page descriptors
-      description: Resolves a compatible adapter unless adapterId is supplied, then returns an opaque deterministic chapter ID and the complete ordered page descriptors without creating a download task. imageUrlCount always equals imageUrls.length and images.length; images.map(image => image.url) exactly equals imageUrls.
+      description: >-
+        Resolves a compatible adapter unless adapterId is supplied, then returns
+        an opaque deterministic chapter ID and the complete ordered page
+        descriptors without creating a download task. Browser-backed extraction
+        accepts the same browserTarget used by crawl tasks. imageUrlCount always
+        equals imageUrls.length and images.length; images.map(image => image.url)
+        exactly equals imageUrls.
       requestBody:
         required: true
         content:
@@ -467,7 +473,10 @@ paths:
   /api/adapters/{id}/functions/{functionId}/test:
     post:
       summary: Run an Adapter Lab function test
-      description: Metadata functions expect manga catalog URLs. Chapter image functions expect chapter URLs.
+      description: >-
+        Metadata functions expect manga catalog URLs. Chapter image functions
+        expect chapter URLs. DOM-backed functions accept an existing registered
+        tab or a managed-profile Worker through browserTarget.
       parameters:
         - $ref: "#/components/parameters/AdapterId"
         - $ref: "#/components/parameters/FunctionId"
@@ -1031,6 +1040,10 @@ paths:
   /api/browser-workers:
     get:
       summary: List stable Browser Worker targets visible to the current user
+      description: >-
+        Use online idle Workers as task targets. A managed-profile Worker can be
+        selected directly. An existing-tab Worker also requires one resource
+        returned by /api/browser-resources.
       responses:
         "200":
           description: Worker identity, capabilities, and availability
@@ -1052,6 +1065,10 @@ paths:
   /api/browser-resources:
     get:
       summary: List current-user browser tabs registered by existing-tab Workers
+      description: >-
+        Returns opaque tab resources published by connected Browser Clients.
+        Native browser tab handles are never returned. Adapter Lab matches these
+        resources to the requested URL after removing the fragment.
       responses:
         "200":
           description: Process-scoped browser resources available to the requesting user
@@ -1209,6 +1226,7 @@ components:
         executionMode:
           type: string
           enum: [existing-tab, managed-profile]
+          description: Selects registered-tab acquisition or managed page creation.
         navigation:
           type: boolean
         renderedDom:
@@ -1217,6 +1235,7 @@ components:
           type: boolean
         responsiveViewport:
           type: boolean
+          description: True when the Worker can create an isolated page with the requested render context.
     BrowserClientDiscovery:
       type: object
       required: [protocolVersion, apiSecurityMode, endpoints]
@@ -1283,6 +1302,10 @@ components:
         registeredCapabilities:
           $ref: "#/components/schemas/BrowserCapabilities"
     BrowserTarget:
+      description: >-
+        Selects browser execution. Existing-tab requires one exact registered
+        resource. Managed-profile may name one Worker or omit workerId to allow
+        scheduler selection.
       oneOf:
         - type: object
           required: [mode]
@@ -1408,6 +1431,7 @@ components:
           format: date-time
     BrowserResource:
       type: object
+      description: Public metadata for one process-memory tab resource. It never contains a native browser tab handle.
       required: [resourceId, workerId, kind, url, registeredAt]
       properties:
         resourceId:
@@ -1524,7 +1548,10 @@ components:
     RenderContext:
       type: object
       required: [viewport]
-      description: Rendering dimensions for an isolated Playwright browser context. Viewport dimensions use CSS pixels.
+      description: >-
+        Requested rendering dimensions for a Worker that supports responsive
+        viewport creation. Existing tabs retain their current viewport. Viewport
+        dimensions use CSS pixels.
       properties:
         viewport:
           type: object

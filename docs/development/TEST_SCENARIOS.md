@@ -677,6 +677,17 @@
 
 預期：沿用原 session 並完成測試。
 
+### BC-24 以正式 Consumer 選擇既有 tab
+
+1. 啟動 existing-tab acceptance Consumer。
+2. 在其 Chrome 開啟目標頁面。
+3. 等待 Consumer 註冊 tab。
+4. 在 Adapter Lab 選擇該 tab。
+5. 執行 adapter 函式。
+6. 檢查原 tab 仍然開啟。
+
+預期：Adapter Lab 使用指定 resource 完成測試。
+
 ## 6. WebUI
 
 ### WEB-01 顯示 discovery 設定錯誤

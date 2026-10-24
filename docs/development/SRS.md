@@ -31,6 +31,10 @@ one outbound command WebSocket.
 - **BRW-010**: Reconnect affinity is guaranteed only while the Client process lives.
 - **BRW-011**: The protocol must not proxy arbitrary Playwright methods.
 - **BRW-012**: Browser file transfer is outside the protocol.
+- **BRW-013**: A Worker must declare `existing-tab` or `managed-profile`.
+- **BRW-014**: Existing-tab work must bind one explicitly registered resource.
+- **BRW-015**: Managed-profile work must create a session-owned page.
+- **BRW-016**: Both modes must use the same semantic command contract after page acquisition.
 
 ## 4. Task requirements
 

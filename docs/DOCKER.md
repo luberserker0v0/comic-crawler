@@ -111,7 +111,7 @@ docker compose build app
 Release builds can record a version and Git revision in OCI labels:
 
 ```bash
-COMICCRAWLER_IMAGE_VERSION=0.2.0 \
+COMICCRAWLER_IMAGE_VERSION=0.3.0 \
 COMICCRAWLER_IMAGE_REVISION=<git-commit> \
 docker compose build app
 ```

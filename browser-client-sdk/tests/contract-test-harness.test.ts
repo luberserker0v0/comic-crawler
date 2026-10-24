@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BrowserExecutorContractError,
-  ExistingTabExecutor,
-  ManagedProfileExecutor,
+  DriverBrowserExecutor,
+  ExistingTabAcquisitionStrategy,
+  ManagedProfileAcquisitionStrategy,
   runBrowserExecutorContract,
   type BrowserExecutor,
   type BrowserPageDriver,
@@ -38,7 +39,7 @@ async function testExistingTabContract(): Promise<void> {
 
 function existingTabContract(page: Page) {
   return {
-    createExecutor: () => new ExistingTabExecutor(driver),
+    createExecutor: () => existingTabExecutor(),
     request: existingRequest(page.url),
     resource: { descriptor: existingResource(page.url), localHandle: page },
     expectedInitialUrl: page.url,
@@ -75,7 +76,8 @@ async function testManagedProfileContract(): Promise<void> {
 
 function managedProfileContract(page: Page) {
   return {
-    createExecutor: () => new ManagedProfileExecutor(driver, managedLauncher(page)),
+    createExecutor: () => new DriverBrowserExecutor(driver,
+      new ManagedProfileAcquisitionStrategy(managedLauncher(page))),
     request: managedRequest(),
     expectedInitialUrl: 'about:blank',
     expectedInitialHtml: page.html,
@@ -83,6 +85,10 @@ function managedProfileContract(page: Page) {
     afterFocus: () => assert.equal(page.focused, true),
     afterSessionClose: () => assert.equal(page.closed, true),
   };
+}
+
+function existingTabExecutor() {
+  return new DriverBrowserExecutor(driver, new ExistingTabAcquisitionStrategy(driver));
 }
 
 function managedLauncher(page: Page) {

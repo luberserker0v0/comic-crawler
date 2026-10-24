@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import WebSocket from 'ws';
 import {
   BrowserClient,
-  ExistingTabExecutor,
+  DriverBrowserExecutor,
+  ExistingTabAcquisitionStrategy,
   type BrowserPageDriver,
   type BrowserClientSocket,
   type BrowserClientState,
@@ -132,7 +133,7 @@ function createExistingTabClient(
   let sequence = 0;
   return new BrowserClient({
     serverUrl: 'http://127.0.0.1:4173',
-    executor: new ExistingTabExecutor(driver),
+    executor: new DriverBrowserExecutor(driver, new ExistingTabAcquisitionStrategy(driver)),
     stateStore,
     webSocketFactory: {
       create: (url) => new WebSocket(url) as unknown as BrowserClientSocket,
@@ -477,7 +478,7 @@ async function ComicCrawlerE2ETestAPI01({ request }) {
     expect(response.ok()).toBeTruthy();
     const body = await response.json();
     expect(body.data).toBeDefined();
-    expect(body.data.version).toBe('0.2.0');
+    expect(body.data.version).toBe('0.3.0');
     expect(body.data.adapters).toBeDefined();
     expect(body.data.adapters.loaded).toBeGreaterThanOrEqual(0);
 }

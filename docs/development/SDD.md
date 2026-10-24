@@ -23,11 +23,14 @@ flowchart LR
   subgraph Device[User Device]
     App[Browser Client]
     SDK[Browser Client SDK]
-    Executor[BrowserExecutor]
+    Executor[DriverBrowserExecutor]
+    Acquisition[Page Acquisition Strategy]
+    Driver[BrowserPageDriver]
     Browser[User Browser / Tab]
     App --> SDK
     SDK --> Executor
-    Executor --> Browser
+    Executor --> Acquisition --> Browser
+    Executor --> Driver --> Browser
   end
 
   SDK -->|outbound command WebSocket| Gateway
@@ -53,7 +56,9 @@ state; it does not expose arbitrary Playwright operations.
 | Adapter Catalog | Stores immutable approved packages and active versions. |
 | Challenge Discovery | Retains the session for human verification. |
 | Browser Client SDK | Implements enrollment, connection, heartbeat, and dispatch. |
-| BrowserExecutor | Browser Client adapter for an existing tab or managed Playwright runtime. |
+| DriverBrowserExecutor | Shared session and semantic command implementation. |
+| Page Acquisition Strategy | Selects a registered tab or creates a managed page. |
+| BrowserPageDriver | Maps shared page commands to the Consumer runtime. |
 
 ## 3. Server class relationships
 
@@ -93,8 +98,21 @@ classDiagram
   class BrowserExecutor {
     <<interface>>
     +describe()
+    +registerResource()
+    +revokeResource()
     +openSession()
     +close()
+  }
+  class DriverBrowserExecutor
+  class BrowserPageAcquisitionStrategy {
+    <<interface>>
+    +acquire()
+    +close()
+  }
+  class ExistingTabAcquisitionStrategy
+  class ManagedProfileAcquisitionStrategy
+  class BrowserPageDriver {
+    <<interface>>
   }
   class BrowserSession {
     <<interface>>
@@ -115,11 +133,17 @@ classDiagram
   BrowserClient --> BrowserExecutor
   BrowserClient --> ClientStateStore
   BrowserClient --> WebSocketFactory
-  BrowserExecutor --> BrowserSession
+  BrowserExecutor <|.. DriverBrowserExecutor
+  DriverBrowserExecutor --> BrowserPageAcquisitionStrategy
+  DriverBrowserExecutor --> BrowserPageDriver
+  DriverBrowserExecutor --> BrowserSession
+  BrowserPageAcquisitionStrategy <|.. ExistingTabAcquisitionStrategy
+  BrowserPageAcquisitionStrategy <|.. ManagedProfileAcquisitionStrategy
 ```
 
 The SDK has one package root and no Node, Playwright, or browser-platform runtime
-dependency. Consumers inject platform-specific adapters.
+dependency. Consumers inject a page driver and one acquisition strategy. Both
+strategies enter the same session and command path after acquiring a page.
 
 ## 5. Protocol
 

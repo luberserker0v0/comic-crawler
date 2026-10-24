@@ -1,6 +1,7 @@
 {
   "serverUrl": "http://127.0.0.1:4100",
   "clientName": "production-acceptance-worker",
+  "executionMode": "existing-tab",
   "statePath": ".state/browser-client.json",
   "reconnectDelayMs": 2000,
   "browser": {

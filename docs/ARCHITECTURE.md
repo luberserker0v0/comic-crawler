@@ -221,8 +221,11 @@ flowchart LR
   App[Browser Client] --> SDK[Browser Client SDK]
   SDK -->|outbound command WebSocket| Cloud[ComicCrawler backend]
   Cloud -->|session + semantic commands| SDK
-  SDK --> Executor[Consumer BrowserExecutor]
-  Executor --> Browser[User browser / tab]
+  SDK --> Executor[DriverBrowserExecutor]
+  Executor --> Acquisition[Page acquisition strategy]
+  Executor --> Driver[BrowserPageDriver]
+  Acquisition --> Browser[User browser / tab]
+  Driver --> Browser
   Cloud --> Lease[Browser Worker Lease Coordinator]
   Lease --> Crawl[Crawl / discovery / handoff]
 ```
@@ -236,10 +239,11 @@ connected; native Chrome tab IDs stay inside the consumer.
 
 There is one project WebSocket, owned by the ComicCrawler Server. The protocol
 does not tunnel Playwright and does not expose a Playwright endpoint. Browser
-profile lifecycle belongs to the consumer. The SDK provides an
-`ExistingTabExecutor` for an already-open tab and a `ManagedProfileExecutor`
-for a consumer-owned profile launcher. Both use the same semantic command
-protocol.
+profile lifecycle belongs to the consumer. The SDK provides one
+`DriverBrowserExecutor`. An `ExistingTabAcquisitionStrategy` adopts an approved
+tab, while a `ManagedProfileAcquisitionStrategy` obtains a page from a
+consumer-owned profile launcher. Both use the same session and semantic command
+protocol after page acquisition.
 
 ## Task reliability
 

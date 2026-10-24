@@ -102,10 +102,16 @@ POST /api/adapters/chapter-images
 
 The adapter is resolved from the URL. An optional `adapterId` selects a specific
 registered adapter, and an optional `challengeDiscoveryId` reuses a completed
-human-verification handoff. `renderContext` controls the isolated Playwright
-browser context for responsive pages. Viewport dimensions are CSS pixels from
-`1` through `10000`; `deviceScaleFactor` is optional and ranges from `0.1`
-through `10`. If omitted, the effective context is `1920x1080` at scale `1`.
+human-verification handoff. For browser-backed extraction, `browserTarget` uses
+the same payload as crawl tasks. Pass `workerId + resourceId` to adopt an
+existing tab. Pass a managed-profile Worker, or omit the target, to let the
+scheduler select one.
+
+`renderContext` controls an isolated page only when the selected Worker supports
+responsive viewport creation. An existing tab keeps its current viewport.
+Viewport dimensions are CSS pixels from `1` through `10000`;
+`deviceScaleFactor` is optional and ranges from `0.1` through `10`. If omitted,
+the effective context is `1920x1080` at scale `1`.
 A successful response returns that effective context and does not truncate the list.
 It also returns opaque chapter and page identities. `imageUrlCount` always equals
 both `imageUrls.length` and `images.length`. `images.map(image => image.url)` is
@@ -267,9 +273,20 @@ task to that exact process-memory resource:
 }
 ```
 
-Use `GET /api/browser-workers` to list the requesting user's Workers. Omit
-`browserTarget`, or use `{ "mode": "managed-profile" }`, to let the scheduler
-choose a managed-profile Worker.
+Choose a target in this order:
+
+1. Call `GET /api/browser-workers`.
+2. Keep Workers that are online and idle.
+3. Read each Worker's `capabilities.executionMode`.
+4. For existing-tab, call `GET /api/browser-resources`.
+5. Select a resource owned by that Worker with the exact target URL.
+6. Send its `workerId + resourceId` in `browserTarget`.
+
+For managed-profile, send a Worker ID or omit it. Omitting `browserTarget`, or
+using `{ "mode": "managed-profile" }`, lets the scheduler choose an available
+managed-profile Worker. The WebUI uses these same APIs. It cannot inspect or
+register local tabs by itself.
+
 If no matching Worker is idle, the task enters `waiting_for_browser_worker`
 until a Worker becomes available or the acquisition timeout expires. Session
 IDs are internal lease data and are not accepted by task APIs.
@@ -491,7 +508,7 @@ Content-Type: application/json
     "navigation": true,
     "renderedDom": true,
     "humanHandoff": true,
-    "responsiveViewport": true
+    "responsiveViewport": false
   }
 }
 ```
@@ -504,7 +521,9 @@ its browser exposes an inbound port.
 
 An existing-tab consumer calls `client.registerResource()` with an opaque local
 tab handle. The SDK returns the `resourceId` used by task APIs. ComicCrawler
-never receives or persists the browser's native tab ID.
+never receives or persists the browser's native tab ID. The public resource
+contains only its opaque ID, Worker ID, URL, optional title, and registration
+time.
 
 List the user's Workers before creating a task:
 
@@ -515,6 +534,10 @@ GET /api/browser-workers
 ComicCrawler reserves one idle Worker when a task starts. It creates the
 browser command session and closes it when the task completes. One Worker
 executes one task at a time in this version.
+
+`GET /api/browser-resources` lists only resources owned by the requesting user.
+Existing-tab targets require one listed resource. Managed-profile targets do
+not use resource IDs because their page is created after assignment.
 
 Use these lifecycle endpoints to inspect Workers or manage credentials:
 
@@ -580,8 +603,10 @@ entries such as `dom_acquisition`, `extraction`, and `readiness`.
 Browser-backed test and chapter-image requests may use the same
 `browserTarget` object as crawl tasks. The Server owns and releases their
 short-lived browser lease when the request finishes.
-Adapter Lab lists `/api/browser-resources` and sends the selected `browserTarget`.
-Existing-tab resources must be registered for the exact target URL.
+Adapter Lab lists Workers and resources, then sends the selected
+`browserTarget`. Existing-tab uses an exact `workerId + resourceId` pair.
+Managed-profile uses a Worker without a resource ID. Existing-tab resources
+must be registered for the exact target URL.
 
 Verified fixture routes also exist for diagnostics:
 

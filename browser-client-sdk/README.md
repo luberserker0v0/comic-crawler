@@ -54,10 +54,12 @@ console.log(connection.workerId);
 後續啟動直接呼叫 `connect()`；SDK 會以 outbound WebSocket 連接 Server，
 不會在使用者裝置開放 inbound port。
 
-SDK 提供兩個 execution strategy：
+SDK 使用單一 `DriverBrowserExecutor`，並提供兩種頁面取得策略：
 
-- `ExistingTabExecutor` + consumer-provided `BrowserPageDriver`：操作使用者批准的 tab。
-- `ManagedProfileExecutor` + `PlaywrightManagedProfileLauncher`：操作 SDK 管理的 Profile。
+- `ExistingTabAcquisitionStrategy`：採用 Consumer 核准的現有分頁。
+- `ManagedProfileAcquisitionStrategy`：透過 Consumer 的 profile launcher 建立分頁。
+
+兩種策略取得頁面後，都進入相同的 `DriverBrowserSession` 指令流程。
 
 Existing-tab Browser Client 不必暴露 Chrome `tabId`：
 
@@ -75,9 +77,8 @@ const resource = await client.registerResource({
 Existing-tab Browser Client 的組裝方式：
 
 ```ts
-const executor = new ExistingTabExecutor(
-  browserPageDriver,
-);
+const acquisition = new ExistingTabAcquisitionStrategy(browserPageDriver);
+const executor = new DriverBrowserExecutor(browserPageDriver, acquisition);
 ```
 
 Playwright consumer 的組裝方式：
@@ -88,10 +89,9 @@ const launcher = new PlaywrightManagedProfileLauncher(
   new FreshProfileProvisioner(profileDirectoryAccess),
 );
 
-const executor = new ManagedProfileExecutor(
-  new PlaywrightPageDriver(),
-  launcher,
-);
+const driver = new PlaywrightPageDriver();
+const acquisition = new ManagedProfileAcquisitionStrategy(launcher);
+const executor = new DriverBrowserExecutor(driver, acquisition);
 ```
 
 `CopyProfileProvisioner` 也可使用，但 directory adapter 必須檢查來源
