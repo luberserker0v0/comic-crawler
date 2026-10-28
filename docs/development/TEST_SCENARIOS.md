@@ -711,13 +711,14 @@
 
 ### BC-26 取消執行中的 Browser command
 
-1. 開啟 browser session。
-2. 執行阻塞中的 command。
-3. 中止 task signal。
-4. 檢查 command 結果。
-5. 執行下一個 command。
+1. 呼叫 chapter-images API。
+2. 等待內容準備開始。
+3. 中止 HTTP request。
+4. 檢查 command cancellation。
+5. 檢查捲動位置還原。
+6. 再次呼叫相同 API。
 
-預期：Client 回報 CANCELLED，session 仍可使用。
+預期：舊 command 停止，新請求成功且不重疊。
 
 ## 6. WebUI
 

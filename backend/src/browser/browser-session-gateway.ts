@@ -33,6 +33,7 @@ export interface OpenGatewaySessionRequest extends Omit<OpenBrowserSessionReques
   workerId: string;
   sessionId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface GatewaySession {
@@ -154,6 +155,7 @@ export class BrowserSessionGateway {
   }
 
   async openSession(request: OpenGatewaySessionRequest): Promise<GatewaySession> {
+    request.signal?.throwIfAborted();
     const connection = this.requireOnlineConnection(request.workerId);
     this.assertValidSessionSource(connection.worker, request.source);
     if (connection.worker.activeSessionId) throw new Error(`Browser Worker "${request.workerId}" is busy.`);
@@ -169,8 +171,7 @@ export class BrowserSessionGateway {
     const pending = this.createPending<void>(this.pendingSessionOpen, sessionId, request.workerId,
       sessionId, request.timeoutMs, `Browser session "${sessionId}" timed out while opening.`);
     try {
-      this.sendSessionOpen(connection.socket, request, sessionId);
-      await pending;
+      await this.waitForSessionOpen(connection, request, session, pending);
       session.state = 'active';
       return { ...session };
     } catch (error) {
@@ -180,6 +181,20 @@ export class BrowserSessionGateway {
     } finally {
       this.clearPending(this.pendingSessionOpen, sessionId);
     }
+  }
+
+  private async waitForSessionOpen(
+    connection: WorkerConnection, request: OpenGatewaySessionRequest,
+    session: GatewaySession, pending: Promise<void>
+  ): Promise<void> {
+    const abort = () => this.clearAndReject(this.pendingSessionOpen, session.sessionId,
+      cancellationError(request.signal?.reason));
+    try {
+      this.sendSessionOpen(connection.socket, request, session.sessionId);
+      request.signal?.addEventListener('abort', abort, { once: true });
+      if (request.signal?.aborted) abort();
+      await pending;
+    } finally { request.signal?.removeEventListener('abort', abort); }
   }
 
   private reserveSession(request: OpenGatewaySessionRequest, worker: BrowserWorker,

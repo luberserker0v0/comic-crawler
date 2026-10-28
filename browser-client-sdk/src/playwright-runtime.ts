@@ -145,9 +145,10 @@ export class PlaywrightPageDriver<Page extends PlaywrightPageLike> implements Br
     const operation = prepareScrollableContent(
       (script, argument) => page.evaluate(script, argument),
       normalizePreparationTimeout(timeoutMs),
-      reader
+      reader,
+      signal
     );
-    await raceAbort(operation, signal);
+    await operation;
   }
 
   async focus(page: Page, signal: AbortSignal): Promise<void> {

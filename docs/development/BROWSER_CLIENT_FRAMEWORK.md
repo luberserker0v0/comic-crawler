@@ -407,6 +407,11 @@ Credential 不放在 URL、query string 或 WebSocket subprotocol。
 9. 未宣告 capability 的 command 必須拒絕。
 10. Log 不得記錄 credential 或完整 DOM。
 
+`POST /api/adapters/chapter-images` 的 HTTP connection 也是 cancellation
+source。Client 中止 response connection 時，Server 會取消 Worker acquisition
+或目前的 command。`prepareScrollableContent` 必須接收相同 signal，在每個
+有界 scroll step 之間檢查，並在回報 cancellation 前完成位置還原。
+
 ## 9. Identity 與 state
 
 | 識別碼 | 生命週期 | 用途 |

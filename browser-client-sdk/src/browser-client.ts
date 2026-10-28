@@ -436,6 +436,7 @@ export class BrowserClient {
     if (!active) return;
     this.activeSession = undefined;
     active.abortController.abort();
+    await active.commandTail.catch(() => undefined);
     await active.session.close();
   }
 

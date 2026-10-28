@@ -30,6 +30,7 @@ export interface AdapterFunctionTestOptions {
   challengeDiscoveryService?: ChallengeDiscoveryService;
   network?: NetworkConfig;
   renderContext?: EffectiveRenderContext;
+  signal?: AbortSignal;
   htmlRenderer?: HtmlRenderer;
   verificationHandoff?: {
     ownerUserId: string;
@@ -68,7 +69,8 @@ export async function testAdapterFunction(
   url: string,
   options: AdapterFunctionTestOptions = {}
 ): Promise<AdapterFunctionTestResponse> {
-  return runWithAdapterFunctionLock(adapter, () => runAdapterFunctionTest(adapter, functionId, url, options));
+  return runWithAdapterFunctionLock(adapter,
+    () => runAdapterFunctionTest(adapter, functionId, url, options), options.signal);
 }
 
 async function runAdapterFunctionTest(
@@ -85,6 +87,7 @@ async function runAdapterFunctionTest(
     const result = await executeAdapterFunction(context, verified);
     return createRunResultResponse(context, result, verified);
   } catch (error) {
+    if (options.signal?.aborted) throw options.signal.reason;
     return createRunErrorResponse(context, error);
   } finally {
     await cleanupRunContext(context, Boolean(verified));
@@ -154,7 +157,7 @@ async function executeAdapterFunction(
 ): Promise<Record<string, unknown>> {
   const operation = () => runWithCrawlerMode(context.adapter, context.crawlerMode,
     () => extractAdapterFunctionResult(context, verified));
-  return withTimeout(operation, adapterFunctionTimeoutMs(context.crawlerMode));
+  return withTimeout(operation, adapterFunctionTimeoutMs(context.crawlerMode), context.options.signal);
 }
 
 async function extractAdapterFunctionResult(
@@ -280,19 +283,27 @@ function missingBrowserWorkerRenderer(): HtmlRenderer {
   };
 }
 
-async function runWithAdapterFunctionLock<T>(adapter: object, action: () => Promise<T>): Promise<T> {
+async function runWithAdapterFunctionLock<T>(
+  adapter: object, action: () => Promise<T>, signal?: AbortSignal
+): Promise<T> {
   const previous = adapterFunctionLocks.get(adapter) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => { release = resolve; });
   const tail = previous.catch(() => undefined).then(() => current);
   adapterFunctionLocks.set(adapter, tail);
-  await previous.catch(() => undefined);
   try {
+    await waitForPreviousAdapterRun(previous, signal);
     return await action();
   } finally {
     release();
     if (adapterFunctionLocks.get(adapter) === tail) adapterFunctionLocks.delete(adapter);
   }
+}
+
+async function waitForPreviousAdapterRun(previous: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return previous.catch(() => undefined);
+  signal.throwIfAborted();
+  await Promise.race([previous.catch(() => undefined), abortedPromise(signal)]);
 }
 
 interface VerificationResponseInput {
@@ -364,7 +375,9 @@ function verificationMessage(hasJob: boolean): string {
     : 'Human verification is required, but the handoff service is not available in this backend instance.';
 }
 
-export async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
+export async function withTimeout<T>(
+  operation: () => Promise<T>, timeoutMs: number, signal?: AbortSignal
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -372,10 +385,19 @@ export async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: num
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`Adapter function test timed out after ${timeoutMs}ms.`)), timeoutMs);
       }),
+      ...(signal ? [abortedPromise(signal)] : []),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function abortedPromise(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 export function looksLikeVerificationRequired(message: string): boolean {

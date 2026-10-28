@@ -418,7 +418,7 @@ async function AdapterRoutesTestExtractsChapterImagesThroughTheTaskBoundBrowserW
         'https://example.com/images/1.jpg', 'https://example.com/images/2.jpg',
     ]);
     expect(withBrowserSession).toHaveBeenCalledWith(expect.anything(), undefined,
-      'https://example.com/read/1', renderContext, expect.any(Function));
+      'https://example.com/read/1', renderContext, expect.any(Function), expect.any(AbortSignal));
     expect(execute.mock.calls.map((call) => call[1].type)).toEqual(BROWSER_COMMAND_ORDER);
     await app.close();
 }

@@ -138,6 +138,39 @@ test('content preparation rejects an explicit reader page selector with no match
   }), /Reader page selector did not match/);
 });
 
+test('content preparation cancels candidate scanning and restores positions', async () => {
+  const controller = new AbortController();
+  const calls: string[] = [];
+  const execute = cancellationExecutor(calls, controller, 'scrollPreparationCandidate', 1);
+  await assert.rejects(() => prepareScrollableContent(
+    execute, 1_000, {}, controller.signal), { name: 'AbortError' });
+  assert.ok(calls.includes('finishScrollPreparation'));
+  assert.ok(calls.includes('clearScrollPreparation'));
+});
+
+test('content preparation cancels fallback scanning and restores positions', async () => {
+  const controller = new AbortController();
+  const calls: string[] = [];
+  const execute = cancellationExecutor(calls, controller, 'scrollPreparationBottomStep', 0);
+  await assert.rejects(() => prepareScrollableContent(
+    execute, 1_000, {}, controller.signal), { name: 'AbortError' });
+  assert.ok(calls.includes('finishScrollPreparation'));
+  assert.ok(calls.includes('clearScrollPreparation'));
+});
+
+function cancellationExecutor(
+  calls: string[], controller: AbortController, abortAt: string, candidateCount: number
+) {
+  return async <Argument, Result>(script: (argument: Argument) => Result | Promise<Result>) => {
+    calls.push(script.name);
+    if (script.name === 'countScrollPreparationCandidates') return candidateCount as Result;
+    if (script.name === abortAt) controller.abort(new DOMException('Cancelled.', 'AbortError'));
+    if (script.name === 'scrollPreparationBottomStep')
+      return { done: false, height: 1000, position: 500, bottom: 1000 } as Result;
+    return undefined as Result;
+  };
+}
+
 test('CopyProfileProvisioner applies the fixed cache and lock exclusions', async () => {
   let copied: Parameters<NonNullable<ProfileDirectoryAccess['copyChromeProfile']>>[0] | undefined;
   const directories: ProfileDirectoryAccess = {

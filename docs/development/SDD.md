@@ -237,6 +237,12 @@ signal. The executor then releases the lease and closes the browser session.
 Cancelling `waiting_verification` also cancels the challenge job and releases
 its retained lease.
 
+Direct chapter-image extraction derives the signal from the HTTP response
+connection. A caller disconnect cancels Worker acquisition or the active
+command. Browser Client drains the cancelled command through bounded scroll
+cleanup before acknowledging session close, preventing replacement work from
+overlapping scroll restoration.
+
 If verification is detected, Challenge Discovery retains the lease. `focus`
 brings the same consumer-owned page forward. Resume detaches the retained lease
 from the challenge job and continues the original task.

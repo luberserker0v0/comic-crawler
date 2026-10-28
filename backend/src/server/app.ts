@@ -169,8 +169,8 @@ export class ComicCrawlerServer {
   private setupAdapterRoutes(): void {
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
-      withBrowserSession: (request, target, initialUrl, renderContext, action) =>
-        this.withBrowserSession(request, target, initialUrl, renderContext, action),
+      withBrowserSession: (request, target, initialUrl, renderContext, action, signal) =>
+        this.withBrowserSession(request, target, initialUrl, renderContext, action, signal),
       browserRenderService: this.options.browserRenderService,
       getNetworkConfig: async () => (await this.options.configManager.get()).network,
       storage: this.options.storage,
@@ -237,20 +237,28 @@ export class ComicCrawlerServer {
     target: BrowserTarget | undefined,
     initialUrl: string,
     renderContext: EffectiveRenderContext | undefined,
-    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>
+    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
-    const browser = (await this.options.configManager.get()).browser;
-    const coordinator = this.requireLeaseCoordinator();
-    const principal = requestPrincipal(request, this.apiSecurity);
-    const lease = await coordinator.acquire({ taskId: `operation:${randomUUID()}`,
-      ownerUserId: principal.userId, target, initialUrl, renderContext,
-      timeoutMs: browser.workerWaitTimeoutMs });
+    const lease = await this.acquireBrowserSessionLease(
+      request, target, initialUrl, renderContext, signal);
     const transfer = createBrowserLeaseTransfer(lease);
     try {
       return await action(lease.sessionId, transfer.claim);
     } finally {
       if (!transfer.claimed()) await lease.release();
     }
+  }
+
+  private async acquireBrowserSessionLease(
+    request: FastifyRequest, target: BrowserTarget | undefined, initialUrl: string,
+    renderContext: EffectiveRenderContext | undefined, signal?: AbortSignal
+  ) {
+    const browser = (await this.options.configManager.get()).browser;
+    const principal = requestPrincipal(request, this.apiSecurity);
+    return this.requireLeaseCoordinator().acquire({ taskId: `operation:${randomUUID()}`,
+      ownerUserId: principal.userId, target, initialUrl, renderContext,
+      timeoutMs: browser.workerWaitTimeoutMs, signal });
   }
 
   private requireLeaseCoordinator(): BrowserWorkerLeaseCoordinator {

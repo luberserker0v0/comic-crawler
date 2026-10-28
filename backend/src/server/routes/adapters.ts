@@ -43,6 +43,7 @@ import type { BrowserRenderService } from '../../browser/browser-render-service'
 import type { HtmlRenderer } from '../../crawler/html-renderer';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
+import { trackRequestCancellation } from '../request-cancellation';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
@@ -54,7 +55,8 @@ interface AdapterRouteOptions {
     target: BrowserTarget | undefined,
     initialUrl: string,
     renderContext: EffectiveRenderContext | undefined,
-    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>
+    action: (sessionId: string, claimBrowserLease: BrowserLeaseClaim) => Promise<T>,
+    signal?: AbortSignal
   ) => Promise<T>;
   browserRenderService?: BrowserRenderService;
   htmlRenderer?: HtmlRenderer;
@@ -308,10 +310,24 @@ function resolutionCapabilities(mode: 'all' | 'chapters' | 'inspect') {
 async function extractChapterImages(
   ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply
 ): Promise<void> {
+  const cancellation = trackRequestCancellation(request, reply);
+  try {
+    await extractChapterImagesForRequest(ctx, request, reply, cancellation.signal);
+  } catch (error) {
+    if (!cancellation.signal.aborted) throw error;
+  } finally {
+    cancellation.dispose();
+  }
+}
+
+async function extractChapterImagesForRequest(
+  ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply, signal: AbortSignal
+): Promise<void> {
   const prepared = prepareChapterImageRequest(ctx, (request.body ?? {}) as Partial<ChapterImagesRequest>);
   if ('error' in prepared) return void reply.code(prepared.status).send({ error: prepared.error });
   const network = await ctx.options.getNetworkConfig?.();
-  const extraction = await runChapterImageExtraction(ctx, request, prepared, network);
+  const extraction = await runChapterImageExtraction(ctx, request, prepared, network, signal);
+  signal.throwIfAborted();
   sendChapterImagesResponse(reply, prepared.adapter, prepared.chapterUrl, extraction, prepared.renderContext);
 }
 
@@ -343,10 +359,12 @@ function prepareChapterImageRequest(
 type PreparedChapterRequest = Extract<ChapterPreparation, { adapter: RegisteredAdapter }>;
 
 async function runChapterImageExtraction(
-  ctx: AdapterRouteContext, request: FastifyRequest, input: PreparedChapterRequest, network?: NetworkConfig
+  ctx: AdapterRouteContext, request: FastifyRequest, input: PreparedChapterRequest,
+  network: NetworkConfig | undefined, signal: AbortSignal
 ) {
   const base = { challengeDiscoveryId: input.body.challengeDiscoveryId,
-    challengeDiscoveryService: ctx.options.challengeDiscoveryService, network, renderContext: input.renderContext };
+    challengeDiscoveryService: ctx.options.challengeDiscoveryService, network,
+    renderContext: input.renderContext, signal };
   if (ctx.options.htmlRenderer) return testAdapterFunction(input.adapter, 'extractChapterImageUrls',
     input.chapterUrl, { ...base, htmlRenderer: ctx.options.htmlRenderer });
   if (input.body.challengeDiscoveryId || !ctx.options.withBrowserSession || !ctx.options.browserRenderService)
@@ -355,8 +373,9 @@ async function runChapterImageExtraction(
     ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
   return ctx.options.withBrowserSession(request, input.body.browserTarget, input.chapterUrl,
     input.renderContext, (sessionId, claimBrowserLease) => testAdapterFunction(input.adapter, 'extractChapterImageUrls',
-      input.chapterUrl, { ...base, htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId),
-        verificationHandoff: { ownerUserId, browserTarget: input.body.browserTarget, claimBrowserLease } }));
+      input.chapterUrl, { ...base,
+        htmlRenderer: createSessionRenderer(ctx.options.browserRenderService!, sessionId, signal),
+        verificationHandoff: { ownerUserId, browserTarget: input.body.browserTarget, claimBrowserLease } }), signal);
 }
 
 async function getAdapterDetails(ctx: AdapterRouteContext, request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -486,9 +505,12 @@ function isChapterImageDescriptors(value: unknown, imageUrls: string[]): value i
         || typeof (image as ChapterImageDescriptor).sourceFingerprint === 'string'));
 }
 
-function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
+function createSessionRenderer(
+  renderService: BrowserRenderService, sessionId: string, signal?: AbortSignal
+): HtmlRenderer {
   return {
-    render: async (url, options) => (await renderService.render(sessionId, url, options)).html,
+    render: async (url, options) => (await renderService.render(
+      sessionId, url, { ...options, signal })).html,
     dispose: async () => undefined,
   };
 }

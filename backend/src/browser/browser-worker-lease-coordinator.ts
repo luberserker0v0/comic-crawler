@@ -27,6 +27,7 @@ export interface AcquireBrowserWorkerLeaseRequest {
   renderContext?: BrowserRenderContext;
   timeoutMs?: number;
   onWaiting?: (message: string) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 export interface ValidateExistingTabRecoveryTargetRequest {
@@ -108,6 +109,7 @@ export class BrowserWorkerLeaseCoordinator {
   }
 
   async acquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease> {
+    request.signal?.throwIfAborted();
     const existing = this.leasesByTask.get(request.taskId);
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
@@ -121,13 +123,14 @@ export class BrowserWorkerLeaseCoordinator {
     target: BrowserTarget, deadline: number): Promise<BrowserWorkerLease> {
     let announcedWaiting = false;
     while (Date.now() < deadline) {
+      request.signal?.throwIfAborted();
       const lease = await this.tryReserveAndOpen(request, target, deadline);
       if (lease) return lease;
       if (!announcedWaiting) {
         announcedWaiting = true;
         await request.onWaiting?.(waitingMessage(target, false));
       }
-      await this.waitForChange(Math.min(5_000, deadline - Date.now()));
+      await this.waitForChange(Math.min(5_000, deadline - Date.now()), request.signal);
     }
     throw new Error(waitingMessage(target, true));
   }
@@ -148,6 +151,7 @@ export class BrowserWorkerLeaseCoordinator {
   }
 
   async tryAcquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease | undefined> {
+    request.signal?.throwIfAborted();
     const existing = this.leasesByTask.get(request.taskId);
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
@@ -257,6 +261,7 @@ export class BrowserWorkerLeaseCoordinator {
       leaseId: lease.leaseId,
       source: lease.source,
       renderContext: request.renderContext,
+      signal: request.signal,
     });
   }
 
@@ -267,6 +272,7 @@ export class BrowserWorkerLeaseCoordinator {
   }
 
   private waitForChange(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (timeoutMs <= 0) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => {

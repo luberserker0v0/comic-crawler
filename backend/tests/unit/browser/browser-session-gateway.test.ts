@@ -240,6 +240,7 @@ async function expectSessionBehavior(executor: TestExecutor, workerId: string,
     await expect(openResourceSession(workerId, resourceId, 'lease-2')).rejects.toThrow('is busy');
     await expectSessionCommands(sessionId);
     await expectCommandCancellation(executor.session, sessionId);
+    await expectCommandTimeoutCancellation(executor.session, sessionId);
     await expect(client!.revokeResource(resourceId)).rejects.toThrow('is in use');
     expect(gateway.getWorker(workerId)).toMatchObject({ online: true });
     await gateway.closeSession(sessionId);
@@ -270,6 +271,16 @@ async function expectCommandCancellation(session: TestSession, sessionId: string
   await started;
   controller.abort(new Error('Task cancelled.'));
   await expect(command).rejects.toMatchObject({ name: 'CANCELLED' });
+  await expect(gateway.execute(sessionId, { type: 'page.get-url' })).resolves.toMatchObject({
+    type: 'page.get-url', url: 'https://example.test/chapter',
+  });
+}
+
+async function expectCommandTimeoutCancellation(session: TestSession, sessionId: string): Promise<void> {
+  const started = session.waitForBlockedCommand();
+  const command = gateway.execute(sessionId, { type: 'page.get-content' }, 20);
+  await started;
+  await expect(command).rejects.toThrow('timed out');
   await expect(gateway.execute(sessionId, { type: 'page.get-url' })).resolves.toMatchObject({
     type: 'page.get-url', url: 'https://example.test/chapter',
   });
