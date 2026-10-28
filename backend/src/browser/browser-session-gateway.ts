@@ -202,20 +202,56 @@ export class BrowserSessionGateway {
   async execute(
     sessionId: string,
     command: BrowserCommand,
-    timeoutMs = this.operationTimeoutMs
+    timeoutMs = this.operationTimeoutMs,
+    signal?: AbortSignal
   ): Promise<BrowserCommandResult> {
+    signal?.throwIfAborted();
     const session = this.requireActiveSession(sessionId);
     const connection = this.requireOnlineConnection(session.workerId);
     assertCapability(connection.worker.capabilities, command);
     const requestId = `br_${randomUUID()}`;
     const pending = this.createPending<BrowserCommandResult>(this.pendingCommands, requestId,
       session.workerId, sessionId, timeoutMs, `Browser command "${command.type}" timed out.`);
+    return this.dispatchCommand(connection, session, command, requestId, pending, signal);
+  }
+
+  private async dispatchCommand(
+    connection: WorkerConnection, session: GatewaySession, command: BrowserCommand,
+    requestId: string, pending: Promise<BrowserCommandResult>, signal?: AbortSignal
+  ): Promise<BrowserCommandResult> {
+    const cancel = () => this.cancelCommand(connection, session, requestId, signal?.reason);
     try {
       this.send(connection.socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'command.execute', requestId, leaseId: session.leaseId, sessionId, command });
+        type: 'command.execute', requestId, leaseId: session.leaseId,
+        sessionId: session.sessionId, command });
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
       return await pending;
+    } catch (error) {
+      if (isTimeoutError(error)) this.sendCommandCancel(connection, session, requestId);
+      throw error;
     } finally {
+      signal?.removeEventListener('abort', cancel);
       this.clearPending(this.pendingCommands, requestId);
+    }
+  }
+
+  private cancelCommand(
+    connection: WorkerConnection, session: GatewaySession, requestId: string, reason: unknown
+  ): void {
+    if (!this.pendingCommands.has(requestId)) return;
+    this.sendCommandCancel(connection, session, requestId);
+    this.clearAndReject(this.pendingCommands, requestId, cancellationError(reason));
+  }
+
+  private sendCommandCancel(
+    connection: WorkerConnection, session: GatewaySession, requestId: string
+  ): void {
+    try {
+      this.send(connection.socket, { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+        type: 'command.cancel', requestId, sessionId: session.sessionId, leaseId: session.leaseId });
+    } catch {
+      // Session or disconnect cleanup rejects any remaining operation.
     }
   }
 
@@ -721,6 +757,17 @@ function commandError(error: BrowserCommandError): Error {
   const result = new Error(error.message);
   result.name = error.code;
   return result;
+}
+
+function cancellationError(reason: unknown): Error {
+  const message = reason instanceof Error ? reason.message : 'Browser command was cancelled.';
+  const result = new Error(message);
+  result.name = 'CANCELLED';
+  return result;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /timed out/i.test(error.message);
 }
 
 function normalizeTimeout(value: number): number {

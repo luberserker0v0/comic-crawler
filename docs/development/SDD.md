@@ -158,12 +158,13 @@ The first Client frame is `client.authenticate`. After authentication:
 4. Client opens its browser session.
 5. Client sends `session.ready`.
 6. Server sends ordered `command.execute` frames.
-7. Client sends `command.result` frames.
-8. Server sends `session.close`.
-9. Client releases session-owned resources.
-10. Client sends `session.closed`.
+7. Server may send `command.cancel` for timeout or task cancellation.
+8. Client sends `command.result` frames.
+9. Server sends `session.close`.
+10. Client releases session-owned resources.
+11. Client sends `session.closed`.
 
-Version 2 commands are:
+Version 3 commands are:
 
 - `page.navigate`
 - `page.get-url`
@@ -229,6 +230,12 @@ sequenceDiagram
   Scheduler->>Lease: release
   Lease->>Gateway: close session
 ```
+
+Cancellation uses the same task-scoped signal from Scheduler to Runtime. An
+active browser command receives `command.cancel`. Downloads receive the same
+signal. The executor then releases the lease and closes the browser session.
+Cancelling `waiting_verification` also cancels the challenge job and releases
+its retained lease.
 
 If verification is detected, Challenge Discovery retains the lease. `focus`
 brings the same consumer-owned page forward. Resume detaches the retained lease

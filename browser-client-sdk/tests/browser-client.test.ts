@@ -25,6 +25,7 @@ const capabilities: BrowserCapabilities = {
 
 test('enrolls with user credentials and saves the returned client credential', testEnrollment);
 test('authenticates, binds commands to the active lease, and executes them sequentially', testSequentialCommands);
+test('cancels an active browser command without closing the session', testCommandCancellation);
 test('rejects a connection when saved state belongs to another server', testWrongServer);
 test('registers and revokes an opaque browser resource over the control WebSocket', testResourceLifecycle);
 test('keeps the active browser session when the same process reconnects', testSessionReconnect);
@@ -100,6 +101,22 @@ async function testSequentialCommands(): Promise<void> {
   await closeRemoteSession(socket, session);
   await client.close();
   assert.equal(executor.closed, true);
+}
+
+async function testCommandCancellation(): Promise<void> {
+  const socket = new FakeSocket();
+  const session = new CancellableSession();
+  const client = createClient(() => socket, new TestExecutor(session));
+  await connectClient(client, socket);
+  await openRemoteSession(socket);
+  socket.serverSend(commandMessage('request-cancel', 'page.get-content'));
+  await waitFor(() => session.started);
+  socket.serverSend(commandCancellationMessage('request-cancel'));
+  await waitFor(() => socket.jsonMessages().some((message) =>
+    message.type === 'command.result' && message.requestId === 'request-cancel'));
+  const result = socket.jsonMessages().find((message) => message.requestId === 'request-cancel');
+  assert.equal((result?.error as Record<string, unknown>).code, 'CANCELLED');
+  await client.close();
 }
 
 async function verifySequentialExecution(socket: FakeSocket, session: ControlledSession): Promise<void> {
@@ -392,6 +409,16 @@ class ControlledSession implements BrowserSession {
   }
 }
 
+class CancellableSession implements BrowserSession {
+  started = false;
+  execute(_command: BrowserCommand, signal: AbortSignal): Promise<BrowserCommandResult> {
+    this.started = true;
+    return new Promise((_resolve, reject) => signal.addEventListener(
+      'abort', () => reject(signal.reason), { once: true }));
+  }
+  async close(): Promise<void> {}
+}
+
 class TerminatingSession extends ImmediateSession {
   closed = false;
   private resolveTermination!: () => void;
@@ -466,6 +493,11 @@ function commandMessage(requestId: string, type: BrowserCommand['type']): Record
     leaseId: 'lease-1',
     command: { type },
   };
+}
+
+function commandCancellationMessage(requestId: string): Record<string, unknown> {
+  return { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'command.cancel', requestId,
+    sessionId: 'session-1', leaseId: 'lease-1' };
 }
 
 async function discoveryFetch(): Promise<Response> {

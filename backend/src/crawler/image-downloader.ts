@@ -10,6 +10,7 @@ export interface DownloadOptions {
   concurrency?: number;
   namingTemplate?: string;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
   onProgress?: (completed: number, total: number, result: DownloadResult | null, image: ImageInfo) => void;
 }
 
@@ -41,7 +42,7 @@ export class ImageDownloader {
     if (existingFile) return { path: outputPath, size: existingFile.size, url: image.url, skipped: true };
     const partialFile = await this.getExistingFile(partialPath);
     const rangeStart = partialFile?.size ?? 0;
-    const response = await this.requestImage(image.url, headers, rangeStart);
+    const response = await this.requestImage(image.url, headers, rangeStart, options.signal);
     validateDownloadResponse(response, image.url);
     const buffer = await readResponse(response);
     const appendMode = rangeStart > 0 && response.statusCode === 206;
@@ -49,12 +50,15 @@ export class ImageDownloader {
     return { path: outputPath, size: completedFile.size, url: image.url, resumed: appendMode };
   }
 
-  private async requestImage(url: string, headers: Record<string, string>, rangeStart: number) {
+  private async requestImage(
+    url: string, headers: Record<string, string>, rangeStart: number, signal?: AbortSignal
+  ) {
+    signal?.throwIfAborted();
     return this.client.request({
       method: 'GET',
       origin: new URL(url).origin,
       path: new URL(url).pathname + new URL(url).search,
-      signal: AbortSignal.timeout(15000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
       headers: {
         'User-Agent': headers['User-Agent'] ?? 'ComicCrawler/1.0.0',
         Referer: headers['Referer'] ?? new URL(url).origin,
@@ -84,6 +88,7 @@ export class ImageDownloader {
       options.onProgress?.(state.completed, total, result, image);
       return result;
     } catch (error) {
+      options.signal?.throwIfAborted();
       state.completed += 1;
       options.onProgress?.(state.completed, total, null, image);
       logger.warn({ url: image.url, error: errorToLogObject(error) }, 'Failed to download image');

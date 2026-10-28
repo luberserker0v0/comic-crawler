@@ -67,6 +67,16 @@
 
 預期：Server 回傳 client error。
 
+### TASK-04 取消執行中的爬蟲工作
+
+1. 建立使用 Browser Client 的工作。
+2. 等待 browser command 執行。
+3. 呼叫 task cancel API。
+4. 檢查 task 狀態。
+5. 檢查 Worker 狀態。
+
+預期：command 與下載中止，task 為 cancelled，Worker 回到 idle。
+
 ## 3. Adapter
 
 ### ADP-01 讀取 adapter 清單
@@ -698,6 +708,16 @@
 6. 檢查原捲動位置已還原。
 
 預期：準備流程只處理 reader，圖片抽取函式不負責捲動。
+
+### BC-26 取消執行中的 Browser command
+
+1. 開啟 browser session。
+2. 執行阻塞中的 command。
+3. 中止 task signal。
+4. 檢查 command 結果。
+5. 執行下一個 command。
+
+預期：Client 回報 CANCELLED，session 仍可使用。
 
 ## 6. WebUI
 

@@ -262,6 +262,10 @@ until `browser.workerWaitTimeoutMs` expires.
 Domain services own task content and state. The scheduler owns ordering,
 execution slots, pause/resume, cancellation, and dispatch. Waiting for human
 verification or developer review does not occupy a scheduler execution slot.
+Cancellation propagates through one `AbortSignal` to crawler rendering and
+downloads. The Gateway sends `command.cancel` to Browser Client, then lease
+release closes the task session. A retained verification lease is cancelled
+with its task.
 
 Tasks persist checkpoint state:
 

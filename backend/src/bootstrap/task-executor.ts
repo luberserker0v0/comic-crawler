@@ -22,20 +22,22 @@ interface CrawlTaskExecutorDependencies {
 interface ExecutionState { lease?: BrowserWorkerLease; retainLease: boolean; reconnectAttempts: number }
 
 export function createCrawlTaskExecutor(deps: CrawlTaskExecutorDependencies) {
-  return (task: TaskItem<TaskDefinition>) => executeCrawlTask(deps, task);
+  return (task: TaskItem<TaskDefinition>, signal: AbortSignal) => executeCrawlTask(deps, task, signal);
 }
 
 async function executeCrawlTask(
-  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>
+  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, signal: AbortSignal
 ): Promise<void> {
+  signal.throwIfAborted();
   const adapter = deps.adapterRegistry.get(task.data.adapterId);
   if (!adapter) throw new ComicError(
     `Adapter "${task.data.adapterId}" not found`, ErrorType.ADAPTER_ERROR);
   const state: ExecutionState = { retainLease: false, reconnectAttempts: 0 };
   try {
-    state.lease = await acquireTaskLease(deps, task);
-    await crawlWithReconnect(deps, task, adapter as any, state);
+    state.lease = await acquireTaskLease(deps, task, signal);
+    await crawlWithReconnect(deps, task, adapter as any, state, signal);
   } catch (error) {
+    if (signal.aborted) throw signal.reason;
     await handleCrawlError(deps, task, adapter.id, state, error);
   } finally {
     if (!state.retainLease) await state.lease?.release();
@@ -43,13 +45,15 @@ async function executeCrawlTask(
 }
 
 async function acquireTaskLease(
-  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>
+  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, signal: AbortSignal
 ): Promise<BrowserWorkerLease> {
+  signal.throwIfAborted();
   const browser = (await deps.configManager.get()).browser;
   const lease = await deps.browserLeaseCoordinator.tryAcquire({ taskId: task.id,
     ownerUserId: task.data.ownerUserId ?? 'public', target: task.data.browserTarget,
     initialUrl: task.data.browserTargetUrl ?? task.data.url });
   if (!lease) await deferForBrowserWorker(deps.getTaskManager(), task, browser.workerWaitTimeoutMs);
+  signal.throwIfAborted();
   await deps.getTaskManager().markBrowserWorkerAcquired(task.id);
   return lease!;
 }
@@ -69,36 +73,42 @@ async function deferForBrowserWorker(
 }
 
 async function crawlWithReconnect(
-  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, adapter: any, state: ExecutionState
+  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, adapter: any,
+  state: ExecutionState, signal: AbortSignal
 ): Promise<void> {
   while (true) {
+    signal.throwIfAborted();
     try {
-      await runCrawler(deps, task, adapter, state.lease!);
+      await runCrawler(deps, task, adapter, state.lease!, signal);
       return;
     } catch (error) {
       if (!isBrowserTransportDisconnect(error) || state.reconnectAttempts >= 3) throw error;
       state.reconnectAttempts += 1;
-      await waitForTaskReconnect(deps, task, state, error);
+      await waitForTaskReconnect(deps, task, state, error, signal);
     }
   }
 }
 
 function runCrawler(
-  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, adapter: any, lease: BrowserWorkerLease
+  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, adapter: any,
+  lease: BrowserWorkerLease, signal: AbortSignal
 ): Promise<unknown> {
   const manager = deps.getTaskManager();
   return deps.crawlerEngine.crawl(adapter, task.data.url, { chapters: task.data.chapters,
     chapterUrls: task.data.chapterUrls, taskId: task.id, browserSessionId: lease.sessionId,
+    signal,
     checkpoint: manager.getCheckpoint(task.id),
     onCheckpoint: (checkpoint) => manager.updateCheckpoint(task.id, checkpoint) });
 }
 
 async function waitForTaskReconnect(
-  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, state: ExecutionState, error: unknown
+  deps: CrawlTaskExecutorDependencies, task: TaskItem<TaskDefinition>, state: ExecutionState,
+  error: unknown, signal: AbortSignal
 ): Promise<void> {
   const message = `Browser worker disconnected; waiting to resume (${state.reconnectAttempts}/3).`;
   await deps.getTaskManager().markWaitingForBrowserWorker(task.id, message);
-  if (await deps.browserLeaseCoordinator.waitForReconnect(state.lease!, 120_000)) return;
+  if (await deps.browserLeaseCoordinator.waitForReconnect(state.lease!, 120_000, signal)) return;
+  signal.throwIfAborted();
   if (browserTargetChanged(task, state.lease!))
     throw new TaskDeferredError('Browser Target was explicitly rebound; restarting the task.', 1);
   throw error;

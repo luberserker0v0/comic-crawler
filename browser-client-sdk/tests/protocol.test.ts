@@ -20,6 +20,14 @@ test('parses a supported command envelope', () => {
   });
 });
 
+test('parses a command cancellation envelope', () => {
+  assert.doesNotThrow(() => parseServerMessage({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    type: 'command.cancel', requestId: 'request-1',
+    leaseId: 'lease-1', sessionId: 'session-1',
+  }));
+});
+
 test('rejects unknown protocol versions and commands', () => {
   assert.throws(() => parseServerMessage({
     protocolVersion: 99,

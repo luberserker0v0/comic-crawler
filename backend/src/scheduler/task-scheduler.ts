@@ -3,7 +3,14 @@ import { ComicError, ErrorType, errorToLogObject } from '../error/types';
 import { logger } from '../utils/logger';
 import { ConcurrentSchedulingPolicy, type SchedulingPolicy } from './policy';
 
-export type ScheduledTaskExecutor<T> = (task: TaskItem<T>) => Promise<void>;
+export type ScheduledTaskExecutor<T> = (task: TaskItem<T>, signal: AbortSignal) => Promise<void>;
+
+export class TaskCancelledError extends Error {
+  constructor(message = 'Task execution was cancelled.') {
+    super(message);
+    this.name = 'TaskCancelledError';
+  }
+}
 
 export class TaskDeferredError extends Error {
   constructor(message: string, readonly retryAfterMs = 5_000) {
@@ -15,6 +22,7 @@ export class TaskDeferredError extends Error {
 export class TaskScheduler<T = unknown> {
   private queue: TaskItem<T>[] = [];
   private running = new Map<string, TaskItem<T>>();
+  private runningControllers = new Map<string, AbortController>();
   private history = new Map<string, TaskItem<T>>();
   private priorityOrder: string[] = [];
   private readonly autoStart: boolean;
@@ -70,6 +78,7 @@ export class TaskScheduler<T = unknown> {
     }
     const runningTask = this.running.get(taskId);
     if (!runningTask) return false;
+    this.runningControllers.get(taskId)?.abort(new TaskCancelledError());
     runningTask.status = 'cancelled';
     runningTask.completedAt = new Date();
     return true;
@@ -90,6 +99,9 @@ export class TaskScheduler<T = unknown> {
     this.isStopped = true;
     this.isPaused = true;
     this.queue = [];
+    for (const controller of this.runningControllers.values()) {
+      controller.abort(new TaskCancelledError('Task scheduler was stopped.'));
+    }
     this.notifyIfIdle();
   }
 
@@ -138,22 +150,26 @@ export class TaskScheduler<T = unknown> {
 
   private async executeTask(task: TaskItem<T>): Promise<void> {
     let deferred: TaskDeferredError | undefined;
+    const controller = new AbortController();
+    this.runningControllers.set(task.id, controller);
     try {
-      deferred = await this.runTask(task);
+      deferred = await this.runTask(task, controller.signal);
     } finally {
+      this.runningControllers.delete(task.id);
       this.running.delete(task.id);
-      if (deferred) this.deferTask(task, deferred);
+      if (deferred && task.status !== 'cancelled') this.deferTask(task, deferred);
       else { this.history.set(task.id, task); this.process(); }
       this.notifyIfIdle();
     }
   }
 
-  private async runTask(task: TaskItem<T>): Promise<TaskDeferredError | undefined> {
+  private async runTask(task: TaskItem<T>, signal: AbortSignal): Promise<TaskDeferredError | undefined> {
     try {
-      await this.executor(task);
+      await this.executor(task, signal);
       if (task.status === 'running') { task.status = 'completed'; task.completedAt = new Date(); }
       return undefined;
     } catch (error) {
+      if (signal.aborted || error instanceof TaskCancelledError) return undefined;
       if (error instanceof TaskDeferredError) {
         task.status = 'waiting_for_browser_worker'; task.error = error.message; task.startedAt = undefined;
         return error;

@@ -23,6 +23,7 @@ const serverMessageValidators: Record<string, (value: Record<string, unknown>) =
   'resource.rejected': validateResourceRejected,
   'session.open': validateSessionOpen,
   'session.close': validateSessionClose,
+  'command.cancel': validateCommandCancel,
   'command.execute': validateCommandExecute,
 };
 
@@ -68,6 +69,12 @@ function validateCommandExecute(value: Record<string, unknown>): void {
   requireString(value, 'sessionId');
   requireString(value, 'leaseId');
   parseCommand(value.command);
+}
+
+function validateCommandCancel(value: Record<string, unknown>): void {
+  requireString(value, 'requestId');
+  requireString(value, 'sessionId');
+  requireString(value, 'leaseId');
 }
 
 function parseCommandError(value: unknown): void {

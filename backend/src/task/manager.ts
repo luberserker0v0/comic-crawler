@@ -4,7 +4,7 @@ import type { CrawlCheckpoint } from './checkpoint';
 import type { EventBus } from '../events/bus';
 import type { EventMap } from '../events/types';
 import type { IStorage } from '../storage/types';
-import { TaskDeferredError, TaskScheduler } from '../scheduler';
+import { TaskCancelledError, TaskDeferredError, TaskScheduler } from '../scheduler';
 import { ProgressTracker } from './progress';
 import { ComicError, errorToLogObject } from '../error/types';
 import { deleteTaskOutputDir, hasWaitingVerificationContext } from './file-utils';
@@ -106,26 +106,31 @@ export class TaskManager {
   private storage?: IStorage;
   private records = new Map<string, PersistedTaskRecord>();
   private priorityOrder: string[] = [];
-  private taskExecutor: (task: TaskItem<TaskDefinition>) => Promise<void>;
+  private taskExecutor: (task: TaskItem<TaskDefinition>, signal: AbortSignal) => Promise<void>;
+  private cancelChallenge?: (challengeId: string) => Promise<void>;
 
   constructor(
-    executor: (task: TaskItem<TaskDefinition>) => Promise<void>,
-    options?: { concurrency?: number; eventBus?: EventBus; storage?: IStorage }
+    executor: (task: TaskItem<TaskDefinition>, signal: AbortSignal) => Promise<void>,
+    options?: { concurrency?: number; eventBus?: EventBus; storage?: IStorage;
+      cancelChallenge?: (challengeId: string) => Promise<void> }
   ) {
     this.taskExecutor = executor;
     this.eventBus = options?.eventBus;
     this.storage = options?.storage;
+    this.cancelChallenge = options?.cancelChallenge;
     this.progress = new ProgressTracker(options?.eventBus);
     this.scheduler = new TaskScheduler<TaskDefinition>(
-      (task) => this.executeScheduledTask(task), { concurrency: options?.concurrency ?? 3 });
+      (task, signal) => this.executeScheduledTask(task, signal), { concurrency: options?.concurrency ?? 3 });
     this.registerEventHandlers();
   }
 
-  private async executeScheduledTask(task: TaskItem<TaskDefinition>): Promise<void> {
+  private async executeScheduledTask(task: TaskItem<TaskDefinition>, signal: AbortSignal): Promise<void> {
     try {
-      await this.taskExecutor(task);
+      await this.taskExecutor(task, signal);
+      signal.throwIfAborted();
       await this.markTaskCompleted(task.id);
     } catch (error) {
+      if (signal.aborted || error instanceof TaskCancelledError) throw error;
       if (error instanceof TaskDeferredError) throw error;
       if (await this.markTaskWaitingVerification(task.id, error)) return;
       await this.markTaskFailed(task.id, error);
@@ -212,8 +217,15 @@ export class TaskManager {
     const completedAt = new Date();
     await this.updateTaskRecord(taskId, { task: { status: 'cancelled', completedAt },
       result: { status: 'cancelled', completedAt } });
+    await this.cancelWaitingChallenge(record);
     this.eventBus?.emit('task:cancelled', { taskId });
     return cancelled;
+  }
+
+  private async cancelWaitingChallenge(record?: PersistedTaskRecord): Promise<void> {
+    const challengeId = record?.result.challengeDiscoveryId;
+    if (!challengeId || !this.cancelChallenge) return;
+    await this.cancelChallenge(challengeId);
   }
 
   async deleteTask(taskId: string, options?: DeleteTaskOptions): Promise<boolean> {
@@ -375,6 +387,7 @@ export class TaskManager {
   }
 
   private async handleTaskStarted(taskId: string): Promise<void> {
+    if (this.records.get(taskId)?.task.status === 'cancelled') return;
     const startedAt = new Date();
     await this.updateTaskRecord(taskId, {
       task: { status: 'running', startedAt, completedAt: undefined },
@@ -392,6 +405,7 @@ export class TaskManager {
 
   private async markTaskWaitingVerification(taskId: string, error: unknown): Promise<boolean> {
     const existing = this.records.get(taskId);
+    if (existing?.task.status === 'cancelled') return false;
     const message = errorToLogObject(error).message as string;
     const challengeDiscoveryId = challengeContextValue(error, existing, 'challengeDiscoveryId');
     if (!challengeDiscoveryId || !shouldWaitForVerification(error, message)) return false;
@@ -406,6 +420,7 @@ export class TaskManager {
   }
 
   private async markTaskCompleted(taskId: string, result?: Partial<TaskResult>): Promise<void> {
+    if (this.records.get(taskId)?.task.status === 'cancelled') return;
     await this.updateTaskRecord(taskId, {
       task: {
         status: 'completed',
@@ -420,6 +435,7 @@ export class TaskManager {
   }
 
   private async markTaskFailed(taskId: string, error: unknown): Promise<void> {
+    if (this.records.get(taskId)?.task.status === 'cancelled') return;
     const message = errorToLogObject(error).message as string;
     const context = error instanceof ComicError ? error.context : {};
     const challengeDiscoveryId = stringValue(context.challengeDiscoveryId);

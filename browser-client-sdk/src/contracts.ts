@@ -1,4 +1,4 @@
-export const BROWSER_CLIENT_PROTOCOL_VERSION = 2 as const;
+export const BROWSER_CLIENT_PROTOCOL_VERSION = 3 as const;
 export const BROWSER_CLIENT_DISCOVERY_PATH = '/.well-known/comiccrawler-browser-client' as const;
 
 export type BrowserExecutionMode = 'existing-tab' | 'managed-profile';
@@ -289,6 +289,13 @@ export type BrowserServerToClientMessage =
   | {
       protocolVersion: typeof BROWSER_CLIENT_PROTOCOL_VERSION;
       type: 'session.close';
+      sessionId: string;
+      leaseId: string;
+    }
+  | {
+      protocolVersion: typeof BROWSER_CLIENT_PROTOCOL_VERSION;
+      type: 'command.cancel';
+      requestId: string;
       sessionId: string;
       leaseId: string;
     }

@@ -10,6 +10,7 @@ export interface BrowserRenderOptions {
   timeoutMs?: number;
   postLoadDelayMs?: number;
   reader?: ReaderPreparationSelectors;
+  signal?: AbortSignal;
 }
 
 export interface RenderedBrowserPage {
@@ -26,17 +27,20 @@ export class BrowserRenderService {
       source: { type: 'managed-profile' as const, navigationPolicy: 'navigate-to-target' as const },
       initial: false,
     };
-    const currentUrl = await this.currentUrl(sessionId);
-    await this.acquirePage(sessionId, url, currentUrl, acquisition, timeoutMs);
-    await this.preparePage(sessionId, timeoutMs, options.reader);
-    if (options.postLoadDelayMs && options.postLoadDelayMs > 0) await delay(options.postLoadDelayMs);
-    const content = await this.gateway.execute(sessionId, { type: 'page.get-content' }, timeoutMs);
+    const currentUrl = await this.currentUrl(sessionId, options.signal);
+    await this.acquirePage(sessionId, url, currentUrl, acquisition, timeoutMs, options.signal);
+    await this.preparePage(sessionId, timeoutMs, options.reader, options.signal);
+    if (options.postLoadDelayMs && options.postLoadDelayMs > 0)
+      await delay(options.postLoadDelayMs, options.signal);
+    const content = await this.gateway.execute(
+      sessionId, { type: 'page.get-content' }, timeoutMs, options.signal);
     assertResult(content, 'page.get-content');
     return { url: content.url, html: content.html };
   }
 
   private async acquirePage(sessionId: string, url: string, currentUrl: string,
-    acquisition: { source: BrowserSessionSource; initial: boolean }, timeoutMs?: number): Promise<void> {
+    acquisition: { source: BrowserSessionSource; initial: boolean }, timeoutMs?: number,
+    signal?: AbortSignal): Promise<void> {
     if (acquisition.initial && acquisition.source.type === 'existing-resource') {
       if (normalizeUrl(currentUrl) !== normalizeUrl(acquisition.source.expectedUrl)) {
         throw new Error('The registered browser tab moved away from the task URL before it was acquired.');
@@ -44,19 +48,20 @@ export class BrowserRenderService {
       return;
     }
     if (normalizeUrl(currentUrl) === normalizeUrl(url)) return;
-    const result = await this.gateway.execute(sessionId, { type: 'page.navigate', url }, timeoutMs);
+    const result = await this.gateway.execute(sessionId, { type: 'page.navigate', url }, timeoutMs, signal);
     assertResult(result, 'page.navigate');
   }
 
   private async preparePage(
-    sessionId: string, timeoutMs?: number, reader?: ReaderPreparationSelectors
+    sessionId: string, timeoutMs?: number, reader?: ReaderPreparationSelectors, signal?: AbortSignal
   ): Promise<void> {
-    const ready = await this.gateway.execute(sessionId, { type: 'page.wait-for-ready', timeoutMs }, timeoutMs);
+    const ready = await this.gateway.execute(
+      sessionId, { type: 'page.wait-for-ready', timeoutMs }, timeoutMs, signal);
     assertResult(ready, 'page.wait-for-ready');
     const prepared = await this.gateway.execute(sessionId, {
       type: 'page.prepare-content', strategy: 'scroll-through',
       timeoutMs: reserveCommandResponseTime(timeoutMs), reader,
-    }, timeoutMs);
+    }, timeoutMs, signal);
     assertResult(prepared, 'page.prepare-content');
   }
 
@@ -77,8 +82,8 @@ export class BrowserRenderService {
     return { url: result.url, html: result.html };
   }
 
-  async currentUrl(sessionId: string): Promise<string> {
-    const result = await this.gateway.execute(sessionId, { type: 'page.get-url' });
+  async currentUrl(sessionId: string, signal?: AbortSignal): Promise<string> {
+    const result = await this.gateway.execute(sessionId, { type: 'page.get-url' }, undefined, signal);
     assertResult(result, 'page.get-url');
     return result.url;
   }
@@ -97,8 +102,17 @@ function assertResult<T extends BrowserCommand['type']>(
   }
 }
 
-function delay(timeoutMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+function delay(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, timeoutMs);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 function reserveCommandResponseTime(timeoutMs: number | undefined): number | undefined {

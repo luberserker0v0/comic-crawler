@@ -166,13 +166,16 @@ export class BrowserWorkerLeaseCoordinator {
     }
   }
 
-  async waitForReconnect(lease: BrowserWorkerLease, timeoutMs = 120_000): Promise<boolean> {
+  async waitForReconnect(
+    lease: BrowserWorkerLease, timeoutMs = 120_000, signal?: AbortSignal
+  ): Promise<boolean> {
     const deadline = Date.now() + normalizeTimeout(timeoutMs);
     lease.state = 'reconnecting';
     while (Date.now() < deadline) {
+      signal?.throwIfAborted();
       if (isReleased(lease)) return false;
       if (await this.tryReconnect(lease)) return true;
-      await this.waitForChange(Math.min(5_000, deadline - Date.now()));
+      await this.waitForChange(Math.min(5_000, deadline - Date.now()), signal);
     }
     return false;
   }
@@ -263,17 +266,19 @@ export class BrowserWorkerLeaseCoordinator {
     this.notifyChanged();
   }
 
-  private waitForChange(timeoutMs: number): Promise<void> {
+  private waitForChange(timeoutMs: number, signal?: AbortSignal): Promise<void> {
     if (timeoutMs <= 0) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);
         this.listeners.delete(done);
+        signal?.removeEventListener('abort', done);
         resolve();
       };
       const timer = setTimeout(done, timeoutMs);
       timer.unref();
       this.listeners.add(done);
+      signal?.addEventListener('abort', done, { once: true });
     });
   }
 

@@ -224,7 +224,8 @@ async function initializeTaskManager(
     crawlerEngine: crawler, eventBus, challengeDiscoveryService: discovery.challengeDiscoveryService,
     getTaskManager: () => holder.taskManager! });
   const taskManager = new TaskManager(executor, { concurrency: configuration.config.concurrency.taskLevel,
-    eventBus, storage });
+    eventBus, storage,
+    cancelChallenge: async (challengeId) => { await discovery.challengeDiscoveryService.cancel(challengeId); } });
   holder.taskManager = taskManager;
   await taskManager.initialize();
   timing.mark('task manager initialize');

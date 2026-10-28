@@ -87,11 +87,12 @@ async function createTaskManager(storage: IStorage, eventBus: EventBus, config: 
 
 function createTaskExecutor(registry: AdapterRegistry, crawler: CrawlerEngine,
   getManager: () => TaskManager) {
-  return async (task: TaskItem<TaskDefinition>): Promise<void> => {
+  return async (task: TaskItem<TaskDefinition>, signal: AbortSignal): Promise<void> => {
     const adapter = registry.get(task.data.adapterId);
     if (!adapter) throw new ComicError(`Adapter "${task.data.adapterId}" not found`, ErrorType.ADAPTER_ERROR);
     await crawler.crawl(adapter as any, task.data.url, { chapters: task.data.chapters,
       chapterUrls: task.data.chapterUrls, taskId: task.id,
+      signal,
       checkpoint: getManager().getCheckpoint(task.id),
       onCheckpoint: (checkpoint) => getManager().updateCheckpoint(task.id, checkpoint) });
   };

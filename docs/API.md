@@ -579,7 +579,7 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |
 | `POST` | `/api/tasks/:id/pause` | Pause a running task when supported. |
-| `POST` | `/api/tasks/:id/cancel` | Cancel a task. |
+| `POST` | `/api/tasks/:id/cancel` | Abort task work, active browser commands, downloads, and retained verification handoff. |
 | `DELETE` | `/api/tasks/:id` | Delete terminal or waiting-verification tasks. |
 | `GET` | `/api/config` | Read global config. |
 | `PUT` | `/api/config` | Update global config. |

@@ -20,6 +20,7 @@ function TaskSchedulerLifecycleTestGroup1(): void {
   it('should respect concurrency limit', TaskSchedulerLifecycleTestShouldRespectConcurrencyLimit);
   it('should pause and resume', TaskSchedulerLifecycleTestShouldPauseAndResume);
   it('should cancel tasks', TaskSchedulerLifecycleTestShouldCancelTasks);
+  it('aborts a running task when it is cancelled', TaskSchedulerLifecycleTestAbortsARunningTask);
   it('should track stats', TaskSchedulerLifecycleTestShouldTrackStats);
   it('should sort by priority', TaskSchedulerLifecycleTestShouldSortByPriority);
   it('should put forced task order before numeric priority', TaskSchedulerLifecycleTestShouldPutForcedTaskOrderBeforeNumericPriority);
@@ -102,6 +103,19 @@ async function TaskSchedulerLifecycleTestShouldCancelTasks() {
     const cancelled = scheduler.cancel('task-1');
     expect(cancelled).toBe(true);
     expect(scheduler.get('task-1')?.status).toBe('cancelled');
+}
+
+async function TaskSchedulerLifecycleTestAbortsARunningTask() {
+    let observedAbort = false;
+    scheduler = new TaskScheduler(async (_task, signal) => new Promise<void>((resolve) => {
+        signal.addEventListener('abort', () => { observedAbort = true; resolve(); }, { once: true });
+    }), { concurrency: 1, autoStart: true });
+    await scheduler.add(lifecycleTask('running'));
+    await sleep(10);
+    expect(scheduler.cancel('running')).toBe(true);
+    await scheduler.waitForIdle();
+    expect(observedAbort).toBe(true);
+    expect(scheduler.get('running')?.status).toBe('cancelled');
 }
 
 async function TaskSchedulerLifecycleTestShouldTrackStats() {
