@@ -110,18 +110,17 @@ function packageDocument() {
 }
 
 function adapterSource(): string {
-  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base'; export class DemoAdapter extends AdapterBase {
+  return `import { AdapterBase, CommonCapability, VerificationCapability, ReaderPreparationCapability, ChapterImagesCapability } from '../../base'; export class DemoAdapter extends AdapterBase {
   readonly id = 'demo'; readonly name = 'Demo'; readonly domains = ['demo.invalid'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommon(this); readonly verification = new DemoVerification(this);
-  readonly chapterImages = new DemoImages(this);
+  readonly readerPreparation = new DemoReader(this); readonly chapterImages = new DemoImages(this);
 }
 class DemoCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('demo.invalid'); } }
-class DemoVerification extends VerificationCapability {
-  detectVerificationRequired(_input: string): boolean { return false; }
-  describeVerificationHandoff(): Record<string, unknown> { return { supported: false }; }
-}
+class DemoVerification extends VerificationCapability { detectVerificationRequired(_input: string): boolean { return false; } }
+class DemoReader extends ReaderPreparationCapability { getReaderContainerSelector(): string { return 'main'; }
+  getReaderPageSelector(): string { return 'img.page'; } }
 class DemoImages extends ChapterImagesCapability {
   extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
     const $ = this.adapter.asCheerio(document); void sourceUrl; return $('img.page')

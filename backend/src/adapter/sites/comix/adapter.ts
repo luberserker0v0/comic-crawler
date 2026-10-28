@@ -4,6 +4,7 @@ import {
   ComicError,
   CommonCapability,
   ErrorType,
+  ReaderPreparationCapability,
   VerificationCapability,
 } from '../../base';
 
@@ -19,6 +20,7 @@ export class ComixAdapter extends AdapterBase {
   };
   readonly common: ComixCommonCapability = new ComixCommonCapability(this);
   readonly verification: ComixVerificationCapability = new ComixVerificationCapability(this);
+  readonly readerPreparation: ComixReaderPreparationCapability = new ComixReaderPreparationCapability(this);
   readonly chapterImages: ComixChapterImagesCapability = new ComixChapterImagesCapability(this);
 }
 
@@ -52,12 +54,12 @@ class ComixVerificationCapability extends VerificationCapability {
     if ($('.rpage-main').length > 0 && loadedReaderPages.length > 0) return false;
     return looksLikeComixChallenge(input);
   }
+}
 
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: true,
-      flow: 'Open the chapter through the task-bound Browser Worker, complete the Comix/Cloudflare verification, then resume the task with the same browser session.',
-    };
+class ComixReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(_sourceUrl: string): string { return '.rpage-main'; }
+  getReaderPageSelector(_sourceUrl: string): string {
+    return '.rpage-main__inner .rpage-page[data-page]';
   }
 }
 

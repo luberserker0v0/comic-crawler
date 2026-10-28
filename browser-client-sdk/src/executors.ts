@@ -8,6 +8,7 @@ import type {
   BrowserResourceDescriptor,
   BrowserSession,
   OpenBrowserSessionRequest,
+  ReaderPreparationSelectors,
 } from './contracts';
 import { BrowserClientError } from './errors';
 
@@ -16,7 +17,8 @@ export interface BrowserPageDriver<PageHandle> {
   navigate(page: PageHandle, url: string, signal: AbortSignal): Promise<string>;
   content(page: PageHandle, signal: AbortSignal): Promise<string>;
   waitForReady(page: PageHandle, timeoutMs: number | undefined, signal: AbortSignal): Promise<void>;
-  prepareContent(page: PageHandle, strategy: 'scroll-through', timeoutMs: number | undefined, signal: AbortSignal): Promise<void>;
+  prepareContent(page: PageHandle, strategy: 'scroll-through', timeoutMs: number | undefined,
+    reader: ReaderPreparationSelectors | undefined, signal: AbortSignal): Promise<void>;
   focus(page: PageHandle, signal: AbortSignal): Promise<void>;
 }
 
@@ -198,7 +200,7 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
   private async prepareContent(
     command: Extract<BrowserCommand, { type: 'page.prepare-content' }>, signal: AbortSignal
   ): Promise<BrowserCommandResult> {
-    await this.driver.prepareContent(this.page, command.strategy, command.timeoutMs, signal);
+    await this.driver.prepareContent(this.page, command.strategy, command.timeoutMs, command.reader, signal);
     return { type: command.type, url: await this.driver.currentUrl(this.page, signal) };
   }
 

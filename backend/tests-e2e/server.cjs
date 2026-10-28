@@ -595,9 +595,9 @@ function installFakeAo(app) {
   app.post('/__ao/api/conversations/:id/message', async (request, reply) => {
     const conversation = getConversation(conversations, request.params.id);
     const text = request.body?.text || '';
-    if (text.includes('# Capability Stage Task')) {
-      const stage = /(?:Produce only the ([a-z-]+) capability draft\.|Produce only stage `([a-z-]+)`)/.exec(text);
-      const stageName = stage?.[1] || stage?.[2] || 'chapter-images';
+    const stage = /^# (common-verification|metadata|reader-preparation|chapter-images)$/m.exec(text);
+    if (stage) {
+      const stageName = stage[1];
       const sourcePath = /(?:Write TypeScript capability source to|- TypeScript:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
       const reviewPath = /(?:Write human review notes for this capability to|- Markdown review:)\s+([^\s]+)\.?/.exec(text)?.[1]?.replace(/\.$/, '');
       const source = fakeCapabilitySource(stageName, `${conversation.files.get('task.md') || ''}\n${text}`);
@@ -673,6 +673,25 @@ function fakeCapabilitySource(stage, text = '') {
   const imageSelector = sourceUrl.includes('fixture-replay-draft')
     ? 'img.fixture-replay-draft-page'
     : 'img.page-image';
+  if (stage === 'reader-preparation') return `import { ReaderPreparationCapability } from '../../base';
+
+class E2EReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(sourceUrl: string): string { void sourceUrl; return '#reader, main.reader, main'; }
+  getReaderPageSelector(sourceUrl: string): string { void sourceUrl; return '${imageSelector}'; }
+}`;
+  if (stage === 'metadata') return `import type { ChapterInfo } from '@comiccrawler/shared';
+import { MetadataCapability } from '../../base';
+class E2EMetadataCapability extends MetadataCapability {
+  extractTitle(document: unknown, sourceUrl: string): string {
+    const $ = this.adapter.asCheerio(document); void sourceUrl; return $('h1').first().text().trim();
+  }
+  extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {
+    const $ = this.adapter.asCheerio(document); return $('a[href]').map((_, node) => {
+      const url = this.adapter.resolveUrl(sourceUrl, $(node).attr('href') || '');
+      return { id: new URL(url).pathname.split('/').filter(Boolean).at(-1) || 'chapter', title: $(node).text().trim(), url };
+    }).get();
+  }
+}`;
   return `import { ChapterImagesCapability } from '../../base';
 
 class E2EChapterImagesCapability extends ChapterImagesCapability {

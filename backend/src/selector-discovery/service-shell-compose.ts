@@ -9,6 +9,7 @@ interface ShellParts {
   commonClass: string;
   verificationClass: string;
   metadataClass: string;
+  readerPreparationClass: string;
   chapterImagesClass: string;
   classPrefix: string;
   adapterId: string;
@@ -49,6 +50,8 @@ function createShellParts(job: SelectorDiscoveryJob,
   return { commonClass: extractCapabilityClassName(source('common-verification'), 'CommonCapability'),
     verificationClass: extractCapabilityClassName(source('common-verification'), 'VerificationCapability'),
     metadataClass: extractCapabilityClassName(source('metadata'), 'MetadataCapability'),
+    readerPreparationClass: extractCapabilityClassName(
+      source('reader-preparation'), 'ReaderPreparationCapability'),
     chapterImagesClass: extractCapabilityClassName(source('chapter-images'), 'ChapterImagesCapability'),
     classPrefix: toPascalIdentifier(job.hostname.replace(/^m\./i, '')),
     adapterId: createAdapterId(job.hostname), metadata: job.target !== 'chapter-only' };
@@ -69,6 +72,7 @@ function createAdapterShell(job: SelectorDiscoveryJob, parts: ShellParts): strin
   readonly common = new ${parts.commonClass}(this);
   readonly verification = new ${parts.verificationClass}(this);
 ${parts.metadata ? `  readonly metadata = new ${parts.metadataClass}(this);\n` : ''}  readonly chapterImages = new ${parts.chapterImagesClass}(this);
+  readonly readerPreparation = new ${parts.readerPreparationClass}(this);
 }`;
 }
 
@@ -80,6 +84,7 @@ import {
   CommonCapability,
   VerificationCapability,
   MetadataCapability,
+  ReaderPreparationCapability,
   ChapterImagesCapability,
 } from '../../base';
 
@@ -107,6 +112,7 @@ AO/Agent produced only capability subclasses.
 - CommonCapability: ${parts.commonClass}
 - VerificationCapability: ${parts.verificationClass}
 - MetadataCapability: ${parts.metadata ? parts.metadataClass : 'not implemented for chapter-only target'}
+- ReaderPreparationCapability: ${parts.readerPreparationClass}
 - ChapterImagesCapability: ${parts.chapterImagesClass}
 `;
 }
@@ -239,13 +245,6 @@ class {{CLASS}}VerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|verify you are human|captcha|sorry, you have been blocked|you are unable to access|cdn-cgi\\/challenge-platform|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required!|人机验证|人機驗證|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: true,
-      flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
-    };
-  }
 }
 `;
 
@@ -254,7 +253,7 @@ export function createMetadataSkeleton(hostname: string): string {
   return METADATA_SKELETON.replace(/\{\{CLASS\}\}/g, classPrefix);
 }
 
-const METADATA_SKELETON = `import type { ChapterInfo, ComicStatus } from '@comiccrawler/shared';
+const METADATA_SKELETON = `import type { ChapterInfo } from '@comiccrawler/shared';
 import { MetadataCapability } from '../../base';
 
 class {{CLASS}}MetadataCapability extends MetadataCapability {
@@ -262,36 +261,6 @@ class {{CLASS}}MetadataCapability extends MetadataCapability {
     const $ = this.adapter.asCheerio(document);
     void $;
     throw new Error('Replace with site-specific title extraction from task.md evidence.');
-  }
-
-  extractAuthor(document: unknown, sourceUrl: string): string | undefined {
-    const $ = this.adapter.asCheerio(document);
-    void $;
-    throw new Error('Replace with site-specific author extraction from task.md evidence.');
-  }
-
-  extractDescription(document: unknown, sourceUrl: string): string | undefined {
-    const $ = this.adapter.asCheerio(document);
-    void $;
-    throw new Error('Replace with site-specific description extraction from task.md evidence.');
-  }
-
-  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined {
-    const $ = this.adapter.asCheerio(document);
-    void $;
-    throw new Error('Replace with site-specific cover URL extraction from task.md evidence.');
-  }
-
-  extractTags(document: unknown, sourceUrl: string): string[] {
-    const $ = this.adapter.asCheerio(document);
-    void $;
-    throw new Error('Replace with site-specific tag extraction from task.md evidence.');
-  }
-
-  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined {
-    const $ = this.adapter.asCheerio(document);
-    void $;
-    throw new Error('Replace with site-specific status extraction from task.md evidence.');
   }
 
   extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[] {

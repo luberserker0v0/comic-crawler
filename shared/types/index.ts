@@ -38,6 +38,7 @@ export type {
   AdapterCapabilities,
   CommonCapabilityContract,
   VerificationCapabilityContract,
+  ReaderPreparationCapabilityContract,
   MetadataCapabilityContract,
   ChapterImagesCapabilityContract,
   ChapterIdentityInput,

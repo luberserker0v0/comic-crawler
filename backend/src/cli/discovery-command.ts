@@ -22,7 +22,7 @@ export function setupDiscoverCommand(ctx: CliCommandContext): void {
     .option('--target <target>', 'Discovery target: full or chapter-only', 'full')
     .option('--html-snapshot <path>', 'Rendered chapter HTML snapshot file for chapter-only discovery')
     .option('--force-discovery', 'Run AO discovery even when a registered adapter already matches the URL')
-    .option('--stop-after-stage <stage>', 'Internal smoke test: stop after capability stage common-verification, metadata, or chapter-images')
+    .option('--stop-after-stage <stage>', 'Stop after common-verification, metadata, reader-preparation, or chapter-images')
     .action(async (url: string, options: DiscoverOptions) => discover(ctx, url, options));
 }
 
@@ -48,8 +48,9 @@ async function discover(ctx: CliCommandContext, url: string, options: DiscoverOp
 
 function validateDiscoverOptions(options: DiscoverOptions): void {
   if (options.target !== 'full' && options.target !== 'chapter-only') throw new Error('Discovery target must be "full" or "chapter-only".');
-  if (options.stopAfterStage && !['common-verification', 'metadata', 'chapter-images'].includes(options.stopAfterStage)) {
-    throw new Error('--stop-after-stage must be common-verification, metadata, or chapter-images.');
+  if (options.stopAfterStage && !['common-verification', 'metadata', 'reader-preparation', 'chapter-images']
+    .includes(options.stopAfterStage)) {
+    throw new Error('--stop-after-stage must be common-verification, metadata, reader-preparation, or chapter-images.');
   }
   if (options.htmlSnapshot && options.target !== 'chapter-only') throw new Error('--html-snapshot requires --target chapter-only.');
 }

@@ -1,4 +1,5 @@
-import type { BrowserCommand, BrowserCommandResult, BrowserSessionSource } from '@comiccrawler/browser-client-sdk';
+import type { BrowserCommand, BrowserCommandResult, BrowserSessionSource,
+  ReaderPreparationSelectors } from '@comiccrawler/browser-client-sdk';
 import type { BrowserSessionGateway } from './browser-session-gateway';
 
 interface BrowserCommandPort extends Pick<BrowserSessionGateway, 'execute'> {
@@ -8,6 +9,7 @@ interface BrowserCommandPort extends Pick<BrowserSessionGateway, 'execute'> {
 export interface BrowserRenderOptions {
   timeoutMs?: number;
   postLoadDelayMs?: number;
+  reader?: ReaderPreparationSelectors;
 }
 
 export interface RenderedBrowserPage {
@@ -26,7 +28,7 @@ export class BrowserRenderService {
     };
     const currentUrl = await this.currentUrl(sessionId);
     await this.acquirePage(sessionId, url, currentUrl, acquisition, timeoutMs);
-    await this.preparePage(sessionId, timeoutMs);
+    await this.preparePage(sessionId, timeoutMs, options.reader);
     if (options.postLoadDelayMs && options.postLoadDelayMs > 0) await delay(options.postLoadDelayMs);
     const content = await this.gateway.execute(sessionId, { type: 'page.get-content' }, timeoutMs);
     assertResult(content, 'page.get-content');
@@ -46,11 +48,14 @@ export class BrowserRenderService {
     assertResult(result, 'page.navigate');
   }
 
-  private async preparePage(sessionId: string, timeoutMs?: number): Promise<void> {
+  private async preparePage(
+    sessionId: string, timeoutMs?: number, reader?: ReaderPreparationSelectors
+  ): Promise<void> {
     const ready = await this.gateway.execute(sessionId, { type: 'page.wait-for-ready', timeoutMs }, timeoutMs);
     assertResult(ready, 'page.wait-for-ready');
     const prepared = await this.gateway.execute(sessionId, {
-      type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: reserveCommandResponseTime(timeoutMs),
+      type: 'page.prepare-content', strategy: 'scroll-through',
+      timeoutMs: reserveCommandResponseTime(timeoutMs), reader,
     }, timeoutMs);
     assertResult(prepared, 'page.prepare-content');
   }

@@ -9,6 +9,7 @@ import {
   ChapterImagesCapability,
   CommonCapability,
   MetadataCapability,
+  ReaderPreparationCapability,
   VerificationCapability,
 } from '../adapter/base';
 import { ComicError, ErrorType } from '../error/types';
@@ -48,7 +49,7 @@ function loadLocalModule(requestedPath: string, hostRequire: NodeJS.Require,
 
 function adapterBaseExports() {
   return { AdapterBase, CommonCapability, VerificationCapability, MetadataCapability,
-    ChapterImagesCapability, ComicError, ErrorType };
+    ReaderPreparationCapability, ChapterImagesCapability, ComicError, ErrorType };
 }
 
 function instantiateDraftModule(source: string, fileName: string, draftRequire: (id: string) => unknown): IComicAdapter {

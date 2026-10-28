@@ -87,32 +87,26 @@ const RETRYABLE_CAPABILITY_ERRORS = [
   'ChapterInfo entries must not use ComicStatus', 'must populate ChapterInfo.id',
   'must populate ChapterInfo.url', 'ChapterInfo uses url', 'must not use new Date()',
   'must be absolute', 'must be derived from the chapter URL path segment',
-  'must not match the bare word "cloudflare"', 'must not implement metadata or chapter image extraction methods',
+  'must not match the bare word "cloudflare"', 'must not implement methods from another capability',
+  'Reader-preparation drafts return selectors only', 'must not implement another capability',
   'Do not redeclare ComicCrawler framework classes', 'must not export an AdapterBase shell',
   'must not implement common or verification capabilities',
 ];
 
-export function createCapabilityRetryFeedback(draft: SelectorDiscoveryCapabilityDraft, attempt: number): string {
+export function createCapabilityRetryFeedback(draft: SelectorDiscoveryCapabilityDraft): string {
   const errors = draft.validation?.errors ?? [];
-  const lines = createCapabilityRetryLines(draft, attempt);
+  const lines = createCapabilityRetryLines(draft);
   if (errors.length > 0) lines.push('', 'Validation errors to fix:', ...errors.map((error) => `- ${error}`));
   if (draft.stage === 'metadata') lines.push(...METADATA_RETRY_REMINDERS);
   return lines.join('\n');
 }
 
-function createCapabilityRetryLines(draft: SelectorDiscoveryCapabilityDraft, attempt: number): string[] {
+function createCapabilityRetryLines(draft: SelectorDiscoveryCapabilityDraft): string[] {
   return [
-    `Attempt ${attempt} failed.`,
     !draft.sourceTs?.trim()
-      ? `The requested TypeScript file was empty or missing: ${draft.sourcePath}.`
-      : 'The requested TypeScript file failed validation.',
-    '',
-    'Required correction:',
-    `- Write TypeScript source directly to ${draft.sourcePath}.`,
-    `- Write review notes directly to ${draft.reviewPath}.`,
-    '- Do not put TypeScript only in chat.',
-    '- Do not write JSON.',
-    '- Do not write outputs/adapter-implementation.ts.',
+      ? `Write the missing TypeScript file: ${draft.sourcePath}.`
+      : 'Fix the current TypeScript file.',
+    `Write review notes to ${draft.reviewPath}.`,
   ];
 }
 

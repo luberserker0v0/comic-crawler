@@ -49,7 +49,7 @@ async function DynamicSiteAdapterCapabilitiesTestUsesRenderedHTMLWhenARemoteRend
     await expect(composeChapterImages(adapter, 'https://example.com/manga/demo/chapter-1')).resolves.toEqual([
         { url: 'https://example.com/rendered/1.webp', index: 0, filename: '001.webp' },
     ]);
-    expect(render).toHaveBeenCalledWith('https://example.com/manga/demo/chapter-1');
+    expect(render).toHaveBeenCalledWith('https://example.com/manga/demo/chapter-1', { reader: undefined });
     await adapter.dispose();
 }
 

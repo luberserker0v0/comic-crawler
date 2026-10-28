@@ -172,9 +172,11 @@ Version 2 commands are:
 - `page.prepare-content` with fixed `scroll-through` strategy
 - `page.focus`
 
-Content preparation belongs to Browser Client. Adapter capabilities receive the
-prepared DOM and remain pure extraction code. Virtualized reader URLs remain in
-`data-comiccrawler-src` or `data-comiccrawler-image-url` annotations.
+`ReaderPreparationCapability` declares container, page, and optional end
+selectors. Browser Client owns scrolling, waiting, bounds, and position
+restoration. `ChapterImagesCapability` only extracts from the prepared DOM.
+Virtualized URLs remain in `data-comiccrawler-src` or
+`data-comiccrawler-image-url` annotations.
 
 Adapter Lab uses `mode: inspect` to resolve an Adapter without assuming URL path
 conventions. Before a DOM-backed function runs, the UI reads Workers and

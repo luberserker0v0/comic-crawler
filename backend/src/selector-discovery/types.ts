@@ -91,6 +91,7 @@ export interface AdapterImplementationValidation {
 export type SelectorDiscoveryCapabilityStage =
   | 'common-verification'
   | 'metadata'
+  | 'reader-preparation'
   | 'chapter-images';
 
 export interface SelectorDiscoveryCapabilityDraft {

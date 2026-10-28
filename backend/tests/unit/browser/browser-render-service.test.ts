@@ -22,7 +22,8 @@ async function BrowserRenderServiceTestNavigatesWaitsAndReturnsRenderedDOMInProt
         { type: 'page.prepare-content', url: 'https://example.test/final' },
         { type: 'page.get-content', url: 'https://example.test/final', html: '<main>ready</main>' },
     ]);
-    await expect(service.render('session-1', 'https://example.test/start', { timeoutMs: 1234 })).resolves.toEqual({
+    await expect(service.render('session-1', 'https://example.test/start', { timeoutMs: 1234,
+        reader: { containerSelector: '.reader', pageSelector: '.page' } })).resolves.toEqual({
         url: 'https://example.test/final',
         html: '<main>ready</main>',
     });
@@ -33,7 +34,8 @@ const NAVIGATION_COMMANDS: BrowserCommand[] = [
   { type: 'page.get-url' },
   { type: 'page.navigate', url: 'https://example.test/start' },
   { type: 'page.wait-for-ready', timeoutMs: 1234 },
-  { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 987 },
+  { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 987,
+    reader: { containerSelector: '.reader', pageSelector: '.page' } },
   { type: 'page.get-content' },
 ];
 

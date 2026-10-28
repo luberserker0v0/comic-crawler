@@ -56,19 +56,19 @@ async function createRouteFixture() {
 }
 
 function adapterSource(): string {
-  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base';
+  return `import { AdapterBase, CommonCapability, VerificationCapability, ReaderPreparationCapability, ChapterImagesCapability } from '../../base';
 export class RouteFixtureAdapter extends AdapterBase {
   readonly id = 'route-fixture'; readonly name = 'Route Fixture'; readonly domains = ['route.invalid'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new RouteCommon(this); readonly verification = new RouteVerification(this);
-  readonly chapterImages = new RouteImages(this);
+  readonly readerPreparation = new RouteReader(this); readonly chapterImages = new RouteImages(this);
 }
 class RouteCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('route.invalid'); } }
 class RouteVerification extends VerificationCapability {
   detectVerificationRequired(_input: string): boolean { return false; }
-  describeVerificationHandoff(): Record<string, unknown> { return { supported: false }; }
-} class RouteImages extends ChapterImagesCapability {
+} class RouteReader extends ReaderPreparationCapability { getReaderContainerSelector(): string { return '#reader'; }
+  getReaderPageSelector(): string { return 'img'; } } class RouteImages extends ChapterImagesCapability {
   extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
     const $ = this.adapter.asCheerio(document); return $('#reader img')
       .map((_, node) => this.adapter.resolveUrl(sourceUrl, $(node).attr('src') ?? '')).get();

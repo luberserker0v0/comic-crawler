@@ -4,6 +4,7 @@ import type {
   CommonCapabilityContract,
   IComicAdapter,
   MetadataCapabilityContract,
+  ReaderPreparationCapabilityContract,
   VerificationCapabilityContract,
 } from '@comiccrawler/shared';
 import type { EventBus } from '../events/bus';
@@ -22,14 +23,15 @@ export function getCommonCapability(adapter: IComicAdapter): CommonCapabilityCon
 }
 
 export function getVerificationCapability(adapter: IComicAdapter): VerificationCapabilityContract | undefined {
-  return adapter.verification ?? (
-    adapter.detectVerificationRequired || adapter.describeVerificationHandoff
-      ? {
-          detectVerificationRequired: adapter.detectVerificationRequired?.bind(adapter) ?? (() => false),
-          describeVerificationHandoff: adapter.describeVerificationHandoff?.bind(adapter) ?? (() => ({ supported: false })),
-        }
-      : undefined
-  );
+  return adapter.verification ?? (adapter.detectVerificationRequired
+    ? { detectVerificationRequired: adapter.detectVerificationRequired.bind(adapter) }
+    : undefined);
+}
+
+export function getReaderPreparationCapability(
+  adapter: IComicAdapter
+): ReaderPreparationCapabilityContract | undefined {
+  return adapter.readerPreparation;
 }
 
 export function getMetadataCapability(adapter: IComicAdapter): MetadataCapabilityContract | undefined {

@@ -1,6 +1,7 @@
 import type { ChapterInfo, ComicMetadata, ComicStatus } from '@comiccrawler/shared';
 import * as cheerio from 'cheerio';
-import { AdapterBase, ChapterImagesCapability, CommonCapability, MetadataCapability } from '../../base';
+import { AdapterBase, ChapterImagesCapability, CommonCapability, MetadataCapability,
+  ReaderPreparationCapability } from '../../base';
 import { HAPPYMH_SELECTORS } from './selectors';
 
 const IMAGE_SELECTORS = ['#cp_image img', '#cp_img img', '.comicpage img', '.reader img',
@@ -18,12 +19,23 @@ export class HappyMhAdapter extends AdapterBase {
   };
   readonly common: HappyMhCommonCapability = new HappyMhCommonCapability(this);
   readonly metadata: HappyMhMetadataCapability = new HappyMhMetadataCapability(this);
+  readonly readerPreparation: HappyMhReaderPreparationCapability = new HappyMhReaderPreparationCapability(this);
   readonly chapterImages: HappyMhChapterImagesCapability = new HappyMhChapterImagesCapability(this);
 }
 
 class HappyMhCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
     return /^https?:\/\/m\.happymh\.com\/(?:manga|mangaread)\//i.test(url);
+  }
+}
+
+class HappyMhReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(sourceUrl: string): string | undefined {
+    return /\/mangaread\//i.test(new URL(sourceUrl).pathname)
+      ? '#cp_image, #cp_img, .comicpage, .reader, .read-content, .chapter-content' : undefined;
+  }
+  getReaderPageSelector(sourceUrl: string): string | undefined {
+    return /\/mangaread\//i.test(new URL(sourceUrl).pathname) ? HAPPYMH_SELECTORS.images.item : undefined;
   }
 }
 

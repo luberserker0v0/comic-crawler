@@ -81,7 +81,6 @@ class VerificationFixtureAdapter extends FixtureAdapter {
   };
   readonly verification = {
     detectVerificationRequired: (input: string) => input.includes('site-specific-verification'),
-    describeVerificationHandoff: () => ({ supported: true }),
   };
 }
 

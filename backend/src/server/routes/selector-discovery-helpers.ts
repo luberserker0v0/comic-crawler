@@ -45,7 +45,7 @@ function implementationSymbol(line: string, startLine: number): AdapterImplement
   const classMatch = /\b(?:export\s+)?class\s+(\w+)\s+extends\s+(\w+)/.exec(line);
   if (classMatch?.[1]) return { id: classMatch[1], label: classMatch[1], kind: 'class', startLine,
     capability: capabilityFromBaseClass(classMatch[2]) };
-  const method = /^\s*(?:public\s+|protected\s+|private\s+)?(?:override\s+)?(?:async\s+)?(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/.exec(line)?.[1];
+  const method = /^\s*(?:public\s+|protected\s+|private\s+)?(?:override\s+)?(?:async\s+)?(matchUrl|detectVerificationRequired|getReaderContainerSelector|getReaderPageSelector|getReaderEndSelector|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/.exec(line)?.[1];
   return method ? { id: method, label: method, kind: 'method', startLine,
     capability: capabilityFromFunction(method) } : undefined;
 }
@@ -54,13 +54,15 @@ export function capabilityFromBaseClass(baseClass?: string): AdapterImplementati
   if (baseClass === 'CommonCapability') return 'common';
   if (baseClass === 'VerificationCapability') return 'verification';
   if (baseClass === 'MetadataCapability') return 'metadata';
+  if (baseClass === 'ReaderPreparationCapability') return 'readerPreparation';
   if (baseClass === 'ChapterImagesCapability') return 'chapterImages';
   return undefined;
 }
 
 export function capabilityFromFunction(functionId: string): AdapterImplementationSymbol['capability'] {
   if (functionId === 'matchUrl') return 'common';
-  if (functionId === 'detectVerificationRequired' || functionId === 'describeVerificationHandoff') return 'verification';
+  if (functionId === 'detectVerificationRequired') return 'verification';
+  if (functionId.startsWith('getReader')) return 'readerPreparation';
   if (functionId === 'extractChapterImageUrls') return 'chapterImages';
   return 'metadata';
 }

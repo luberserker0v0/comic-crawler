@@ -416,7 +416,8 @@ async function runAdapterRouteFunction(
 }
 
 export function adapterFunctionNeedsBrowser(functionId: AdapterFunctionId): boolean {
-  return functionId !== 'matchUrl' && functionId !== 'describeVerificationHandoff';
+  return !['matchUrl', 'getReaderContainerSelector', 'getReaderPageSelector',
+    'getReaderEndSelector'].includes(functionId);
 }
 
 function sendChapterImagesResponse(
@@ -487,7 +488,7 @@ function isChapterImageDescriptors(value: unknown, imageUrls: string[]): value i
 
 function createSessionRenderer(renderService: BrowserRenderService, sessionId: string): HtmlRenderer {
   return {
-    render: async (url) => (await renderService.render(sessionId, url)).html,
+    render: async (url, options) => (await renderService.render(sessionId, url, options)).html,
     dispose: async () => undefined,
   };
 }
@@ -564,7 +565,9 @@ function getAdapterFromRequest(request: FastifyRequest, registry: AdapterRegistr
 export function describeAdapterFunctions(adapter: NonNullable<ReturnType<AdapterRegistry['get']>>): AdapterFunctionDescriptor[] {
   const capabilities = getAdapterCapabilities(adapter);
   return ADAPTER_FUNCTION_DESCRIPTORS.map((descriptor) => ({ ...descriptor,
-    implemented: descriptor.capability === 'common' || capabilities[descriptor.capability] }));
+    implemented: descriptor.capability === 'common'
+      || (descriptor.capability === 'readerPreparation' ? Boolean(adapter.readerPreparation)
+        : capabilities[descriptor.capability]) }));
 }
 
 const ADAPTER_FUNCTION_DESCRIPTORS: Omit<AdapterFunctionDescriptor, 'implemented'>[] = [
@@ -582,13 +585,15 @@ const ADAPTER_FUNCTION_DESCRIPTORS: Omit<AdapterFunctionDescriptor, 'implemented
       inputKind: 'url',
       notes: 'Detects whether the provided URL or HTML text appears to require human verification.',
     },
-    {
-      id: 'describeVerificationHandoff',
-      label: 'describeVerificationHandoff()',
-      capability: 'verification',
-      inputKind: 'url',
-      notes: 'Describes the pipeline-level human verification handoff flow.',
-    },
+    { id: 'getReaderContainerSelector', label: 'getReaderContainerSelector(url)',
+      capability: 'readerPreparation', inputKind: 'chapterUrl',
+      notes: 'Returns only the comic reader container selector.' },
+    { id: 'getReaderPageSelector', label: 'getReaderPageSelector(url)',
+      capability: 'readerPreparation', inputKind: 'chapterUrl',
+      notes: 'Returns only the page candidate selector inside the reader.' },
+    { id: 'getReaderEndSelector', label: 'getReaderEndSelector(url)',
+      capability: 'readerPreparation', inputKind: 'chapterUrl',
+      notes: 'Returns an optional stable reader end marker selector.' },
     {
       id: 'extractTitle',
       label: 'extractTitle(document)',
@@ -651,7 +656,9 @@ export function isKnownAdapterFunction(functionId: string): functionId is Adapte
   return [
     'matchUrl',
     'detectVerificationRequired',
-    'describeVerificationHandoff',
+    'getReaderContainerSelector',
+    'getReaderPageSelector',
+    'getReaderEndSelector',
     'extractTitle',
     'extractAuthor',
     'extractDescription',

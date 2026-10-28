@@ -2,17 +2,18 @@
 
 This bundle is owned by ComicCrawler and uploaded to AgentOrchestrator before each adapter implementation discovery run.
 
-AO receives Markdown task files and sanitized DOM summaries. Final output is a
-TypeScript adapter implementation draft plus Markdown review notes:
+AO receives `task.md`, sanitized DOM evidence, and one small stage prompt. It
+writes one capability subclass and short review notes. Current stage files are:
 
 ```text
-outputs/adapter-implementation.ts
-outputs/review-notes.md
+outputs/common-verification.ts
+outputs/metadata-capability.ts
+outputs/reader-preparation.ts
+outputs/chapter-images-capability.ts
 ```
 
-The implementation must export one class that extends ComicCrawler
-`AdapterBase`. AO must not output JSON contracts and must implement the
-fine-grained capability methods described by the bundle contracts.
+ComicCrawler validates each stage and assembles the `AdapterBase` shell. AO
+does not write that shell, browser behavior, or JSON contracts.
 
 ## Provider JSON
 
@@ -37,10 +38,9 @@ Recommended Docker-style token reference:
 
 ## Eval and release flow
 
-Run bundle evaluation from the CLI. During the Stage 1 calibration period this
-creates a discovery job, saves AO TypeScript/review artifacts, and validates the
-implementation draft statically. Runtime promotion of AO TypeScript adapters is
-handled in a later stage after sandboxing and review policy are finalized.
+Run bundle evaluation from the CLI. It creates a discovery job, stores each
+capability draft, composes the adapter, and runs static validation. Promotion
+still requires developer review.
 
 List eval case inventory without AO/provider/model configuration:
 

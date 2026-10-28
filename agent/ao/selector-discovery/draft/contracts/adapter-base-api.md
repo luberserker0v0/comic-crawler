@@ -22,6 +22,7 @@ import {
   ChapterImagesCapability,
   CommonCapability,
   MetadataCapability,
+  ReaderPreparationCapability,
   VerificationCapability,
 } from '../../base';
 ```
@@ -42,32 +43,35 @@ class SiteVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /cf-chl|cf_clearance|just a moment|checking your browser|captcha|HTTP\s+(?:403|429|503)\b/i.test(input);
   }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: true,
-      flow: 'Task waits while the user completes verification in the bound browser session.',
-    };
-  }
 }
 ```
 
 Do not match the bare word `cloudflare`; normal pages may contain Cloudflare
 assets. Never bypass human verification.
 
-Full adapters also implement:
+Full adapters implement title and chapter list. Add optional fields only when
+the supplied DOM contains clear evidence:
 
 ```ts
 class SiteMetadataCapability extends MetadataCapability {
   extractTitle(document: unknown, sourceUrl: string): string;
-  extractAuthor(document: unknown, sourceUrl: string): string | undefined;
-  extractDescription(document: unknown, sourceUrl: string): string | undefined;
-  extractCoverUrl(document: unknown, sourceUrl: string): string | undefined;
-  extractTags(document: unknown, sourceUrl: string): string[];
-  extractStatus(document: unknown, sourceUrl: string): ComicStatus | undefined;
   extractChapterList(document: unknown, sourceUrl: string): ChapterInfo[];
 }
 ```
+
+Chapter adapters also declare the reader boundary:
+
+```ts
+class SiteReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(sourceUrl: string): string | undefined;
+  getReaderPageSelector(sourceUrl: string): string | undefined;
+  getReaderEndSelector(sourceUrl: string): string | undefined;
+}
+```
+
+Return selectors only. ComicCrawler owns scrolling, waiting, cancellation, and
+scroll restoration. Return `undefined` on non-reader URLs. Omit
+`getReaderEndSelector` when no stable marker exists.
 
 Every chapter-capable adapter implements:
 

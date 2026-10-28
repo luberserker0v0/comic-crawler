@@ -48,12 +48,21 @@ test('accepts only the bounded content preparation strategy', () => {
   };
   assert.doesNotThrow(() => parseServerMessage({
     ...envelope,
-    command: { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 1_000 },
+    command: { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 1_000,
+      reader: { containerSelector: '.reader', pageSelector: '.page' } },
   }));
   assert.throws(() => parseServerMessage({
     ...envelope,
     command: { type: 'page.prepare-content', strategy: 'evaluate-script' },
   }), /strategy must be "scroll-through"/);
+});
+
+test('validates reader preparation selectors', () => {
+  assert.throws(() => parseServerMessage({
+    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'command.execute',
+    requestId: 'request-prepare', leaseId: 'lease-1', sessionId: 'session-1',
+    command: { type: 'page.prepare-content', strategy: 'scroll-through', reader: { pageSelector: 42 } },
+  }), /Field "pageSelector" must be a non-empty string/);
 });
 
 test('decodes ArrayBuffer messages', async () => {

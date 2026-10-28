@@ -1,5 +1,6 @@
-import type { AdapterCapabilityDetailResponse, AdapterDraftDetailResponse, AdapterFunctionTestResponse,
-  AdapterImplementationResponse, AdapterImplementationSymbol, ChallengeHandoffJobSummary } from '@comiccrawler/shared';
+import type { AdapterCapabilityDetailResponse, AdapterDraftDetailResponse, AdapterFunctionCapability,
+  AdapterFunctionTestResponse, AdapterImplementationResponse, AdapterImplementationSymbol,
+  ChallengeHandoffJobSummary } from '@comiccrawler/shared';
 import { ImplementationDiffEditor, ImplementationEditor, type EditorLanguage } from '../../../components/ImplementationEditor';
 import { AdapterFunctionResultSummary, formatLineRange } from '../widgets';
 import type { useBrowserTargets } from '../useBrowserTargets';
@@ -37,7 +38,8 @@ interface ImplementationTestProps {
 export function ImplementationTestSection(props: ImplementationTestProps) {
   const { text } = useI18n();
   const labels = { common: text.lab.commonCapability, verification: text.agent.capabilityVerification,
-    metadata: text.agent.capabilityMetadata, chapterImages: text.agent.capabilityChapterImages };
+    metadata: text.agent.capabilityMetadata, readerPreparation: text.agent.capabilityReaderPreparation,
+    chapterImages: text.agent.capabilityChapterImages };
   return <section className="rounded-lg bg-white p-5 shadow">
     <TestHeader props={props} text={text} />
     {props.capabilityDetail && <CapabilityInfo props={props} text={text} />}
@@ -53,7 +55,7 @@ export function ImplementationTestSection(props: ImplementationTestProps) {
 }
 
 type TestText = ReturnType<typeof useI18n>['text'];
-type CapabilityLabels = Record<'common' | 'verification' | 'metadata' | 'chapterImages', string>;
+type CapabilityLabels = Record<AdapterFunctionCapability, string>;
 
 function TestHeader({ props, text }: { props: ImplementationTestProps; text: TestText }) {
   const disabled = !props.selectedFunctionId || !props.url

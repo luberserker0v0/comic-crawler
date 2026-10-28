@@ -7,7 +7,9 @@ import type {
 import { useI18n } from '../../text/i18n';
 import { formatText } from '../../text/format';
 
-export const capabilityOrder: AdapterFunctionCapability[] = ['common', 'verification', 'metadata', 'chapterImages'];
+export const capabilityOrder: AdapterFunctionCapability[] = [
+  'common', 'verification', 'metadata', 'readerPreparation', 'chapterImages',
+];
 
 export type AdapterChoice = NonNullable<AdapterResolveResponse['adapter']>;
 

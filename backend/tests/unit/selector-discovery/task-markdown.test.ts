@@ -36,7 +36,8 @@ function selectorDiscoveryTaskMarkdownTestCreatesAChapterOnlyPromptFocusedOnImag
     expect(markdown).toContain('Chapter Image URL Extraction is required.');
     expect(markdown).toContain('no JSON or\n  AdapterBase shell');
     expect(markdown).toContain('Capability Implementation Contract');
-    expect(markdown).toContain('Browser preparation is upstream');
+    expect(markdown).toContain('ReaderPreparationCapability: reader boundary selectors.');
+    expect(markdown).toContain('Do not click, scroll, navigate, or fetch inside adapter code.');
     expect(markdown).not.toContain('Choose one representative chapter URL');
 }
 

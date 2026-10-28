@@ -351,13 +351,16 @@ export class CrawlerEngine {
     };
     if (typeof rendererAttachableAdapter.setHtmlRenderer !== 'function') return;
     rendererAttachableAdapter.setHtmlRenderer({
-      render: (url) => this.renderAdapterPage(adapter, renderer, url),
+      render: (url, options) => this.renderAdapterPage(adapter, renderer, url, options),
       dispose: async () => undefined,
     });
   }
 
-  private async renderAdapterPage(adapter: AdapterBase, renderer: HtmlRenderer, url: string): Promise<string> {
-    const html = await renderer.render(url);
+  private async renderAdapterPage(
+    adapter: AdapterBase, renderer: HtmlRenderer, url: string,
+    options?: Parameters<HtmlRenderer['render']>[1]
+  ): Promise<string> {
+    const html = await renderer.render(url, options);
     if (adapter.verification && await adapter.verification.detectVerificationRequired(html))
       throw new ComicError(`Adapter "${adapter.id}" detected that human verification is required for ${url}.`,
         ErrorType.AUTH_ERROR, false, { adapterId: adapter.id, url, antiBotChallenge: true,

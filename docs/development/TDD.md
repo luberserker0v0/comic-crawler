@@ -52,6 +52,11 @@
 43. Resolve a chapter-only Adapter through inspect mode without requiring metadata.
 44. List only the requesting user's process-scoped browser resources.
 45. Select only idle Browser targets registered for the exact test URL.
+46. Forward adapter reader selectors to `page.prepare-content`.
+47. Skip document-bottom fallback after reader pages are found.
+48. Bound fallback when no reader pages are found.
+49. Reject explicit reader selectors that match no pages.
+50. Keep AO stage prompts isolated and free of retry history.
 
 ### Integration tests
 

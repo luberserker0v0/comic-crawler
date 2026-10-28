@@ -9,7 +9,6 @@ import type {
   BrowserTarget,
 } from '@comiccrawler/shared';
 import type { AdapterRegistry } from '../../adapter/registry';
-import { getAdapterCapabilities } from '../../adapter/registry';
 import { createChapterImageIdentities } from '../../adapter/chapter-image-identity';
 import { looksLikeAntiBotChallenge } from '../../crawler/anti-bot';
 import type { HtmlRenderer } from '../../crawler/html-renderer';
@@ -122,13 +121,16 @@ function attachAdapterRenderer(context: RunContext): void {
   const attachable = context.adapter as unknown as { setHtmlRenderer?: (renderer: unknown) => void };
   if (!attachable.setHtmlRenderer) return;
   attachable.setHtmlRenderer({
-    render: (url: string) => renderVerifiedAdapterPage(context, url),
+    render: (url: string, renderOptions: Parameters<HtmlRenderer['render']>[1]) =>
+      renderVerifiedAdapterPage(context, url, renderOptions),
     dispose: async () => undefined,
   });
 }
 
-async function renderVerifiedAdapterPage(context: RunContext, url: string): Promise<string> {
-  const html = await context.renderer.render(url);
+async function renderVerifiedAdapterPage(
+  context: RunContext, url: string, options?: Parameters<HtmlRenderer['render']>[1]
+): Promise<string> {
+  const html = await context.renderer.render(url, options);
   if (context.adapter.verification && await context.adapter.verification.detectVerificationRequired(html))
     throw new Error(`Adapter "${context.adapter.id}" detected that human verification is required for ${url}.`);
   return html;
@@ -160,7 +162,7 @@ async function extractAdapterFunctionResult(
 ): Promise<Record<string, unknown>> {
   if (context.functionId === 'matchUrl') return measureMatchUrl(context);
   if (context.functionId === 'detectVerificationRequired') return measureVerification(context, verified);
-  if (context.functionId === 'describeVerificationHandoff') return measureHandoff(context);
+  if (isReaderPreparationFunction(context.functionId)) return measureReaderSelector(context);
   const document = verified?.document ?? await context.timings.measure('dom_acquisition',
     () => loadAdapterDocument(context.adapter, context.url));
   if (isMetadataFunction(context.functionId)) return measureMetadata(context, document, verified);
@@ -183,12 +185,19 @@ function measureVerification(context: RunContext, verified?: VerifiedChallengeDo
   }));
 }
 
-function measureHandoff(context: RunContext): Promise<Record<string, unknown>> {
-  return context.timings.measure('extraction', async () => ({
-    supported: getAdapterCapabilities(context.adapter).verification,
-    matched: context.adapter.matchUrl(context.url),
-    flow: await context.adapter.describeVerificationHandoff?.(), domSource: context.domSource,
-  }));
+function measureReaderSelector(context: RunContext): Promise<Record<string, unknown>> {
+  return context.timings.measure('extraction', async () => {
+    const capability = context.adapter.readerPreparation;
+    if (context.functionId === 'getReaderContainerSelector')
+      return { selector: capability?.getReaderContainerSelector(context.url) };
+    if (context.functionId === 'getReaderPageSelector')
+      return { selector: capability?.getReaderPageSelector(context.url) };
+    return { selector: capability?.getReaderEndSelector?.(context.url) };
+  });
+}
+
+function isReaderPreparationFunction(functionId: AdapterFunctionId): boolean {
+  return functionId.startsWith('getReader');
 }
 
 function measureMetadata(
@@ -572,7 +581,7 @@ export function domSourceForCrawlerMode(_crawlerMode: AdapterCrawlerMode): Adapt
 export function readinessTargetForFunction(functionId: AdapterFunctionId): DomReadinessTarget {
   if (isMetadataFunction(functionId)) return 'metadata';
   if (functionId === 'extractChapterImageUrls') return 'chapterImages';
-  if (functionId === 'detectVerificationRequired' || functionId === 'describeVerificationHandoff') return 'verification';
+  if (functionId === 'detectVerificationRequired') return 'verification';
   return 'common';
 }
 
@@ -625,18 +634,15 @@ export function failureReadiness(target: DomReadinessTarget, message: string): D
   };
 }
 
+const RESULT_KEY_BY_FUNCTION: Partial<Record<AdapterFunctionId, string>> = {
+  extractTitle: 'title', extractAuthor: 'author', extractDescription: 'description', extractCoverUrl: 'coverUrl',
+  extractTags: 'tags', extractStatus: 'status', extractChapterList: 'chapterCount',
+  extractChapterImageUrls: 'imageUrlCount', getReaderContainerSelector: 'selector',
+  getReaderPageSelector: 'selector', getReaderEndSelector: 'selector',
+};
+
 export function isEmptyResultForFunction(functionId: AdapterFunctionId, result: Record<string, unknown>): boolean {
-  const keyByFunction: Partial<Record<AdapterFunctionId, string>> = {
-    extractTitle: 'title',
-    extractAuthor: 'author',
-    extractDescription: 'description',
-    extractCoverUrl: 'coverUrl',
-    extractTags: 'tags',
-    extractStatus: 'status',
-    extractChapterList: 'chapterCount',
-    extractChapterImageUrls: 'imageUrlCount',
-  };
-  const key = keyByFunction[functionId];
+  const key = RESULT_KEY_BY_FUNCTION[functionId];
   if (!key) return false;
   const value = result[key];
   if (typeof value === 'number') return value <= 0;

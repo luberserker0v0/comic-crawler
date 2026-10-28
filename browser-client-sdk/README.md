@@ -101,9 +101,13 @@ Profile lock，並執行實際複製。SDK 會固定排除 cache 與 lock 檔案
 SDK 不直接依賴 Playwright、Node API 或特定瀏覽器平台 API。Browser Client 只需把
 對應 runtime 操作包成 driver 或 launcher。
 
-`page.prepare-content` 會觸發 lazy content，並以
-`data-comiccrawler-src` / `data-comiccrawler-image-url` 保留虛擬化 reader
-已載入的圖片 URL。
+`page.prepare-content` 可接收 `reader.containerSelector`、
+`reader.pageSelector` 與選用的 `reader.endSelector`。SDK 只在 reader 範圍
+捲動與收集圖片；找到 page 元素後不再掃描整份文件。找不到 page 時才
+使用有界 fallback，最後還原 window 與巢狀容器位置。
+
+虛擬化 reader 已載入的 URL 會保存在 `data-comiccrawler-src` /
+`data-comiccrawler-image-url`。
 
 ## Executor contract test
 

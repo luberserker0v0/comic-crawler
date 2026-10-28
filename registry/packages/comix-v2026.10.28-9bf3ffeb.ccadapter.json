@@ -1,0 +1,34 @@
+{
+  "manifest": {
+    "schemaVersion": 1,
+    "adapterId": "comix",
+    "version": "v2026.10.28-9bf3ffeb",
+    "name": "Comix",
+    "domains": [
+      "comix.to"
+    ],
+    "urlPatterns": [
+      "https://comix.to/*"
+    ],
+    "parseMode": "playwright",
+    "capabilities": {
+      "verification": true,
+      "metadata": false,
+      "chapterImages": true
+    },
+    "origin": "bundled",
+    "createdAt": "2026-10-28T00:00:00.000Z"
+  },
+  "implementationTs": "import {\n  AdapterBase,\n  ChapterImagesCapability,\n  ComicError,\n  CommonCapability,\n  ErrorType,\n  ReaderPreparationCapability,\n  VerificationCapability,\n} from '../../base';\n\nexport class ComixAdapter extends AdapterBase {\n  readonly id = 'comix';\n  readonly name = 'Comix';\n  readonly domains = ['comix.to'];\n  readonly parseMode = 'playwright' as const;\n  readonly capabilities = {\n    verification: true,\n    metadata: false,\n    chapterImages: true,\n  };\n  readonly common: ComixCommonCapability = new ComixCommonCapability(this);\n  readonly verification: ComixVerificationCapability = new ComixVerificationCapability(this);\n  readonly readerPreparation: ComixReaderPreparationCapability = new ComixReaderPreparationCapability(this);\n  readonly chapterImages: ComixChapterImagesCapability = new ComixChapterImagesCapability(this);\n}\n\nclass ComixCommonCapability extends CommonCapability {\n  matchUrl(url: string): boolean {\n    try {\n      const parsed = new URL(url);\n      return /^(?:www\\.)?comix\\.to$/i.test(parsed.hostname)\n        && /^\\/title\\/[^/]+\\/\\d+-chapter-[^/?#]+\\/?$/i.test(parsed.pathname);\n    } catch {\n      return false;\n    }\n  }\n}\n\nclass ComixVerificationCapability extends VerificationCapability {\n  detectVerificationRequired(input: string): boolean {\n    const $ = this.adapter.parseHtml(input);\n    const loadedReaderPages = $('.rpage-main .rpage-page[data-page]').filter((_, element) => {\n      const page = $(element);\n      const image = page.find('img.rpage-page__img').first();\n      return Boolean(\n        page.attr('data-comiccrawler-image-url')\n        || image.attr('data-comiccrawler-src')\n        || image.attr('src')\n        || image.attr('data-src')\n        || image.attr('data-lazy-src')\n        || image.attr('srcset')\n      );\n    });\n    if ($('.rpage-main').length > 0 && loadedReaderPages.length > 0) return false;\n    return looksLikeComixChallenge(input);\n  }\n}\n\nclass ComixReaderPreparationCapability extends ReaderPreparationCapability {\n  getReaderContainerSelector(_sourceUrl: string): string { return '.rpage-main'; }\n  getReaderPageSelector(_sourceUrl: string): string {\n    return '.rpage-main__inner .rpage-page[data-page]';\n  }\n}\n\nconst BLOCK_SIGNALS = [\n  'attention required! | cloudflare', 'sorry, you have been blocked', 'you are unable to access',\n];\nconst CHALLENGE_SIGNALS = [\n  ...BLOCK_SIGNALS, 'cdn-cgi/challenge-platform', 'window.__cf$cv', 'cf-chl', 'cf-error',\n  'cloudflare ray id', 'verify you are human', 'checking if the site connection is secure',\n  '<title>請稍候', '<title>请稍候', '正在執行安全驗證', '正在执行安全验证', '人机验证', '人機驗證',\n];\n\nfunction looksLikeComixChallenge(html: string): boolean {\n  const lower = html.toLowerCase();\n  if (!CHALLENGE_SIGNALS.some((signal) => lower.includes(signal))) return false;\n  const imageCount = (html.match(/<img\\b/gi) ?? []).length;\n  const anchorCount = (html.match(/<a\\s/gi) ?? []).length;\n  return (imageCount === 0 && anchorCount === 0)\n    || BLOCK_SIGNALS.some((signal) => lower.includes(signal));\n}\n\nclass ComixChapterImagesCapability extends ChapterImagesCapability {\n  extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {\n    const $ = this.adapter.asCheerio(document);\n    const pageNodes = $('.rpage-main__inner .rpage-page[data-page]');\n    const pages = pageNodes.map((index, element) => {\n      const node = $(element);\n      const page = Number.parseInt(node.attr('data-page') ?? '', 10);\n      const raw = readerImageSource(node, node.find('img.rpage-page__img').first());\n      return { page: Number.isFinite(page) ? page : index + 1, url: resolveHttpImageUrl(this.adapter, sourceUrl, raw) };\n    }).get().filter((entry): entry is { page: number; url: string } => Boolean(entry.url));\n    pages.sort((left, right) => left.page - right.page);\n    const urls = Array.from(new Set(pages.map((entry) => entry.url)));\n    assertAllPagesLoaded(this.adapter.id, sourceUrl, pageNodes.length, urls.length);\n    return urls;\n  }\n}\n\nfunction readerImageSource(page: { attr(name: string): string | undefined }, image: { attr(name: string): string | undefined }): string | undefined {\n  return page.attr('data-comiccrawler-image-url') ?? image.attr('data-comiccrawler-src')\n    ?? image.attr('src') ?? image.attr('data-src') ?? image.attr('data-lazy-src')\n    ?? firstSrcsetUrl(image.attr('srcset'));\n}\n\nfunction assertAllPagesLoaded(adapterId: string, sourceUrl: string, expected: number, actual: number): void {\n  if (expected === 0 || actual === expected) return;\n  throw new ComicError(\n    `Comix rendered ${expected} reader pages, but only ${actual} image URLs were loaded.`,\n    ErrorType.PARSING_ERROR, true,\n    { adapterId, url: sourceUrl, expectedImageCount: expected, extractedImageCount: actual, lazyImagesIncomplete: true }\n  );\n}\n\nfunction firstSrcsetUrl(srcset: string | undefined): string | undefined {\n  return srcset?.split(',')[0]?.trim().split(/\\s+/)[0];\n}\n\nfunction resolveHttpImageUrl(adapter: AdapterBase, baseUrl: string, raw: string | undefined): string {\n  const value = raw?.trim();\n  if (!value || value.startsWith('data:') || value.startsWith('blob:')) return '';\n  try {\n    const resolved = adapter.resolveUrl(baseUrl, value);\n    const parsed = new URL(resolved);\n    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';\n  } catch {\n    return '';\n  }\n}\n",
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "syntaxValid": true
+  },
+  "checksums": {
+    "algorithm": "sha256",
+    "manifest": "1537daa0fffd97bb944149d6fb51639174e39eb77af035c238eb56fa16653f75",
+    "implementation": "9bf3ffebe39c4df72b1e3f9fb5132ae292e052e81d52be85db32332226b5f3b7"
+  }
+}

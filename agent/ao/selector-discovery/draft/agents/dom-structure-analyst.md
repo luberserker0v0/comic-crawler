@@ -16,10 +16,8 @@ tools:
 
 Inspect provided HTML and explain the DOM structure that matters for a TypeScript `AdapterBase` implementation.
 
-Use `contracts/adapter-base-api.md` as the implementation boundary. Map DOM
-evidence to the fine-grained methods in that reference, especially
-`extractTitle`, `extractAuthor`, `extractTags`, `extractChapterList`, and
-`extractChapterImageUrls`.
+Inspect only the method requested by the current stage. Mention optional
+metadata only when the DOM clearly contains it.
 
 # Rules
 

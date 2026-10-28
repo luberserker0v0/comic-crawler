@@ -4,7 +4,9 @@ import type * as cheerio from 'cheerio';
 export type AdapterFunctionId =
   | 'matchUrl'
   | 'detectVerificationRequired'
-  | 'describeVerificationHandoff'
+  | 'getReaderContainerSelector'
+  | 'getReaderPageSelector'
+  | 'getReaderEndSelector'
   | 'extractTitle'
   | 'extractAuthor'
   | 'extractDescription'

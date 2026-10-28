@@ -13,7 +13,12 @@ export interface CommonCapabilityContract {
 
 export interface VerificationCapabilityContract {
   detectVerificationRequired(input: string): Promise<boolean> | boolean;
-  describeVerificationHandoff(): Promise<Record<string, unknown>> | Record<string, unknown>;
+}
+
+export interface ReaderPreparationCapabilityContract {
+  getReaderContainerSelector(sourceUrl: string): string | undefined;
+  getReaderPageSelector(sourceUrl: string): string | undefined;
+  getReaderEndSelector?(sourceUrl: string): string | undefined;
 }
 
 export interface MetadataCapabilityContract {
@@ -69,6 +74,7 @@ export interface IComicAdapter {
   readonly common?: CommonCapabilityContract;
   readonly verification?: VerificationCapabilityContract;
   readonly metadata?: MetadataCapabilityContract;
+  readonly readerPreparation?: ReaderPreparationCapabilityContract;
   readonly chapterImages?: ChapterImagesCapabilityContract;
   readonly chapterImageIdentity?: ChapterImageIdentityStrategyContract;
 
@@ -82,7 +88,6 @@ export interface IComicAdapter {
   extractChapterList?(document: unknown, sourceUrl: string): Promise<ChapterInfo[]> | ChapterInfo[];
   extractChapterImageUrls?(document: unknown, sourceUrl: string): Promise<string[]> | string[];
   detectVerificationRequired?(input: string): Promise<boolean> | boolean;
-  describeVerificationHandoff?(): Promise<Record<string, unknown>> | Record<string, unknown>;
   login?(credentials: Credentials): Promise<boolean>;
   search?(query: string, options?: SearchOptions): Promise<SearchResult[]>;
   fetchUpdates?(since: Date): Promise<ComicUpdate[]>;

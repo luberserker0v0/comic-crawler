@@ -44,6 +44,7 @@ function capabilityLabels(text: SelectText): Record<AdapterFunctionCapability, s
     common: text.lab.commonCapability,
     verification: text.agent.capabilityVerification,
     metadata: text.agent.capabilityMetadata,
+    readerPreparation: text.agent.capabilityReaderPreparation,
     chapterImages: text.agent.capabilityChapterImages,
   };
 }

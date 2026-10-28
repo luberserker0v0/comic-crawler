@@ -1,4 +1,4 @@
-import type { BrowserRenderContext } from './contracts';
+import type { BrowserRenderContext, ReaderPreparationSelectors } from './contracts';
 import { prepareScrollableContent } from './content-preparation';
 import type { BrowserPageDriver, ManagedProfile, ManagedProfileLauncher } from './executors';
 import { BrowserClientError } from './errors';
@@ -136,6 +136,7 @@ export class PlaywrightPageDriver<Page extends PlaywrightPageLike> implements Br
     page: Page,
     strategy: 'scroll-through',
     timeoutMs: number | undefined,
+    reader: ReaderPreparationSelectors | undefined,
     signal: AbortSignal
   ): Promise<void> {
     if (strategy !== 'scroll-through') {
@@ -143,7 +144,8 @@ export class PlaywrightPageDriver<Page extends PlaywrightPageLike> implements Br
     }
     const operation = prepareScrollableContent(
       (script, argument) => page.evaluate(script, argument),
-      normalizePreparationTimeout(timeoutMs)
+      normalizePreparationTimeout(timeoutMs),
+      reader
     );
     await raceAbort(operation, signal);
   }

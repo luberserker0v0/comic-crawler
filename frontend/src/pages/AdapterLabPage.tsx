@@ -75,7 +75,7 @@ type LabContext = { state: LabState; draft: DraftFlow; derived: LabDerived; brow
   text: ReturnType<typeof useI18n>['text'] };
 
 function functionNeedsBrowser(functionId: string): boolean {
-  return Boolean(functionId) && !['matchUrl', 'describeVerificationHandoff'].includes(functionId);
+  return Boolean(functionId) && functionId !== 'matchUrl';
 }
 
 function useChallengeJob(challengeId: string | undefined, setChallengeJob: (job: ChallengeHandoffJobSummary | null) => void) {
