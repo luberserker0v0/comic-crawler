@@ -1,6 +1,6 @@
 {
   "name": "@comiccrawler/browser-client-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Platform-neutral ComicCrawler Browser Client command SDK",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
