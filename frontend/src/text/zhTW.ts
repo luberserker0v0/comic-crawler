@@ -355,6 +355,7 @@ export const uiText = {
     capabilities: '能力',
     capabilityVerification: '驗證外包',
     capabilityMetadata: '漫畫目錄',
+    capabilityReaderPreparation: '閱讀器準備',
     capabilityChapterImages: '章節圖片',
     parseMode: 'DOM 取得方式',
     implementationKind: '實作來源',

@@ -688,6 +688,17 @@
 
 預期：Adapter Lab 使用指定 resource 完成測試。
 
+### BC-25 限制 reader 準備範圍
+
+1. Adapter 回傳 reader container。
+2. Adapter 回傳 reader page selector。
+3. Browser Client 準備內容。
+4. 檢查 page 全部載入。
+5. 檢查未捲動到 reader 外。
+6. 檢查原捲動位置已還原。
+
+預期：準備流程只處理 reader，圖片抽取函式不負責捲動。
+
 ## 6. WebUI
 
 ### WEB-01 顯示 discovery 設定錯誤

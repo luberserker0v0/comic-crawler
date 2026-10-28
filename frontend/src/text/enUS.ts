@@ -268,6 +268,7 @@ export const enUSText = {
     capabilities: 'Capabilities',
     capabilityVerification: 'Verification handoff',
     capabilityMetadata: 'Manga metadata',
+    capabilityReaderPreparation: 'Reader preparation',
     capabilityChapterImages: 'Chapter images',
     parseMode: 'DOM acquisition',
     implementationKind: 'Implementation source',

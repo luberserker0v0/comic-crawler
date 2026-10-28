@@ -50,6 +50,8 @@ const INDEX_KEY = 'selector-discovery-index';
 const CAPABILITY_DRAFT_OUTPUTS: Array<Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>> = [
   { stage: 'common-verification', sourcePath: 'outputs/common-verification.ts', reviewPath: 'outputs/common-verification-review.md' },
   { stage: 'metadata', sourcePath: 'outputs/metadata-capability.ts', reviewPath: 'outputs/metadata-review.md' },
+  { stage: 'reader-preparation', sourcePath: 'outputs/reader-preparation.ts',
+    reviewPath: 'outputs/reader-preparation-review.md' },
   { stage: 'chapter-images', sourcePath: 'outputs/chapter-images-capability.ts', reviewPath: 'outputs/chapter-images-review.md' },
 ];
 
@@ -181,18 +183,19 @@ function capabilityStageResult(
   return undefined;
 }
 
-const CAPABILITY_MESSAGE_TEMPLATE = `# Capability Stage Task
+const CAPABILITY_MESSAGE_TEMPLATE = `# {{STAGE}}
 
-Read task.md plus the named contracts. Produce only stage \`{{STAGE}}\`:
+Use only the evidence in task.md. Write:
 
 - TypeScript: {{SOURCE}}
 - Markdown review: {{REVIEW}}
 
-Use exact capability signatures. Keep source out of review notes and chat. Do not output JSON, import Markdown contracts, write the AdapterBase shell, or mix capabilities. The supplied DOM is prepared Playwright output; capability code extracts from it and does not perform browser actions.
+Implement only this stage. Do not write an AdapterBase shell, another capability,
+JSON, or browser actions. Keep review notes short.
 {{INSTRUCTION}}
 {{RETRY}}
 
-After writing both files, reply with one short confirmation sentence.`;
+Reply with one short confirmation.`;
 
 function createCapabilityMessage(
   draft: Omit<SelectorDiscoveryCapabilityDraft, 'sourceTs' | 'reviewMarkdown' | 'validation'>,
@@ -210,20 +213,36 @@ function capabilityTemplateInstruction(stage: SelectorDiscoveryCapabilityDraft['
     .replace('{{SKELETON}}', createCommonVerificationSkeleton(job.normalizedUrl, job.hostname));
   if (stage === 'metadata') return METADATA_CAPABILITY_INSTRUCTION
     .replace('{{SKELETON}}', createMetadataSkeleton(job.hostname));
-  return '';
+  if (stage === 'reader-preparation') return READER_PREPARATION_INSTRUCTION;
+  return CHAPTER_IMAGES_INSTRUCTION;
 }
 
-const COMMON_CAPABILITY_INSTRUCTION = `Copy this skeleton. Change URL matching and challenge signals only. Keep its imports, classes, and methods; include hostname {{HOST}} and remove all example placeholders.
+const COMMON_CAPABILITY_INSTRUCTION = `Use this skeleton. Change URL matching and challenge signals. Keep it short and include {{HOST}}.
 
 \`\`\`ts
 {{SKELETON}}
 \`\`\``;
 
-const METADATA_CAPABILITY_INSTRUCTION = `Copy this skeleton. Replace every placeholder selector and throw with evidence from task.md. Keep one MetadataCapability subclass. Follow ChapterInfo rules in adapter-base-api.md and return the complete supplied catalog.
+const METADATA_CAPABILITY_INSTRUCTION = `Use this skeleton. Implement title and chapter list. Add optional fields only when task.md has clear evidence.
 
 \`\`\`ts
 {{SKELETON}}
 \`\`\``;
+
+const READER_PREPARATION_INSTRUCTION = `Implement one ReaderPreparationCapability subclass.
+
+- getReaderContainerSelector returns the comic reader container selector.
+- getReaderPageSelector returns comic page elements inside that container.
+- Add getReaderEndSelector only when a stable end marker exists.
+- Return undefined when sourceUrl is not a reader page.
+- Return selectors only. Do not scroll, loop, wait, extract images, or use browser APIs.`;
+
+const CHAPTER_IMAGES_INSTRUCTION = `Implement one ChapterImagesCapability subclass.
+
+- Implement extractChapterImageUrls(document: unknown, sourceUrl: string): string[].
+- Read the prepared DOM with this.adapter.asCheerio(document).
+- Return comic pages in order. Exclude covers, icons, ads, and placeholders.
+- Resolve relative URLs and remove duplicates.`;
 
 async function readCapabilityOutput(
   client: AoClient, conversationId: string,
@@ -735,7 +754,7 @@ export class SelectorDiscoveryService {
       if (latest.sourceTs?.trim() && (!latest.validation || latest.validation.valid || !shouldRetryCapabilityDraft(latest))) {
         return latest;
       }
-      retryFeedback = createCapabilityRetryFeedback(latest, attempt);
+      retryFeedback = createCapabilityRetryFeedback(latest);
     }
     return latest!;
   }

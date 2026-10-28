@@ -147,8 +147,8 @@ source directory:
 
 ```bash
 npm run -w backend cli -- adapter-packages build-project comix \
-  --created-at 2026-10-22T06:28:35.337Z \
-  --output ../registry/packages/comix-v2026.10.22-818eaad9.ccadapter.json
+  --created-at 2026-10-28T00:00:00.000Z \
+  --output ../registry/packages/comix-v2026.10.28-9bf3ffeb.ccadapter.json
 ```
 
 The command rejects project source that cannot execute as a portable Catalog

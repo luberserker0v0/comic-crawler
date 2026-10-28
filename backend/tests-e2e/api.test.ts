@@ -8,6 +8,7 @@ import {
   type BrowserClientSocket,
   type BrowserClientState,
   type ClientStateStore,
+  type ReaderPreparationSelectors,
 } from '@comiccrawler/browser-client-sdk';
 
 const adapterChapterUrl = 'http://127.0.0.1:4173/api/fixtures/discovery-chapter';
@@ -185,7 +186,8 @@ class E2eExistingTabDriver implements BrowserPageDriver<number> {
   }
 
   async prepareContent(_tabId: number, _strategy: 'scroll-through',
-    _timeoutMs: number | undefined, signal: AbortSignal): Promise<void> { await this.wait(signal); }
+    _timeoutMs: number | undefined, _reader: ReaderPreparationSelectors | undefined,
+    signal: AbortSignal): Promise<void> { await this.wait(signal); }
 
   async focus(_tabId: number, signal: AbortSignal): Promise<void> { assertE2eCommandActive(signal); }
 

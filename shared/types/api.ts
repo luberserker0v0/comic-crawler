@@ -134,7 +134,8 @@ export interface RestoreAdapterResponse {
   sourceDirectory?: string;
 }
 
-export type AdapterFunctionCapability = 'common' | 'verification' | 'metadata' | 'chapterImages';
+export type AdapterFunctionCapability =
+  | 'common' | 'verification' | 'metadata' | 'readerPreparation' | 'chapterImages';
 export type AdapterFunctionInputKind = 'url' | 'mangaUrl' | 'chapterUrl';
 
 export interface AdapterFunctionDescriptor {

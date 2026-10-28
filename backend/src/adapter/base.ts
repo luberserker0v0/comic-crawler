@@ -7,6 +7,7 @@ import type {
   Credentials,
   IComicAdapter,
   MetadataCapabilityContract,
+  ReaderPreparationCapabilityContract,
   SearchOptions,
   SearchResult,
   VerificationCapabilityContract,
@@ -14,6 +15,7 @@ import type {
 import { ComicError, ErrorType } from '../error/types';
 import type { RetryHandler } from '../error/retry';
 import type { HtmlRenderer } from '../crawler/html-renderer';
+import type { ReaderPreparationSelectors } from '@comiccrawler/browser-client-sdk';
 
 export { ComicError, ErrorType } from '../error/types';
 
@@ -31,6 +33,7 @@ export abstract class AdapterBase implements IComicAdapter {
   readonly common?: CommonCapabilityContract;
   readonly verification?: VerificationCapabilityContract;
   readonly metadata?: MetadataCapabilityContract;
+  readonly readerPreparation?: ReaderPreparationCapabilityContract;
   readonly chapterImages?: ChapterImagesCapabilityContract;
 
   protected retryHandler?: RetryHandler;
@@ -86,13 +89,6 @@ export abstract class AdapterBase implements IComicAdapter {
     return this.verification?.detectVerificationRequired(input) ?? defaultVerificationDetection(input);
   }
 
-  describeVerificationHandoff(): Promise<Record<string, unknown>> | Record<string, unknown> {
-    return this.verification?.describeVerificationHandoff() ?? {
-      supported: this.capabilities.verification,
-      flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
-    };
-  }
-
   async login?(credentials: Credentials): Promise<boolean>;
   async search?(query: string, options?: SearchOptions): Promise<SearchResult[]>;
   async fetchUpdates?(since: Date): Promise<import('@comiccrawler/shared').ComicUpdate[]>;
@@ -106,7 +102,7 @@ export abstract class AdapterBase implements IComicAdapter {
         { url }
       );
     }
-    return this.htmlRenderer.render(url);
+    return this.htmlRenderer.render(url, { reader: this.readerSelectors(url) });
   }
 
   async loadDocument(url: string): Promise<unknown> {
@@ -115,6 +111,16 @@ export abstract class AdapterBase implements IComicAdapter {
 
   setHtmlRenderer(renderer: HtmlRenderer | undefined): void {
     this.htmlRenderer = renderer;
+  }
+
+  private readerSelectors(sourceUrl: string): ReaderPreparationSelectors | undefined {
+    if (!this.readerPreparation) return undefined;
+    const selectors = {
+      containerSelector: this.readerPreparation.getReaderContainerSelector(sourceUrl),
+      pageSelector: this.readerPreparation.getReaderPageSelector(sourceUrl),
+      endSelector: this.readerPreparation.getReaderEndSelector?.(sourceUrl),
+    };
+    return Object.values(selectors).some(Boolean) ? selectors : undefined;
   }
 
   async dispose(): Promise<void> {
@@ -196,16 +202,17 @@ export abstract class ChapterImagesCapability implements ChapterImagesCapability
   abstract extractChapterImageUrls(document: unknown, sourceUrl: string): Promise<string[]> | string[];
 }
 
+export abstract class ReaderPreparationCapability implements ReaderPreparationCapabilityContract {
+  constructor(protected readonly adapter: AdapterBase) {}
+  abstract getReaderContainerSelector(sourceUrl: string): string | undefined;
+  abstract getReaderPageSelector(sourceUrl: string): string | undefined;
+  getReaderEndSelector(_sourceUrl: string): string | undefined { return undefined; }
+}
+
 export class VerificationCapability implements VerificationCapabilityContract {
   constructor(protected readonly adapter: AdapterBase) {}
   detectVerificationRequired(input: string): boolean {
     return defaultVerificationDetection(input);
-  }
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: this.adapter.capabilities.verification,
-      flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
-    };
   }
 }
 

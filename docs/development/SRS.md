@@ -59,6 +59,9 @@ one outbound command WebSocket.
 - **ADP-010**: Each approved regression fixture must belong to one immutable Adapter ID and version.
 - **ADP-011**: Adapter Lab must resolve URLs without site-specific path rules.
 - **ADP-012**: DOM-backed Adapter Lab tests must bind an explicit available Browser target.
+- **ADP-013**: Adapters must declare reader boundary selectors separately from image extraction.
+- **ADP-014**: Browser Client must bound reader preparation and restore scroll positions.
+- **ADP-015**: AO must receive one minimal capability contract per generation stage.
 
 ## 6. Security requirements
 

@@ -96,7 +96,7 @@ export function createSourceOutline(source: string): AdapterImplementationSymbol
 function outlineSymbolsForLine(lines: string[], index: number, line: string): AdapterImplementationSymbol[] {
   const className = line.match(/\bclass\s+([A-Za-z0-9_]+)/)?.[1];
   if (className) return [{ id: `class:${className}`, label: className, kind: 'class', startLine: index + 1 }];
-  const method = line.match(/\b(matchUrl|detectVerificationRequired|describeVerificationHandoff|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/)?.[1];
+  const method = line.match(/\b(matchUrl|detectVerificationRequired|getReaderContainerSelector|getReaderPageSelector|getReaderEndSelector|extractTitle|extractAuthor|extractDescription|extractCoverUrl|extractTags|extractStatus|extractChapterList|extractChapterImageUrls)\s*\(/)?.[1];
   if (method) return [{ id: method, label: `${method}()`, capability: capabilityForFunction(method as AdapterFunctionId),
     kind: 'method', startLine: index + 1, endLine: findBlockEndLine(lines, index) }];
   const helper = line.match(/^function\s+([A-Za-z0-9_]+)\s*\(/)?.[1];
@@ -106,7 +106,8 @@ function outlineSymbolsForLine(lines: string[], index: number, line: string): Ad
 
 export function capabilityForFunction(functionId: AdapterFunctionId): AdapterFunctionCapability {
   if (functionId === 'matchUrl') return 'common';
-  if (functionId === 'detectVerificationRequired' || functionId === 'describeVerificationHandoff') return 'verification';
+  if (functionId === 'detectVerificationRequired') return 'verification';
+  if (functionId.startsWith('getReader')) return 'readerPreparation';
   if (functionId === 'extractChapterImageUrls') return 'chapterImages';
   return 'metadata';
 }

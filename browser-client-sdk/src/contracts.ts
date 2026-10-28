@@ -47,6 +47,12 @@ export interface BrowserRenderContext {
   userAgent?: string;
 }
 
+export interface ReaderPreparationSelectors {
+  containerSelector?: string;
+  pageSelector?: string;
+  endSelector?: string;
+}
+
 export interface OpenBrowserSessionRequest {
   sessionId: string;
   leaseId: string;
@@ -59,7 +65,8 @@ export type BrowserCommand =
   | { type: 'page.get-url' }
   | { type: 'page.get-content' }
   | { type: 'page.wait-for-ready'; timeoutMs?: number }
-  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number }
+  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number;
+      reader?: ReaderPreparationSelectors }
   | { type: 'page.focus' };
 
 export type BrowserCommandResult =

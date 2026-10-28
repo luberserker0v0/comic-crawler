@@ -135,6 +135,15 @@ function validateContentPreparation(value: Record<string, unknown>): void {
     throw protocolError('Content preparation strategy must be "scroll-through".');
   }
   validateOptionalTimeout(value);
+  validateReaderSelectors(value.reader);
+}
+
+function validateReaderSelectors(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw protocolError('Reader preparation selectors must be an object.');
+  for (const key of ['containerSelector', 'pageSelector', 'endSelector']) {
+    if (value[key] !== undefined) requireString(value, key);
+  }
 }
 
 function unsupportedCommand(type: string): BrowserClientError {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { validateAdapterImplementationDraft, validateCapabilityDraft } from '../../../src/selector-discovery/adapter-implementation';
 
 const VALID_CHAPTER_ONLY_ADAPTER = `
-import { AdapterBase, ChapterImagesCapability, CommonCapability, VerificationCapability } from '../adapter/base';
+import { AdapterBase, ChapterImagesCapability, CommonCapability, ReaderPreparationCapability, VerificationCapability } from '../adapter/base';
 
 export class DemoAdapter extends AdapterBase {
   readonly id = 'demo';
@@ -14,6 +14,7 @@ export class DemoAdapter extends AdapterBase {
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommonCapability(this);
   readonly verification = new DemoVerificationCapability(this);
+  readonly readerPreparation = new DemoReaderPreparationCapability(this);
   readonly chapterImages = new DemoChapterImagesCapability(this);
 }
 
@@ -27,13 +28,11 @@ class DemoVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|blocked|challenge|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
+}
 
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: true,
-      flow: 'Task Detail handoff',
-    };
-  }
+class DemoReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(_sourceUrl: string): string { return '.reader'; }
+  getReaderPageSelector(_sourceUrl: string): string { return 'img'; }
 }
 
 class DemoChapterImagesCapability extends ChapterImagesCapability {
@@ -79,7 +78,28 @@ function validateAdapterImplementationDraftTestGroup2(): void {
 function validateAdapterImplementationDraftTestGroup3(): void {
   it('keeps the common-verification AO template free of bare Cloudflare matches', validateAdapterImplementationDraftTestKeepsTheCommonVerificationAOTemplateFreeOfBareCloudflareMatches);
   it('rejects common and verification drafts without verification capability', validateAdapterImplementationDraftTestRejectsCommonAndVerificationDraftsWithoutVerificationCapability);
+  it('accepts selector-only reader preparation drafts', acceptsSelectorOnlyReaderPreparationDrafts);
+  it('rejects browser behavior in reader preparation drafts', rejectsBrowserBehaviorInReaderPreparationDrafts);
   it('keeps metadata and chapter image capability stages mutually scoped', validateAdapterImplementationDraftTestKeepsMetadataAndChapterImageCapabilityStagesMutuallyScoped);
+}
+
+const READER_PREPARATION_DRAFT = `
+import { ReaderPreparationCapability } from '../adapter/base';
+class DemoReaderPreparation extends ReaderPreparationCapability {
+  getReaderContainerSelector(sourceUrl: string): string { void sourceUrl; return '.reader'; }
+  getReaderPageSelector(sourceUrl: string): string { void sourceUrl; return '.page'; }
+}`;
+
+function acceptsSelectorOnlyReaderPreparationDrafts() {
+  const result = validateCapabilityDraft(READER_PREPARATION_DRAFT, { stage: 'reader-preparation' });
+  expect(result).toMatchObject({ valid: true, errors: [] });
+}
+
+function rejectsBrowserBehaviorInReaderPreparationDrafts() {
+  const source = `${READER_PREPARATION_DRAFT}\nsetTimeout(() => window.scrollTo(0, 1), 10);`;
+  const result = validateCapabilityDraft(source, { stage: 'reader-preparation' });
+  expect(result.valid).toBe(false);
+  expect(result.errors).toContain('Reader-preparation drafts return selectors only and must not extract, scroll, wait, or fetch.');
 }
 
 function validateAdapterImplementationDraftTestAcceptsAnAdapterBaseTypeScriptImplementationDraft() {
@@ -399,7 +419,7 @@ function validateAdapterImplementationDraftTestRejectsSelfDeclaredFrameworkClass
     expect(result.valid).toBe(false);
     expect(result.errors).toContain('Do not redeclare ComicCrawler framework classes. Import AdapterBase and capability classes from the adapter base.');
     expect(result.errors).toContain('VerificationCapability must implement detectVerificationRequired(input: string), not verifyDom().');
-    expect(result.errors).toContain('Common/verification draft must not implement metadata or chapter image extraction methods.');
+    expect(result.errors).toContain('Common/verification draft must not implement methods from another capability.');
     expect(result.errors).toContain('Common/verification draft must not export or implement an AdapterBase shell.');
     expect(result.errors).toContain('Common/verification draft must not declare adapter identity, constructor, capability flags, or handler fields.');
 }
@@ -444,10 +464,6 @@ class DemoVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|blocked|challenge|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return { supported: true, flow: 'Task Detail handoff' };
-  }
 }
 `;
 
@@ -470,10 +486,6 @@ class DemoVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|captcha|blocked|challenge|cloudflare|HTTP\\s+(?:403|429|503)\\b/i.test(input);
   }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return { supported: true };
-  }
 }
 `;
 
@@ -495,10 +507,6 @@ class DemoCommonCapability extends CommonCapability {
 class DemoVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /cloudflare.{0,80}(?:challenge|verification)|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required/i.test(input);
-  }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return { supported: true };
   }
 }
 `;
@@ -572,7 +580,7 @@ class DemoChapterImagesCapability extends ChapterImagesCapability {
 function validateAdapterImplementationDraftTestKeepsMetadataAndChapterImageCapabilityStagesMutuallyScoped() {
     const metadata = validateCapabilityDraft(VALIDATE_ADAPTER_IMPLEMENTATION_DRAFT_KEEPS_METADATA_AND_CHAPTER_IMAGE_CAPABILITY_STAGES_MUTUALLY_SCOPED_1_SOURCE, { stage: 'metadata', target: 'full' });
     expect(metadata.valid).toBe(false);
-    expect(metadata.errors).toContain('Metadata draft must not implement ChapterImagesCapability.');
+    expect(metadata.errors).toContain('Metadata draft must not implement reader preparation or chapter image capabilities.');
     expect(metadata.errors).toContain('Metadata draft must not export an AdapterBase shell.');
     expect(metadata.errors).toContain('Metadata draft must not implement common or verification capabilities.');
     expect(metadata.errors).toContain('Metadata draft must not declare adapter identity, constructor, common, or verification fields.');

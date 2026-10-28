@@ -22,11 +22,4 @@ class ExampleVerificationCapability extends VerificationCapability {
   detectVerificationRequired(input: string): boolean {
     return /human verification|captcha|blocked|challenge|cf[-_]?chl|cf_clearance|just a moment|checking your browser|attention required|HTTP\s+(?:403|429|503)\b/i.test(input);
   }
-
-  describeVerificationHandoff(): Record<string, unknown> {
-    return {
-      supported: true,
-      flow: 'Task enters waiting_verification and the user completes verification through the task detail handoff.',
-    };
-  }
 }

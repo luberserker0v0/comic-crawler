@@ -353,14 +353,16 @@ export type BrowserCommand =
   | { type: 'page.get-url' }
   | { type: 'page.get-content' }
   | { type: 'page.wait-for-ready'; timeoutMs?: number }
-  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number }
+  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number;
+      reader?: { containerSelector?: string; pageSelector?: string; endSelector?: string } }
   | { type: 'page.focus' };
 ```
 
 Session open 與 close 使用 control message，不混入 page command。
 
-`page.prepare-content` 是固定語意操作：依序捲動頁面以觸發 lazy
-content，保留虛擬化 reader 已載入的 URL，再回到原位置。保留值使用
+`page.prepare-content` 是固定語意操作：在 adapter 宣告的 reader 範圍
+依序捲動 page 元素。只有找不到 page 時才執行有界 fallback。完成後會
+還原 window 與巢狀容器位置。保留值使用
 `data-comiccrawler-src` 與 `data-comiccrawler-image-url` DOM 註記。Protocol
 不提供 `evaluate`、`click`、`fill`、download 或任意 script。
 

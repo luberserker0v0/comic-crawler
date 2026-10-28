@@ -18,21 +18,23 @@ Provider configuration and credentials remain outside task artifacts.
 
 ## Capability pipeline
 
-1. `common-verification`: URL matching and challenge handoff.
-2. `metadata`: metadata and chapter catalog for full adapters.
-3. `chapter-images`: ordered comic page image URLs.
-4. System compose: ComicCrawler builds the final `AdapterBase` shell.
+1. `common-verification`: URL matching and challenge detection.
+2. `metadata`: title and chapter catalog for full adapters.
+3. `reader-preparation`: reader container, page, and optional end selectors.
+4. `chapter-images`: ordered comic page image URLs.
+5. System compose: ComicCrawler builds the final `AdapterBase` shell.
 
 AO writes only the requested capability subclass and Markdown review notes.
-Exact interfaces are defined in
-`agent/ao/selector-discovery/draft/contracts/adapter-base-api.md`.
+Each AO message contains only the current stage contract and output paths.
+Retry messages contain current validation errors only; they do not append an
+iteration history.
 
 ## Browser boundary
 
-Browser Client navigates, waits, and runs bounded `scroll-through` content
-preparation before ComicCrawler captures the DOM. AO and adapter capabilities
-receive a Cheerio snapshot and perform pure extraction; they cannot click,
-scroll, navigate, fetch, or use browser globals.
+The adapter supplies reader boundary selectors. Browser Client owns bounded
+`scroll-through`, lazy-content waiting, URL preservation, and scroll
+restoration. Image extraction receives the prepared Cheerio snapshot and does
+not perform browser actions.
 
 Virtualized reader URLs may be preserved in `data-comiccrawler-src` or
 `data-comiccrawler-image-url` attributes in that snapshot.

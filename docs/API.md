@@ -600,6 +600,10 @@ whether it expects a manga or chapter URL. `extractChapterImageUrls`
 returns the full `imageUrls` list plus `imageUrlCount`; it does not return a
 shortened `firstImageUrls` preview. Test responses may include timing breakdown
 entries such as `dom_acquisition`, `extraction`, and `readiness`.
+Reader preparation is separately testable through
+`getReaderContainerSelector`, `getReaderPageSelector`, and
+`getReaderEndSelector`. These functions return selectors; they do not scroll or
+extract images.
 Browser-backed test and chapter-image requests may use the same
 `browserTarget` object as crawl tasks. The Server owns and releases their
 short-lived browser lease when the request finishes.

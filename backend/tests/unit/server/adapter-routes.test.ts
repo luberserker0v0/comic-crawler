@@ -143,18 +143,17 @@ async function managedCatalogFixture(storage: IStorage, selector = 'img.page') {
 }
 
 function catalogAdapterSource(selector: string): string {
-  return `import { AdapterBase, CommonCapability, VerificationCapability, ChapterImagesCapability } from '../../base'; export class DynamicDemoAdapter extends AdapterBase {
+  return `import { AdapterBase, CommonCapability, VerificationCapability, ReaderPreparationCapability, ChapterImagesCapability } from '../../base'; export class DynamicDemoAdapter extends AdapterBase {
   readonly id = 'dynamic-demo'; readonly name = 'Dynamic Demo'; readonly domains = ['demo.invalid'];
   readonly parseMode = 'playwright' as const;
   readonly capabilities = { verification: true, metadata: false, chapterImages: true };
   readonly common = new DemoCommon(this); readonly verification = new DemoVerification(this);
-  readonly chapterImages = new DemoImages(this);
+  readonly readerPreparation = new DemoReader(this); readonly chapterImages = new DemoImages(this);
 }
 class DemoCommon extends CommonCapability { matchUrl(url: string): boolean { return url.includes('demo.invalid'); } }
-class DemoVerification extends VerificationCapability {
-  detectVerificationRequired(_input: string): boolean { return false; }
-  describeVerificationHandoff(): Record<string, unknown> { return { supported: false }; }
-}
+class DemoVerification extends VerificationCapability { detectVerificationRequired(_input: string): boolean { return false; } }
+class DemoReader extends ReaderPreparationCapability { getReaderContainerSelector(): string { return 'main'; }
+  getReaderPageSelector(): string { return 'img.page'; } }
 class DemoImages extends ChapterImagesCapability {
   extractChapterImageUrls(document: unknown, sourceUrl: string): string[] {
     const $ = this.adapter.asCheerio(document); void sourceUrl; return $('${selector}')
@@ -243,7 +242,7 @@ async function AdapterRoutesTestUsesAttachedRendererWhileTestingVerification() {
   expect(response.json().data).toMatchObject({ ok: true, status: 'passed',
     resultSummary: { verificationRequired: false, source: 'fetched-html' } });
   expect(response.json().data.resultSummary).not.toHaveProperty('error');
-  expect(htmlRenderer.render).toHaveBeenCalledWith('https://example.com/read/1');
+  expect(htmlRenderer.render).toHaveBeenCalledWith('https://example.com/read/1', { reader: undefined });
   await app.close();
 }
 

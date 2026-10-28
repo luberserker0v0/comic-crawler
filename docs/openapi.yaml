@@ -1694,7 +1694,7 @@ components:
           type: string
         resultSummary:
           type: object
-          description: For extractChapterImageUrls, includes imageUrlCount and the full imageUrls array.
+          description: For extractChapterImageUrls, includes imageUrlCount and the full imageUrls array. Reader-preparation functions return selector.
         error:
           type: string
         errorCode:

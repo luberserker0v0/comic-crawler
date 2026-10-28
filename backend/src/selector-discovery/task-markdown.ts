@@ -84,12 +84,14 @@ export function createCapabilityPipelineMarkdown(input: {
   const metadataStage = input.target === 'full'
     ? '3. MetadataCapability: metadata plus the complete catalog in the supplied DOM.'
     : '3. MetadataCapability: skipped.';
-  const chapterStageNumber = input.target === 'full' ? '4' : '3';
+  const readerStageNumber = input.target === 'full' ? '4' : '3';
+  const chapterStageNumber = input.target === 'full' ? '5' : '4';
   return `## Capability Pipeline
 
 1. CommonCapability: supported URL matching.
-2. VerificationCapability: challenge detection and human handoff.
+2. VerificationCapability: challenge detection.
 ${metadataStage}
+${readerStageNumber}. ReaderPreparationCapability: reader boundary selectors.
 ${chapterStageNumber}. ChapterImagesCapability: every comic page URL in the supplied reader DOM.
 
 Browser preparation and readiness checks happen before extraction. Capability
@@ -178,23 +180,18 @@ function chapterFetchSummary(fetch: SafeHtmlFetchResult): string {
 
 function adapterImplementationContract(mode: 'create' | 'augment', target: 'full' | 'chapter-only' = 'full'): string {
   const metadataRequirement = target === 'chapter-only'
-    ? '- Do not declare metadata capability unless metadata functions are actually implemented.'
-    : '- Implement metadata extraction: extractTitle, extractAuthor, extractDescription, extractCoverUrl, extractTags, extractStatus, and extractChapterList.';
+    ? '- Do not implement metadata.'
+    : '- Metadata requires title and chapter list. Add optional fields only with clear DOM evidence.';
   return `## Capability Implementation Contract
 
-- Follow \`contracts/adapter-base-api.md\` and \`contracts/capability-pipeline.md\`.
 - Output only the requested site-specific capability subclass and review notes.
-- ComicCrawler assembles the AdapterBase shell; do not declare its identity,
-  wiring, constructor, or capability flags.
-- Common matches URLs. Verification detects challenges and describes handoff;
-  it never bypasses CAPTCHA.
+- ComicCrawler assembles the AdapterBase shell.
+- Common matches URLs. Verification detects challenges. It never bypasses CAPTCHA.
 ${metadataRequirement}
-- Chapter images use \`extractChapterImageUrls\`.
-- Extraction methods accept \`(document: unknown, sourceUrl: string)\` and use
-  \`this.adapter.asCheerio(document)\`.
-- Browser preparation is upstream. Capability code must not click, scroll,
-  navigate, fetch, or use side-effect APIs.
-- Promotion mode: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id and add missing capability code.' : 'Create a new adapter implementation draft.'}
+- Reader preparation returns container and page selectors only.
+- Chapter images extract ordered image URLs only.
+- Do not click, scroll, navigate, or fetch inside adapter code.
+- Promotion: ${mode}. ${mode === 'augment' ? 'Keep the existing adapter id.' : 'Create a new adapter.'}
 `;
 }
 

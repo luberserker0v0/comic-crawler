@@ -5,6 +5,7 @@ import {
   FreshProfileProvisioner,
   PlaywrightManagedProfileLauncher,
   PlaywrightPageDriver,
+  prepareScrollableContent,
   type PlaywrightPageLike,
   type ProfileDirectoryAccess,
 } from '../src';
@@ -14,6 +15,7 @@ class FakePage implements PlaywrightPageLike {
   focused = false;
   candidateChecks = 0;
   preparedCandidates: number[] = [];
+  bottomSteps = 0;
 
   url(): string { return this.current; }
   async goto(url: string): Promise<void> { this.current = url; }
@@ -27,7 +29,11 @@ class FakePage implements PlaywrightPageLike {
     if (pageFunction.name === 'scrollPreparationCandidate') {
       this.preparedCandidates.push((_argument as { index: number }).index);
     }
-    if (pageFunction.name === 'scrollPreparationBottomStep') return true as R;
+    if (pageFunction.name === 'scrollPreparationBottomStep') {
+      this.bottomSteps += 1;
+      return { done: false, height: 1000, position: 1000, bottom: 1000 } as R;
+    }
+    if (pageFunction.name === 'recordScrollPreparationBottomStep') return true as R;
     return undefined as R;
   }
   async bringToFront(): Promise<void> { this.focused = true; }
@@ -100,10 +106,36 @@ test('PlaywrightPageDriver maps semantic page commands', async () => {
 
   assert.equal(await driver.navigate(page, 'https://example.test/chapter', signal), 'https://example.test/chapter');
   assert.equal(await driver.content(page, signal), '<main>chapter</main>');
-  await driver.prepareContent(page, 'scroll-through', 1_000, signal);
+  await driver.prepareContent(page, 'scroll-through', 1_000, undefined, signal);
   await driver.focus(page, signal);
   assert.equal(page.focused, true);
   assert.deepEqual(page.preparedCandidates, [0, 1, 2]);
+  assert.equal(page.bottomSteps, 0);
+});
+
+test('content preparation uses bounded fallback only when reader pages are absent', async () => {
+  const calls: string[] = [];
+  const execute = async <Argument, Result>(
+    script: (argument: Argument) => Result | Promise<Result>, _argument: Argument
+  ): Promise<Result> => {
+    calls.push(script.name);
+    if (script.name === 'countScrollPreparationCandidates') return 0 as Result;
+    if (script.name === 'scrollPreparationBottomStep')
+      return { done: false, height: 1000, position: 1000, bottom: 1000 } as Result;
+    if (script.name === 'recordScrollPreparationBottomStep') return true as Result;
+    return undefined as Result;
+  };
+  await prepareScrollableContent(execute, 1_000);
+  assert.equal(calls.filter((name) => name === 'scrollPreparationBottomStep').length, 1);
+});
+
+test('content preparation rejects an explicit reader page selector with no matches', async () => {
+  const execute = async <Argument, Result>(
+    script: (argument: Argument) => Result | Promise<Result>, _argument: Argument
+  ): Promise<Result> => (script.name === 'countScrollPreparationCandidates' ? 0 : undefined) as Result;
+  await assert.rejects(() => prepareScrollableContent(execute, 1_000, {
+    containerSelector: '.reader', pageSelector: '.page',
+  }), /Reader page selector did not match/);
 });
 
 test('CopyProfileProvisioner applies the fixed cache and lock exclusions', async () => {

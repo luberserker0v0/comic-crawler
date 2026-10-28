@@ -10,7 +10,11 @@ reviewed classes into the final AdapterBase shell.
    - Implement one `MetadataCapability` subclass.
    - Extract metadata and the complete chapter catalog in the supplied DOM.
    - Use `contracts/metadata-template.ts`; replace all placeholder selectors.
-3. `chapter-images`
+3. `reader-preparation`
+   - Implement one `ReaderPreparationCapability` subclass.
+   - Return the reader container and page selectors.
+   - Do not implement browser behavior.
+4. `chapter-images`
    - Implement one `ChapterImagesCapability` subclass.
    - Extract every comic page URL in the supplied reader DOM.
 4. System compose
@@ -32,6 +36,8 @@ reviewed classes into the final AdapterBase shell.
 - `outputs/common-verification-review.md`
 - `outputs/metadata-capability.ts`
 - `outputs/metadata-review.md`
+- `outputs/reader-preparation.ts`
+- `outputs/reader-preparation-review.md`
 - `outputs/chapter-images-capability.ts`
 - `outputs/chapter-images-review.md`
 - `outputs/review-notes.md`

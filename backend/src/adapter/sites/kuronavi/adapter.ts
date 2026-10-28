@@ -1,5 +1,6 @@
 import type { ChapterInfo, ComicMetadata, ComicStatus } from '@comiccrawler/shared';
-import { AdapterBase, ChapterImagesCapability, CommonCapability, MetadataCapability } from '../../base';
+import { AdapterBase, ChapterImagesCapability, CommonCapability, MetadataCapability,
+  ReaderPreparationCapability } from '../../base';
 import { KURONAVI_SELECTORS } from './selectors';
 import { createDefaultExtractionOrchestrator } from '../../../crawler/extraction';
 import type { ExtractionContext } from '../../../crawler/extraction';
@@ -13,12 +14,22 @@ export class KuronaviAdapter extends AdapterBase {
   readonly domains = ['kuronavi.one'];
   readonly common: KuronaviCommonCapability = new KuronaviCommonCapability(this);
   readonly metadata: KuronaviMetadataCapability = new KuronaviMetadataCapability(this);
+  readonly readerPreparation: KuronaviReaderPreparationCapability = new KuronaviReaderPreparationCapability(this);
   readonly chapterImages: KuronaviChapterImagesCapability = new KuronaviChapterImagesCapability(this);
 }
 
 class KuronaviCommonCapability extends CommonCapability {
   matchUrl(url: string): boolean {
     return /^https?:\/\/(www\.)?kuronavi\.one\/manga\//.test(url);
+  }
+}
+
+class KuronaviReaderPreparationCapability extends ReaderPreparationCapability {
+  getReaderContainerSelector(sourceUrl: string): string | undefined {
+    return /\/chapter-/i.test(new URL(sourceUrl).pathname) ? KURONAVI_SELECTORS.images.container : undefined;
+  }
+  getReaderPageSelector(sourceUrl: string): string | undefined {
+    return /\/chapter-/i.test(new URL(sourceUrl).pathname) ? KURONAVI_SELECTORS.images.item : undefined;
   }
 }
 

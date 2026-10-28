@@ -17,11 +17,19 @@ function ComixAdapterTestGroup1(): void {
   it('matches only Comix chapter URLs', ComixAdapterTestMatchesOnlyComixChapterURLs);
   it('declares chapter-image and human-verification capabilities only', ComixAdapterTestDeclaresChapterImageAndHumanVerificationCapabilitiesOnly);
   it('detects the Comix Cloudflare verification page', ComixAdapterTestDetectsTheComixCloudflareVerificationPage);
+  it('declares the Comix reader boundary separately from image extraction', ComixAdapterTestDeclaresReaderBoundary);
   it('prefers a usable reader DOM over passive Cloudflare script references', ComixAdapterTestPrefersAUsableReaderDOMOverPassiveCloudflareScriptReferences);
   it('extracts the complete ordered reader image list without requiring file extensions', ComixAdapterTestExtractsTheCompleteOrderedReaderImageListWithoutRequiringFileExtensions);
   it('rejects a partially lazy-loaded chapter instead of returning an incomplete URL list', ComixAdapterTestRejectsAPartiallyLazyLoadedChapterInsteadOfReturningAnIncompleteURLList);
   it('extracts Browser Client image annotations left by virtualized reader pages', ComixAdapterTestExtractsBrowserClientImageAnnotationsLeftByVirtualizedReaderPages);
   it('loads as a portable catalog implementation', ComixAdapterTestLoadsAsAPortableCatalogImplementation);
+}
+
+function ComixAdapterTestDeclaresReaderBoundary() {
+    expect(adapter.readerPreparation.getReaderContainerSelector(CHAPTER_URL)).toBe('.rpage-main');
+    expect(adapter.readerPreparation.getReaderPageSelector(CHAPTER_URL))
+      .toBe('.rpage-main__inner .rpage-page[data-page]');
+    expect(adapter.readerPreparation.getReaderEndSelector(CHAPTER_URL)).toBeUndefined();
 }
 
 async function ComixAdapterTestLoadsAsAPortableCatalogImplementation() {
@@ -60,15 +68,17 @@ function ComixAdapterTestPrefersAUsableReaderDOMOverPassiveCloudflareScriptRefer
 }
 
 async function ComixAdapterTestExtractsTheCompleteOrderedReaderImageListWithoutRequiringFileExtensions() {
-    adapter.setHtmlRenderer({
-        render: async () => FIXTURE,
-        dispose: async () => undefined,
-    });
+    const render = jest.fn(async () => FIXTURE);
+    adapter.setHtmlRenderer({ render, dispose: async () => undefined });
     await expect(composeChapterImages(adapter, CHAPTER_URL)).resolves.toEqual([
         { index: 0, filename: '001.jpg', url: 'https://447.reader-one.site/hi/page-one-token' },
         { index: 1, filename: '002.jpg', url: 'https://447.reader-two.site/hi/page-two-token' },
         { index: 2, filename: '003.jpg', url: 'https://447.reader-three.site/hi/page-three-token' },
     ]);
+    expect(render).toHaveBeenCalledWith(CHAPTER_URL, { reader: {
+        containerSelector: '.rpage-main', pageSelector: '.rpage-main__inner .rpage-page[data-page]',
+        endSelector: undefined,
+    } });
 }
 
 async function ComixAdapterTestRejectsAPartiallyLazyLoadedChapterInsteadOfReturningAnIncompleteURLList() {
