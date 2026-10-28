@@ -53,8 +53,8 @@
 44. List only the requesting user's process-scoped browser resources.
 45. Select only idle Browser targets registered for the exact test URL.
 46. Forward adapter reader selectors to `page.prepare-content`.
-47. Skip document-bottom fallback after reader pages are found.
-48. Bound fallback when no reader pages are found.
+47. Stop before infinite page content after dynamic reader pages stabilize.
+48. Stop fallback after 60 growing-document steps.
 49. Reject explicit reader selectors that match no pages.
 50. Keep AO stage prompts isolated and free of retry history.
 51. Abort running scheduler work when a task is cancelled.
@@ -63,6 +63,7 @@
 54. Cancel retained challenge leases with waiting-verification tasks.
 55. Abort direct chapter-image extraction after an HTTP disconnect.
 56. Restore reader positions before releasing a cancelled browser session.
+57. Restore window and nested positions after successful preparation.
 
 ### Integration tests
 
@@ -166,6 +167,7 @@
 | `backend/tests/integration/chapter-images-request-cancellation.test.ts` | BC-26 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
 | `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21, BC-26 |
+| `browser-client-sdk/tests/content-preparation.test.ts` | BC-25 |
 | `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16 |
 | `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-16, BC-22, BC-26 |
 | `frontend/tests/unit/pages/browser-target-options.test.ts` | BC-23 |
