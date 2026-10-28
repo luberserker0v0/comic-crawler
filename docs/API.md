@@ -190,6 +190,19 @@ The handoff keeps the authenticated owner, normalized URL, and exact
 verification, then submit the chapter-images request again with the same
 `challengeDiscoveryId`. Do not create a second handoff for the retry.
 
+Browser-backed request outcomes are distinct:
+
+| Outcome | API behavior | Browser behavior |
+| --- | --- | --- |
+| Success | Returns the complete image list. | Preparation finishes and positions are restored. |
+| Caller disconnect | No response can be delivered. | The active command is cancelled and the lease is released. |
+| Command timeout | Returns the normal extraction failure response. | Server sends `command.cancel` before cleanup. |
+| Worker disconnect | Returns a browser transport failure. | The session is removed or follows task reconnect policy. |
+
+Aborting the caller's `fetch` therefore stops Browser Client preparation. A
+replacement request is not admitted through the adapter lock until cancelled
+preparation has restored its scroll positions.
+
 Identity guarantees:
 
 1. `chapter.id` is scoped to `adapterId`.
@@ -579,7 +592,7 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/api/tasks/priority-order` | Read forced task order. |
 | `PUT` | `/api/tasks/priority-order` | Replace forced task order. |
 | `POST` | `/api/tasks/:id/pause` | Pause a running task when supported. |
-| `POST` | `/api/tasks/:id/cancel` | Cancel a task. |
+| `POST` | `/api/tasks/:id/cancel` | Abort task work, active browser commands, downloads, and retained verification handoff. |
 | `DELETE` | `/api/tasks/:id` | Delete terminal or waiting-verification tasks. |
 | `GET` | `/api/config` | Read global config. |
 | `PUT` | `/api/config` | Update global config. |

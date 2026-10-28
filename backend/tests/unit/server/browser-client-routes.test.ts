@@ -1,5 +1,6 @@
 import fastify, { type FastifyInstance } from 'fastify';
-import type { BrowserCapabilities } from '@comiccrawler/browser-client-sdk';
+import { BROWSER_CLIENT_PROTOCOL_VERSION,
+  type BrowserCapabilities } from '@comiccrawler/browser-client-sdk';
 import { BrowserClientRegistry } from '../../../src/browser/browser-client-registry';
 import { BrowserSessionGateway } from '../../../src/browser/browser-session-gateway';
 import { ApiSecurityService } from '../../../src/security/api-security';
@@ -60,7 +61,8 @@ async function browserClientRoutesTestDiscoversEnrollsListsRotatesAndRevokesABro
 }
 
 function expectDiscovery(data: unknown): void {
-  expect(data).toEqual({ protocolVersion: 2, apiSecurityMode: 'public', endpoints: {
+  expect(data).toEqual({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+    apiSecurityMode: 'public', endpoints: {
     enroll: '/api/browser-clients/enroll', controlWebSocket: '/api/browser-clients/connect',
   } });
 }

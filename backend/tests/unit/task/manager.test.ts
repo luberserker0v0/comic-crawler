@@ -5,6 +5,7 @@ import { EventBus } from '../../../src/events/bus';
 import { JsonFileStore } from '../../../src/storage/json-store';
 import { TaskManager } from '../../../src/task/manager';
 import { createEmptyCheckpoint } from '../../../src/task/checkpoint';
+import { ComicError, ErrorType } from '../../../src/error/types';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'manager');
 
@@ -71,6 +72,8 @@ function TaskManagerPersistenceTestGroup1(): void {
   it('should requeue unfinished resumable tasks from checkpoint on restart', TaskManagerPersistenceTestShouldRequeueUnfinishedResumableTasksFromCheckpointOnRestart);
   it('should allow interrupted tasks to be resumed', TaskManagerPersistenceTestShouldAllowInterruptedTasksToBeResumed);
   it('should allow completed tasks with resumable checkpoints to be resumed', TaskManagerPersistenceTestShouldAllowCompletedTasksWithResumableCheckpointsToBeResumed);
+  it('aborts running work and preserves cancelled status', TaskManagerPersistenceTestAbortsRunningWork);
+  it('cancels the retained verification challenge', TaskManagerPersistenceTestCancelsVerificationChallenge);
 }
 
 async function TaskManagerPersistenceTestScenario1() {
@@ -117,6 +120,33 @@ async function TaskManagerPersistenceTestShouldPersistCreatedTaskRecords() {
     await flushAsyncWork();
 }
 
+async function TaskManagerPersistenceTestAbortsRunningWork() {
+  let aborted = false;
+  const manager = await createManager(async (_task, signal) => new Promise<void>((resolve) =>
+    signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true })));
+  await manager.createTask(taskInput('task-cancel-running'));
+  await flushAsyncWork();
+  expect(await manager.cancelTask('task-cancel-running')).toBe(true);
+  await flushAsyncWork();
+  expect(aborted).toBe(true);
+  expect(manager.getTask('task-cancel-running')?.status).toBe('cancelled');
+}
+
+async function TaskManagerPersistenceTestCancelsVerificationChallenge() {
+  const cancelled: string[] = [];
+  const error = new ComicError('Verification required.', ErrorType.AUTH_ERROR, false,
+    { antiBotChallenge: true, challengeDiscoveryId: 'challenge-1', challengeStatus: 'ready' });
+  const manager = new TaskManager(async () => { throw error; }, { eventBus, storage,
+    cancelChallenge: async (id) => { cancelled.push(id); } });
+  managers.push(manager);
+  await manager.initialize();
+  await manager.createTask(taskInput('task-cancel-verification'));
+  await waitForPersistedRecord(storage, 'task-cancel-verification',
+    (record) => record.task.status === 'waiting_verification');
+  expect(await manager.cancelTask('task-cancel-verification')).toBe(true);
+  expect(cancelled).toEqual(['challenge-1']);
+}
+
 async function TaskManagerPersistenceTestPersistsTheStableBrowserWorkerTargetInsteadOfATransientSession() {
     const blocked = await createBlockedManager();
     const manager = blocked.manager;
@@ -146,7 +176,9 @@ async function TaskManagerPersistenceTestShouldPersistProgressSnapshotsAndComple
     expectPersistedProgress(persisted);
 }
 
-async function createManager(executor: () => Promise<void> = async () => {}): Promise<TaskManager> {
+async function createManager(
+  executor: ConstructorParameters<typeof TaskManager>[0] = async () => {}
+): Promise<TaskManager> {
   const manager = new TaskManager(executor, { eventBus, storage });
   managers.push(manager);
   await manager.initialize();

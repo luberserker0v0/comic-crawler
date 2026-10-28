@@ -11,6 +11,7 @@ import {
   type BrowserClientState,
   type BrowserClientToServerMessage,
   type BrowserCommandEnvelope,
+  type BrowserCommandResult,
   type BrowserExecutor,
   type BrowserResourceDescriptor,
   type BrowserResourceRegistration,
@@ -44,6 +45,7 @@ interface ActiveSession {
   leaseId: string;
   session: BrowserSession;
   abortController: AbortController;
+  commandControllers: Map<string, AbortController>;
   commandTail: Promise<void>;
 }
 
@@ -302,6 +304,9 @@ export class BrowserClient {
       case 'command.execute':
         this.queueCommand(message);
         break;
+      case 'command.cancel':
+        this.cancelCommand(message);
+        break;
     }
   }
 
@@ -323,7 +328,8 @@ export class BrowserClient {
     const abortController = new AbortController();
     try {
       const session = await this.options.executor.openSession(message.request, abortController.signal);
-      this.activateSession({ sessionId, leaseId, session, abortController, commandTail: Promise.resolve() });
+      this.activateSession({ sessionId, leaseId, session, abortController,
+        commandControllers: new Map(), commandTail: Promise.resolve() });
     } catch (error) {
       this.sendSessionFailure(sessionId, leaseId, error);
     }
@@ -381,9 +387,17 @@ export class BrowserClient {
       this.sendCommandError(message, new BrowserClientError('Command does not match the active lease and session.', 'LEASE_MISMATCH'));
       return;
     }
+    active.commandControllers.set(message.requestId, new AbortController());
     active.commandTail = active.commandTail
       .then(() => this.executeCommand(active, message))
       .catch(() => undefined);
+  }
+
+  private cancelCommand(message: Extract<BrowserServerToClientMessage, { type: 'command.cancel' }>): void {
+    const active = this.activeSession;
+    if (!active || active.sessionId !== message.sessionId || active.leaseId !== message.leaseId) return;
+    active.commandControllers.get(message.requestId)?.abort(new DOMException(
+      'Browser command was cancelled.', 'AbortError'));
   }
 
   private async executeCommand(active: ActiveSession, message: BrowserCommandEnvelope): Promise<void> {
@@ -391,18 +405,23 @@ export class BrowserClient {
       this.sendCommandError(message, new BrowserClientError('Browser session is closed.', 'INVALID_STATE'));
       return;
     }
+    const controller = active.commandControllers.get(message.requestId);
+    if (!controller) return;
     try {
-      const result = await active.session.execute(message.command, active.abortController.signal);
-      this.send({
-        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-        type: 'command.result',
-        requestId: message.requestId,
-        ok: true,
-        result,
-      });
+      const signal = AbortSignal.any([active.abortController.signal, controller.signal]);
+      signal.throwIfAborted();
+      const result = await active.session.execute(message.command, signal);
+      this.sendCommandSuccess(message.requestId, result);
     } catch (error) {
       this.sendCommandError(message, error);
+    } finally {
+      active.commandControllers.delete(message.requestId);
     }
+  }
+
+  private sendCommandSuccess(requestId: string, result: BrowserCommandResult): void {
+    this.send({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
+      type: 'command.result', requestId, ok: true, result });
   }
 
   private async closeSession(sessionId: string, leaseId: string): Promise<void> {
@@ -417,6 +436,7 @@ export class BrowserClient {
     if (!active) return;
     this.activeSession = undefined;
     active.abortController.abort();
+    await active.commandTail.catch(() => undefined);
     await active.session.close();
   }
 

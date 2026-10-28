@@ -1,4 +1,4 @@
-export { TaskDeferredError, TaskScheduler } from './task-scheduler';
+export { TaskCancelledError, TaskDeferredError, TaskScheduler } from './task-scheduler';
 export type { ScheduledTaskExecutor } from './task-scheduler';
 export {
   SchedulingPolicy,

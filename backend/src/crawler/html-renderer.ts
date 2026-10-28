@@ -17,7 +17,8 @@ export class GatewayHtmlRenderer implements HtmlRenderer {
   constructor(
     private readonly renderService: BrowserRenderService,
     private readonly getSessionId: () => string | undefined,
-    private readonly browser: BrowserConfig
+    private readonly browser: BrowserConfig,
+    private readonly getSignal: () => AbortSignal | undefined = () => undefined
   ) {}
 
   async render(url: string, options?: HtmlRenderOptions): Promise<string> {
@@ -31,6 +32,7 @@ export class GatewayHtmlRenderer implements HtmlRenderer {
       timeoutMs: this.browser.timeout,
       postLoadDelayMs: this.browser.postLoadDelayMs,
       reader: options?.reader,
+      signal: this.getSignal(),
     });
     assertNotAntiBotChallenge(page.html, page.url);
     return page.html;

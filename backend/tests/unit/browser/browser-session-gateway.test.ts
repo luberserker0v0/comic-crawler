@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import {
+  BROWSER_CLIENT_PROTOCOL_VERSION,
   BrowserClient,
   type BrowserCapabilities,
   type BrowserClientSocket,
@@ -66,8 +67,11 @@ class TestSession implements BrowserSession {
   private resolveTermination!: () => void;
   readonly terminated = new Promise<void>((resolve) => { this.resolveTermination = resolve; });
   private url = 'about:blank';
+  private blockNext = false;
+  private blockedStarted?: () => void;
 
-  async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
+  async execute(command: BrowserCommand, signal?: AbortSignal): Promise<BrowserCommandResult> {
+    if (this.blockNext) return this.executeBlocked(signal);
     if (command.type === 'page.navigate') {
       this.url = command.url;
       return { type: command.type, url: this.url };
@@ -83,6 +87,16 @@ class TestSession implements BrowserSession {
   }
   terminate(): void {
     this.resolveTermination();
+  }
+  waitForBlockedCommand(): Promise<void> {
+    this.blockNext = true;
+    return new Promise((resolve) => { this.blockedStarted = resolve; });
+  }
+  private executeBlocked(signal?: AbortSignal): Promise<BrowserCommandResult> {
+    this.blockNext = false;
+    this.blockedStarted?.();
+    return new Promise((_resolve, reject) => signal?.addEventListener(
+      'abort', () => reject(signal.reason), { once: true }));
   }
 }
 
@@ -183,7 +197,7 @@ function clientState(serverUrl: string, enrollment: Enrollment): BrowserClientSt
     registeredAt: enrollment.registeredAt };
 }
 
-const DISCOVERY_RESPONSE = { protocolVersion: 2 as const, apiSecurityMode: 'public' as const,
+const DISCOVERY_RESPONSE = { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, apiSecurityMode: 'public' as const,
   endpoints: { enroll: '/api/browser-clients/enroll',
     controlWebSocket: '/api/browser-clients/connect' } };
 
@@ -225,6 +239,8 @@ async function expectSessionBehavior(executor: TestExecutor, workerId: string,
     ]);
     await expect(openResourceSession(workerId, resourceId, 'lease-2')).rejects.toThrow('is busy');
     await expectSessionCommands(sessionId);
+    await expectCommandCancellation(executor.session, sessionId);
+    await expectCommandTimeoutCancellation(executor.session, sessionId);
     await expect(client!.revokeResource(resourceId)).rejects.toThrow('is in use');
     expect(gateway.getWorker(workerId)).toMatchObject({ online: true });
     await gateway.closeSession(sessionId);
@@ -248,6 +264,28 @@ async function expectSessionCommands(sessionId: string): Promise<void> {
     });
 }
 
+async function expectCommandCancellation(session: TestSession, sessionId: string): Promise<void> {
+  const started = session.waitForBlockedCommand();
+  const controller = new AbortController();
+  const command = gateway.execute(sessionId, { type: 'page.get-content' }, 1_000, controller.signal);
+  await started;
+  controller.abort(new Error('Task cancelled.'));
+  await expect(command).rejects.toMatchObject({ name: 'CANCELLED' });
+  await expect(gateway.execute(sessionId, { type: 'page.get-url' })).resolves.toMatchObject({
+    type: 'page.get-url', url: 'https://example.test/chapter',
+  });
+}
+
+async function expectCommandTimeoutCancellation(session: TestSession, sessionId: string): Promise<void> {
+  const started = session.waitForBlockedCommand();
+  const command = gateway.execute(sessionId, { type: 'page.get-content' }, 20);
+  await started;
+  await expect(command).rejects.toThrow('timed out');
+  await expect(gateway.execute(sessionId, { type: 'page.get-url' })).resolves.toMatchObject({
+    type: 'page.get-url', url: 'https://example.test/chapter',
+  });
+}
+
 async function expectUrlMismatch(workerId: string, resourceId: string): Promise<void> {
     await expect(gateway.openSession({ workerId, leaseId: 'lease-url-mismatch', source: {
       type: 'existing-resource', resourceId, expectedUrl: 'https://example.test/another-chapter',
@@ -269,7 +307,7 @@ async function BrowserSessionGatewayTestRejectsAnInvalidClientCredentialBeforeRe
     sendInvalidAuthentication(socket, enrollment.clientId);
     const [data] = await once(socket, 'message');
     expect(JSON.parse(data.toString())).toEqual({
-        protocolVersion: 2,
+        protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
         type: 'client.rejected',
         reason: 'Browser Client credential is invalid.',
     });
@@ -278,7 +316,7 @@ async function BrowserSessionGatewayTestRejectsAnInvalidClientCredentialBeforeRe
 }
 
 function sendInvalidAuthentication(socket: WebSocket, clientId: string): void {
-  socket.send(JSON.stringify({ protocolVersion: 2, type: 'client.authenticate', clientId,
+  socket.send(JSON.stringify({ protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'client.authenticate', clientId,
     credential: 'invalid', processInstanceId: 'bad-process', capabilities }));
 }
 

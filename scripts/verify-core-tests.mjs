@@ -11,6 +11,7 @@ const coreBackendTests = [
   'tests/unit/crawler/image-downloader.test.ts',
   'tests/unit/crawler/anti-bot.test.ts',
   'tests/unit/server/browser-client-routes.test.ts',
+  'tests/unit/server/request-cancellation.test.ts',
   'tests/unit/browser/browser-client-registry.test.ts',
   'tests/unit/browser/browser-session-gateway.test.ts',
   'tests/unit/browser/browser-worker-lease-coordinator.test.ts',

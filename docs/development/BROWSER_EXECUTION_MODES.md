@@ -4,7 +4,7 @@
 
 本文件定義 Browser Client execution mode 的 production 契約。
 
-- Runtime 使用 Version 2 protocol。
+- Runtime 使用 Version 3 protocol。
 - Server 不支援 Version 1 相容層。
 - SDK、Gateway、task target 與 page acquisition 已採用本契約。
 - 同一 SDK package 已提供通用 existing-tab contract、Playwright driver/launcher

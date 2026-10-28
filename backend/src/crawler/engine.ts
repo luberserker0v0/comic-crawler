@@ -54,10 +54,12 @@ interface CrawlOptions {
   checkpoint?: CrawlCheckpoint;
   onCheckpoint?: (checkpoint: CrawlCheckpoint) => Promise<void> | void;
   browserSessionId?: string;
+  signal?: AbortSignal;
 }
 
 interface CrawlBrowserContext {
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 interface CrawlExecutionContext {
@@ -90,23 +92,31 @@ export class CrawlerEngine {
       timeout: 30000, workerWaitTimeoutMs: 30 * 60 * 1000, postLoadDelayMs: 0,
     };
     this.htmlRenderer = options.browserRenderService ? new GatewayHtmlRenderer(
-      options.browserRenderService, () => this.browserContext.getStore()?.sessionId, this.browserConfig)
+      options.browserRenderService, () => this.browserContext.getStore()?.sessionId,
+      this.browserConfig, () => this.browserContext.getStore()?.signal)
       : missingHtmlRenderer();
   }
 
   async crawl(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
     return this.browserContext.run(
-      { sessionId: options?.browserSessionId },
+      { sessionId: options?.browserSessionId, signal: options?.signal },
       () => this.crawlWithBrowserContext(adapter, url, options)
     );
   }
 
   private async crawlWithBrowserContext(adapter: AdapterBase, url: string, options?: CrawlOptions): Promise<CrawlResult> {
+    options?.signal?.throwIfAborted();
     const context = await this.initializeCrawl(adapter, url, options);
-    for (const chapter of context.chapters) await this.prepareChapter(context, chapter);
+    for (const chapter of context.chapters) {
+      context.options?.signal?.throwIfAborted();
+      await this.prepareChapter(context, chapter);
+    }
     this.emitDownloadReady(context);
     assertPreparedChapters(context);
-    for (const item of context.prepared) await this.downloadChapter(context, item);
+    for (const item of context.prepared) {
+      context.options?.signal?.throwIfAborted();
+      await this.downloadChapter(context, item);
+    }
     return this.finishCrawl(context);
   }
 
@@ -174,7 +184,10 @@ export class CrawlerEngine {
         : await this.composeChapterImages(context.adapter, chapter.url);
       requireChapterImages(context.adapter, chapter, images);
       await this.completeChapterPreparation(context, chapter, checkpoint, images);
-    } catch (error) { await this.failChapterPreparation(context, chapter, checkpoint, error); }
+    } catch (error) {
+      context.options?.signal?.throwIfAborted();
+      await this.failChapterPreparation(context, chapter, checkpoint, error);
+    }
   }
 
   private async completeChapterPreparation(
@@ -220,7 +233,10 @@ export class CrawlerEngine {
       await this.imageDownloader.downloadBatch(remaining, options);
       await Promise.allSettled(previews);
       await this.completeDownloadedChapter(context, item);
-    } catch (error) { await this.failChapterDownload(context, item, error); }
+    } catch (error) {
+      context.options?.signal?.throwIfAborted();
+      await this.failChapterDownload(context, item, error);
+    }
   }
 
   private createDownloadOptions(
@@ -228,6 +244,7 @@ export class CrawlerEngine {
     previews: Array<Promise<void>>
   ): DownloadOptions {
     return { outputDir: join(context.outputRoot, item.chapter.title), concurrency: this.concurrency,
+      signal: context.options?.signal,
       onProgress: (completed, _total, result, image) => this.handleDownloadProgress(
         context, item, image ?? remaining[completed - 1], result, previews) };
   }

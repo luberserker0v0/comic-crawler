@@ -11,6 +11,7 @@ function BrowserRenderServiceTestGroup1(): void {
   it('adopts a matching existing tab without navigating it', BrowserRenderServiceTestAdoptsAMatchingExistingTabWithoutNavigatingIt);
   it('rejects a result that does not match its command', BrowserRenderServiceTestRejectsAResultThatDoesNotMatchItsCommand);
   it('requires the task-bound session when used by the crawler', BrowserRenderServiceTestRequiresTheTaskBoundSessionWhenUsedByTheCrawler);
+  it('forwards request cancellation to every browser command', BrowserRenderServiceTestForwardsCancellation);
 }
 
 async function BrowserRenderServiceTestNavigatesWaitsAndReturnsRenderedDOMInProtocolOrder() {
@@ -94,4 +95,19 @@ async function BrowserRenderServiceTestRequiresTheTaskBoundSessionWhenUsedByTheC
         postLoadDelayMs: 0,
     });
     await expect(renderer.render('https://example.test/chapter')).rejects.toThrow('Browser Worker session is required');
+}
+
+async function BrowserRenderServiceTestForwardsCancellation() {
+  const controller = new AbortController();
+  const signals: Array<AbortSignal | undefined> = [];
+  const service = new BrowserRenderService({ execute: async (_id, command, _timeout, signal) => {
+    signals.push(signal);
+    if (command.type === 'page.get-content')
+      return { type: command.type, url: 'https://example.test/chapter', html: '<main />' };
+    if (command.type === 'page.focus') return { type: command.type };
+    return { type: command.type, url: 'https://example.test/chapter' };
+  } });
+  await service.render('session-1', 'https://example.test/chapter', { signal: controller.signal });
+  expect(signals).toHaveLength(4);
+  expect(signals.every((signal) => signal === controller.signal)).toBe(true);
 }

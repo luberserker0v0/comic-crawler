@@ -193,9 +193,17 @@ class E2eExistingTabDriver implements BrowserPageDriver<number> {
 
   private async wait(signal: AbortSignal): Promise<void> {
     assertE2eCommandActive(signal);
-    await this.blockedCommands;
+    await Promise.race([this.blockedCommands, e2eAbortPromise(signal)]);
     assertE2eCommandActive(signal);
   }
+}
+
+function e2eAbortPromise(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
 }
 
 function assertE2eCommandActive(signal: AbortSignal): void {
@@ -833,7 +841,7 @@ async function occupyRecoveryWorker(request: any, context: RecoveryContext): Pro
             url: context.chapterUrl, adapterId: 'browser-target-recovery-e2e',
             browserTarget: recoveryTarget(context.firstConnection, context.firstResource),
         },
-        timeout: 30000,
+        timeout: 0,
     });
     await expect.poll(async () => browserWorkerStatus(request, context.firstConnection.workerId)).toBe('busy');
 }

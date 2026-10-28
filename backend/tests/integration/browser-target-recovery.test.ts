@@ -1,6 +1,7 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import {
+  BROWSER_CLIENT_PROTOCOL_VERSION,
   BrowserClient,
   type BrowserCapabilities,
   type BrowserClientSocket,
@@ -70,7 +71,7 @@ function createClient(serverUrl: string, state: BrowserClientState, processInsta
     executor: new ExistingTabTestExecutor(),
     stateStore: new MemoryStateStore(state),
     fetch: async () => jsonResponse({
-      protocolVersion: 2,
+      protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
       apiSecurityMode: 'public',
       endpoints: {
         enroll: '/api/browser-clients/enroll',

@@ -321,6 +321,7 @@ async function TaskRoutesPersistenceTestShouldRejectDeletingActiveTasksThroughAp
         url: 'https://example.com/comic/2',
         adapterId: 'kuronavi',
     });
+    await waitForTaskStatus('task-2', 'completed');
     const activeTask = taskManager.getTask('task-2');
     if (activeTask) {
         activeTask.status = 'running';
@@ -332,6 +333,14 @@ async function TaskRoutesPersistenceTestShouldRejectDeletingActiveTasksThroughAp
         url: '/api/tasks/task-2',
     });
     expect(response.statusCode).toBe(400);
+}
+
+async function waitForTaskStatus(taskId: string, status: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (taskManager.getTask(taskId)?.status !== status) {
+    if (Date.now() >= deadline) throw new Error(`Task "${taskId}" did not reach ${status}.`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 async function TaskRoutesPersistenceTestShouldCreateAnAllChaptersTaskFromAMangaURL() {

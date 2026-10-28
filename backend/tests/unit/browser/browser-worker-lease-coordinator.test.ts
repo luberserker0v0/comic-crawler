@@ -89,6 +89,7 @@ function BrowserWorkerLeaseCoordinatorTestGroup1(): void {
   it('reopens a session on the same process after reconnect', BrowserWorkerLeaseCoordinatorTestReopensASessionOnTheSameProcessAfterReconnect);
   it('stops reconnect waiting when explicit recovery releases the old task lease', BrowserWorkerLeaseCoordinatorTestStopsReconnectWaitingWhenExplicitRecoveryReleasesTheOldTaskLease);
   it('releases an online Worker lease when its browser session is closed locally', BrowserWorkerLeaseCoordinatorTestReleasesLocallyClosedSession);
+  it('stops waiting for a Worker when the request is cancelled', BrowserWorkerLeaseCoordinatorTestStopsCancelledAcquire);
 }
 
 async function BrowserWorkerLeaseCoordinatorTestReservesOneWorkerPerTaskAndOwnsItsSessionLifecycle() {
@@ -104,6 +105,16 @@ async function BrowserWorkerLeaseCoordinatorTestReservesOneWorkerPerTaskAndOwnsI
     expect(gateway.closed).toEqual(['session-1']);
     expect(coordinator.listWorkers('alice')[0]).toMatchObject({ status: 'idle' });
     await coordinator.dispose();
+}
+
+async function BrowserWorkerLeaseCoordinatorTestStopsCancelledAcquire() {
+  const coordinator = new BrowserWorkerLeaseCoordinator(new FakeGateway([]));
+  const controller = new AbortController();
+  const acquire = coordinator.acquire({ taskId: 'task-cancel', ownerUserId: 'alice',
+    timeoutMs: 10_000, signal: controller.signal });
+  controller.abort(new DOMException('Request cancelled.', 'AbortError'));
+  await expect(acquire).rejects.toMatchObject({ name: 'AbortError' });
+  await coordinator.dispose();
 }
 
 function expectManagedSessionOpened(gateway: FakeGateway, leaseId: string): void {

@@ -6,26 +6,29 @@ export type BrowserScriptExecutor = <Argument, Result>(
 ) => Promise<Result>;
 
 export async function prepareScrollableContent(
-  execute: BrowserScriptExecutor, timeoutMs: number, reader: ReaderPreparationSelectors = {}
+  execute: BrowserScriptExecutor, timeoutMs: number, reader: ReaderPreparationSelectors = {},
+  signal?: AbortSignal
 ): Promise<void> {
+  signal?.throwIfAborted();
   const deadline = Date.now() + timeoutMs;
   await execute(initializeScrollPreparation, reader);
   await execute(captureScrollPreparationPositions, reader);
   try {
     await execute(captureLoadedImageUrls, reader);
-    const found = await prepareCandidates(execute, deadline, reader);
+    const found = await prepareCandidates(execute, deadline, reader, signal);
     if (!found && reader.pageSelector) throw new Error('Reader page selector did not match any elements.');
-    if (!found) await prepareDocumentBottom(execute, deadline, reader);
+    if (!found) await prepareDocumentBottom(execute, deadline, reader, signal);
   } finally {
     await finishPreparation(execute, reader);
   }
 }
 
 async function prepareCandidates(
-  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors
+  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors, signal?: AbortSignal
 ): Promise<boolean> {
   let index = 0, stableChecks = 0, found = false;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const count = await execute(countScrollPreparationCandidates, reader);
     found ||= count > 0;
     if (index >= count && preparationIsStable(count, stableChecks)) return found;
@@ -46,10 +49,12 @@ function preparationIsStable(candidateCount: number, stableChecks: number): bool
 }
 
 async function prepareDocumentBottom(
-  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors
+  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors,
+  signal?: AbortSignal
 ): Promise<void> {
   let done = false;
   while (!done && Date.now() < deadline) {
+    signal?.throwIfAborted();
     const step = await execute(scrollPreparationBottomStep, reader);
     done = step.done || await execute(recordScrollPreparationBottomStep, step);
     await execute(captureLoadedImageUrls, reader);

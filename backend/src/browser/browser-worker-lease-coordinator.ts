@@ -27,6 +27,7 @@ export interface AcquireBrowserWorkerLeaseRequest {
   renderContext?: BrowserRenderContext;
   timeoutMs?: number;
   onWaiting?: (message: string) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 export interface ValidateExistingTabRecoveryTargetRequest {
@@ -108,6 +109,7 @@ export class BrowserWorkerLeaseCoordinator {
   }
 
   async acquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease> {
+    request.signal?.throwIfAborted();
     const existing = this.leasesByTask.get(request.taskId);
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
@@ -121,13 +123,14 @@ export class BrowserWorkerLeaseCoordinator {
     target: BrowserTarget, deadline: number): Promise<BrowserWorkerLease> {
     let announcedWaiting = false;
     while (Date.now() < deadline) {
+      request.signal?.throwIfAborted();
       const lease = await this.tryReserveAndOpen(request, target, deadline);
       if (lease) return lease;
       if (!announcedWaiting) {
         announcedWaiting = true;
         await request.onWaiting?.(waitingMessage(target, false));
       }
-      await this.waitForChange(Math.min(5_000, deadline - Date.now()));
+      await this.waitForChange(Math.min(5_000, deadline - Date.now()), request.signal);
     }
     throw new Error(waitingMessage(target, true));
   }
@@ -148,6 +151,7 @@ export class BrowserWorkerLeaseCoordinator {
   }
 
   async tryAcquire(request: AcquireBrowserWorkerLeaseRequest): Promise<BrowserWorkerLease | undefined> {
+    request.signal?.throwIfAborted();
     const existing = this.leasesByTask.get(request.taskId);
     if (existing && existing.state !== 'released') return existing;
     const target = request.target ?? { mode: 'managed-profile' as const };
@@ -166,13 +170,16 @@ export class BrowserWorkerLeaseCoordinator {
     }
   }
 
-  async waitForReconnect(lease: BrowserWorkerLease, timeoutMs = 120_000): Promise<boolean> {
+  async waitForReconnect(
+    lease: BrowserWorkerLease, timeoutMs = 120_000, signal?: AbortSignal
+  ): Promise<boolean> {
     const deadline = Date.now() + normalizeTimeout(timeoutMs);
     lease.state = 'reconnecting';
     while (Date.now() < deadline) {
+      signal?.throwIfAborted();
       if (isReleased(lease)) return false;
       if (await this.tryReconnect(lease)) return true;
-      await this.waitForChange(Math.min(5_000, deadline - Date.now()));
+      await this.waitForChange(Math.min(5_000, deadline - Date.now()), signal);
     }
     return false;
   }
@@ -254,6 +261,7 @@ export class BrowserWorkerLeaseCoordinator {
       leaseId: lease.leaseId,
       source: lease.source,
       renderContext: request.renderContext,
+      signal: request.signal,
     });
   }
 
@@ -263,17 +271,20 @@ export class BrowserWorkerLeaseCoordinator {
     this.notifyChanged();
   }
 
-  private waitForChange(timeoutMs: number): Promise<void> {
+  private waitForChange(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (timeoutMs <= 0) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);
         this.listeners.delete(done);
+        signal?.removeEventListener('abort', done);
         resolve();
       };
       const timer = setTimeout(done, timeoutMs);
       timer.unref();
       this.listeners.add(done);
+      signal?.addEventListener('abort', done, { once: true });
     });
   }
 

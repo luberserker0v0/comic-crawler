@@ -57,6 +57,12 @@
 48. Bound fallback when no reader pages are found.
 49. Reject explicit reader selectors that match no pages.
 50. Keep AO stage prompts isolated and free of retry history.
+51. Abort running scheduler work when a task is cancelled.
+52. Forward task cancellation to the active Browser Client command.
+53. Keep the browser session usable after command cancellation.
+54. Cancel retained challenge leases with waiting-verification tasks.
+55. Abort direct chapter-image extraction after an HTTP disconnect.
+56. Restore reader positions before releasing a cancelled browser session.
 
 ### Integration tests
 
@@ -127,6 +133,8 @@
 29. Wait for dynamically created reader pages.
 30. Resume Adapter Lab handoff without an idle target.
 31. Register an acceptance-browser tab for Adapter Lab selection.
+32. Cancel an active command through the Server WebSocket.
+33. Ignore late completion events after task cancellation.
 
 ## 3. Traceability
 
@@ -136,9 +144,12 @@
 | Test file | Primary scenario IDs |
 |---|---|
 | `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15 |
+| `backend/tests/unit/browser/browser-session-gateway.test.ts` | BC-03, BC-26 |
 | `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18, BC-20 |
 | `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14, ADP-10, ADP-12, ADP-13 |
-| `backend/tests/unit/server/task-routes.test.ts` | TASK-01～03, BC-17～19 |
+| `backend/tests/unit/server/task-routes.test.ts` | TASK-01～04, BC-17～19 |
+| `backend/tests/unit/task/manager.test.ts` | TASK-04, ADP-13 |
+| `backend/tests/unit/scheduler/task-scheduler-lifecycle.test.ts` | TASK-04 |
 | `backend/tests/integration/browser-target-recovery.test.ts` | BC-17, BC-18 |
 | `backend/tests-e2e/api.test.ts` | BC-04, BC-05, BC-17, REL-01, REL-02 |
 | `backend/tests/unit/server/adapter-routes.test.ts` | ADP-01～06, BC-14, BC-23 |
@@ -152,10 +163,11 @@
 | `backend/tests/unit/server/selector-discovery-routes.test.ts` | DISC-02～04, DISC-08 |
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |
 | `backend/tests/integration/chapter-images-handoff.test.ts` | ADP-10, ADP-11 |
+| `backend/tests/integration/chapter-images-request-cancellation.test.ts` | BC-26 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
-| `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21 |
+| `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21, BC-26 |
 | `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16 |
-| `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-22 |
+| `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-16, BC-22, BC-26 |
 | `frontend/tests/unit/pages/browser-target-options.test.ts` | BC-23 |
 | `tools/browser-client-acceptance/tests/existing-tab-runtime.test.mjs` | BC-24 |
 | `scripts/clean.test.mjs` | DEV-01, DEV-02 |
