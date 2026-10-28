@@ -23,7 +23,7 @@ RUN npm run build:shared && npm run build:browser-client-sdk && npm run build:ba
 RUN npm prune --omit=dev
 
 FROM base AS runner
-ARG COMICCRAWLER_VERSION=0.3.0
+ARG COMICCRAWLER_VERSION=0.4.0
 ARG COMICCRAWLER_REVISION=unknown
 ARG COMICCRAWLER_SOURCE=https://github.com/luberserker0v0/ComicCrawler
 

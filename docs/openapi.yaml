@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ComicCrawler REST API
-  version: 0.3.0
+  version: 0.4.0
   description: REST contract for ComicCrawler clients. Access may be public or protected by the configured API security policy.
 servers:
   - url: http://127.0.0.1:4100
