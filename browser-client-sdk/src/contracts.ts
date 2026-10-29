@@ -1,4 +1,4 @@
-export const BROWSER_CLIENT_PROTOCOL_VERSION = 3 as const;
+export const BROWSER_CLIENT_PROTOCOL_VERSION = 4 as const;
 export const BROWSER_CLIENT_DISCOVERY_PATH = '/.well-known/comiccrawler-browser-client' as const;
 
 export type BrowserExecutionMode = 'existing-tab' | 'managed-profile';
@@ -53,6 +53,20 @@ export interface ReaderPreparationSelectors {
   endSelector?: string;
 }
 
+export interface ReaderPreparationBudget {
+  maxActions: number;
+  maxDurationMs: number;
+}
+
+export interface ReaderPreparationProgress {
+  status: 'progressing' | 'completed';
+  phase: 'candidates' | 'fallback' | 'completed';
+  discoveredCandidates: number;
+  processedCandidates: number;
+  capturedImages: number;
+  fallbackSteps: number;
+}
+
 export interface OpenBrowserSessionRequest {
   sessionId: string;
   leaseId: string;
@@ -65,8 +79,10 @@ export type BrowserCommand =
   | { type: 'page.get-url' }
   | { type: 'page.get-content' }
   | { type: 'page.wait-for-ready'; timeoutMs?: number }
-  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number;
+  | { type: 'page.prepare.start'; operationId: string; strategy: 'scroll-through';
       reader?: ReaderPreparationSelectors }
+  | { type: 'page.prepare.step'; operationId: string; budget: ReaderPreparationBudget }
+  | { type: 'page.prepare.finish'; operationId: string }
   | { type: 'page.focus' };
 
 export type BrowserCommandResult =
@@ -74,7 +90,9 @@ export type BrowserCommandResult =
   | { type: 'page.get-url'; url: string }
   | { type: 'page.get-content'; url: string; html: string }
   | { type: 'page.wait-for-ready'; url: string }
-  | { type: 'page.prepare-content'; url: string }
+  | { type: 'page.prepare.start'; operationId: string; progress: ReaderPreparationProgress }
+  | { type: 'page.prepare.step'; operationId: string; progress: ReaderPreparationProgress }
+  | { type: 'page.prepare.finish'; operationId: string; url: string }
   | { type: 'page.focus' };
 
 export type BrowserCommandErrorCode =

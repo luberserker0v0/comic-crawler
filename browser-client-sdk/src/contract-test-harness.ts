@@ -145,10 +145,29 @@ async function verifyReadyState(context: HarnessContext): Promise<void> {
 }
 
 async function verifyContentPreparation(context: HarnessContext): Promise<void> {
-  const command = { type: 'page.prepare-content' as const, strategy: 'scroll-through' as const, timeoutMs: 1_000 };
-  const result = await execute(context, 'content-preparation', command);
-  assertResultType('content-preparation', result, 'page.prepare-content');
+  const operationId = 'contract-reader-preparation';
+  const start = await execute(context, 'content-preparation', {
+    type: 'page.prepare.start', operationId, strategy: 'scroll-through',
+  });
+  assertResultType('content-preparation', start, 'page.prepare.start');
+  await completeContentPreparation(context, operationId, start.progress.status);
   context.checks.push('content-preparation');
+}
+
+async function completeContentPreparation(
+  context: HarnessContext, operationId: string, initialStatus: 'progressing' | 'completed'
+): Promise<void> {
+  let status = initialStatus, steps = 0;
+  while (status === 'progressing' && steps < 100) {
+    const result = await execute(context, 'content-preparation', { type: 'page.prepare.step',
+      operationId, budget: { maxActions: 4, maxDurationMs: 2_000 } });
+    assertResultType('content-preparation', result, 'page.prepare.step');
+    status = result.progress.status; steps += 1;
+  }
+  if (status !== 'completed') throw new BrowserExecutorContractError(
+    'content-preparation', 'did not complete within 100 bounded steps');
+  const finish = await execute(context, 'content-preparation', { type: 'page.prepare.finish', operationId });
+  assertResultType('content-preparation', finish, 'page.prepare.finish');
 }
 
 async function verifyFocus(context: HarnessContext): Promise<void> {

@@ -52,7 +52,7 @@
 43. Resolve a chapter-only Adapter through inspect mode without requiring metadata.
 44. List only the requesting user's process-scoped browser resources.
 45. Select only idle Browser targets registered for the exact test URL.
-46. Forward adapter reader selectors to `page.prepare-content`.
+46. Forward adapter reader selectors to `page.prepare.start`.
 47. Stop before infinite page content after dynamic reader pages stabilize.
 48. Stop fallback after 60 growing-document steps.
 49. Reject explicit reader selectors that match no pages.
@@ -64,6 +64,10 @@
 55. Abort direct chapter-image extraction after an HTTP disconnect.
 56. Restore reader positions before releasing a cancelled browser session.
 57. Restore window and nested positions after successful preparation.
+58. Continue reader preparation across bounded command steps.
+59. Preserve captured URLs and cursor progress between steps.
+60. Reset the no-progress timer only when progress changes.
+61. Finish active preparation once when a session closes.
 
 ### Integration tests
 
@@ -144,7 +148,7 @@
 
 | Test file | Primary scenario IDs |
 |---|---|
-| `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15 |
+| `backend/tests/unit/browser/browser-render-service.test.ts` | BC-03, BC-15, BC-27, BC-28 |
 | `backend/tests/unit/browser/browser-session-gateway.test.ts` | BC-03, BC-26 |
 | `backend/tests/unit/browser/browser-worker-lease-coordinator.test.ts` | BC-17, BC-18, BC-20 |
 | `backend/tests/unit/challenge/browser-worker-handoff.test.ts` | BC-05, BC-14, ADP-10, ADP-12, ADP-13 |
@@ -167,8 +171,8 @@
 | `backend/tests/integration/chapter-images-request-cancellation.test.ts` | BC-26 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
 | `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21, BC-26 |
-| `browser-client-sdk/tests/content-preparation.test.ts` | BC-25 |
-| `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16 |
+| `browser-client-sdk/tests/content-preparation.test.ts` | BC-25, BC-27 |
+| `browser-client-sdk/tests/executors.test.ts` | BC-06, BC-15, BC-16, BC-27, BC-28 |
 | `browser-client-sdk/tests/playwright-runtime.test.ts` | BC-16, BC-22, BC-26 |
 | `frontend/tests/unit/pages/browser-target-options.test.ts` | BC-23 |
 | `tools/browser-client-acceptance/tests/existing-tab-runtime.test.mjs` | BC-24 |

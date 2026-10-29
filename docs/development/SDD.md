@@ -164,13 +164,15 @@ The first Client frame is `client.authenticate`. After authentication:
 10. Client releases session-owned resources.
 11. Client sends `session.closed`.
 
-Version 3 commands are:
+Version 4 commands are:
 
 - `page.navigate`
 - `page.get-url`
 - `page.get-content`
 - `page.wait-for-ready`
-- `page.prepare-content` with fixed `scroll-through` strategy
+- `page.prepare.start` with fixed `scroll-through` strategy
+- `page.prepare.step` with a bounded action and duration budget
+- `page.prepare.finish`
 - `page.focus`
 
 `ReaderPreparationCapability` declares container, page, and optional end
@@ -178,6 +180,11 @@ selectors. Browser Client owns scrolling, waiting, bounds, and position
 restoration. `ChapterImagesCapability` only extracts from the prepared DOM.
 Virtualized URLs remain in `data-comiccrawler-src` or
 `data-comiccrawler-image-url` annotations.
+
+Server repeats bounded preparation steps while progress changes. The Browser
+Client SDK owns the operation cursor and captured URL state for the browser
+session. `browser.timeout` is a no-progress limit for this operation. Success,
+cancellation, failure, and session close all converge on one position cleanup.
 
 Adapter Lab uses `mode: inspect` to resolve an Adapter without assuming URL path
 conventions. Before a DOM-backed function runs, the UI reads Workers and

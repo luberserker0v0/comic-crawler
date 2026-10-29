@@ -268,6 +268,12 @@ async function verificationBrowserCommandResult(_sessionId: string, command: { t
     if (command.type === 'page.get-content') return { type: command.type as 'page.get-content',
         url: command.url ?? 'https://comix.to/', html: '<title>Cloudflare</title><p>Verify you are human</p>' };
     if (command.type === 'page.get-url') return { type: command.type as 'page.get-url', url: 'about:blank' };
+    if (command.type === 'page.prepare.start') return { type: command.type,
+        operationId: 'ignored', progress: progressingPreparation() } as any;
+    if (command.type === 'page.prepare.step') return { type: command.type,
+        operationId: 'ignored', progress: completedPreparation() } as any;
+    if (command.type === 'page.prepare.finish') return { type: command.type,
+        operationId: 'ignored', url: 'https://comix.to/' } as any;
     return { type: command.type, url: command.url ?? 'https://comix.to/' } as any;
 }
 
@@ -433,8 +439,8 @@ async function browserCommandResult(_sessionId: string, command: {
             return { type: 'page.navigate' as const, url: command.url! };
         if (command.type === 'page.wait-for-ready')
             return { type: 'page.wait-for-ready' as const, url: 'https://example.com/read/1' };
-        if (command.type === 'page.prepare-content')
-            return { type: 'page.prepare-content' as const, url: 'https://example.com/read/1' };
+        const preparation = adapterPreparationResult(command.type);
+        if (preparation) return preparation;
         return {
             type: 'page.get-content' as const,
             url: 'https://example.com/read/1',
@@ -442,8 +448,28 @@ async function browserCommandResult(_sessionId: string, command: {
         };
 }
 
+function adapterPreparationResult(type: string) {
+    if (type === 'page.prepare.start')
+        return { type: 'page.prepare.start' as const, operationId: 'ignored', progress: progressingPreparation() };
+    if (type === 'page.prepare.step')
+        return { type: 'page.prepare.step' as const, operationId: 'ignored', progress: completedPreparation() };
+    if (type === 'page.prepare.finish')
+        return { type: 'page.prepare.finish' as const, operationId: 'ignored', url: 'https://example.com/read/1' };
+    return undefined;
+}
+
 const BROWSER_COMMAND_ORDER = ['page.get-url', 'page.navigate', 'page.wait-for-ready',
-  'page.prepare-content', 'page.get-content'];
+  'page.prepare.start', 'page.prepare.step', 'page.prepare.finish', 'page.get-content'];
+
+function progressingPreparation() {
+    return { status: 'progressing' as const, phase: 'candidates' as const,
+        discoveredCandidates: 1, processedCandidates: 0, capturedImages: 0, fallbackSteps: 0 };
+}
+
+function completedPreparation() {
+    return { ...progressingPreparation(), status: 'completed' as const,
+        phase: 'completed' as const, processedCandidates: 1, capturedImages: 1 };
+}
 
 async function AdapterRoutesTestReusesTheVerifiedChallengeSessionInsteadOfLeasingASecondBrowserWorkerSession() {
     const withBrowserSession = jest.fn(async () => {

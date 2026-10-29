@@ -127,9 +127,18 @@ class ExistingTabTestSession implements BrowserSession {
       return { type: command.type, url: chapterUrl, html: '<main>chapter</main>' };
     }
     if (command.type === 'page.focus') return { type: command.type };
+    if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step')
+      return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+    if (command.type === 'page.prepare.finish')
+      return { type: command.type, operationId: command.operationId, url: chapterUrl };
     return { type: command.type, url: command.type === 'page.navigate' ? command.url : chapterUrl };
   }
   async close(): Promise<void> {}
+}
+
+function completedPreparation() {
+  return { status: 'completed' as const, phase: 'completed' as const,
+    discoveredCandidates: 1, processedCandidates: 1, capturedImages: 1, fallbackSteps: 0 };
 }
 
 function principal(): ApiPrincipal {

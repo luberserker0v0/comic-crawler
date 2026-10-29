@@ -46,30 +46,40 @@ test('rejects unknown protocol versions and commands', () => {
   }), /Unsupported browser command/);
 });
 
-test('accepts only the bounded content preparation strategy', () => {
-  const envelope = {
-    protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION,
-    type: 'command.execute',
-    requestId: 'request-prepare',
-    leaseId: 'lease-1',
-    sessionId: 'session-1',
-  };
+test('accepts only bounded reader preparation operations', () => {
+  const envelope = preparationEnvelope();
   assert.doesNotThrow(() => parseServerMessage({
     ...envelope,
-    command: { type: 'page.prepare-content', strategy: 'scroll-through', timeoutMs: 1_000,
+    command: { type: 'page.prepare.start', operationId: 'preparation-1', strategy: 'scroll-through',
       reader: { containerSelector: '.reader', pageSelector: '.page' } },
   }));
-  assert.throws(() => parseServerMessage({
-    ...envelope,
-    command: { type: 'page.prepare-content', strategy: 'evaluate-script' },
-  }), /strategy must be "scroll-through"/);
+  assert.doesNotThrow(() => parseServerMessage({ ...envelope,
+    command: { type: 'page.prepare.step', operationId: 'preparation-1',
+      budget: { maxActions: 4, maxDurationMs: 2_000 } } }));
+  assert.doesNotThrow(() => parseServerMessage({ ...envelope,
+    command: { type: 'page.prepare.finish', operationId: 'preparation-1' } }));
 });
+
+test('rejects invalid reader preparation operations', () => {
+  assert.throws(() => parseServerMessage({ ...preparationEnvelope(),
+    command: { type: 'page.prepare.start', operationId: 'preparation-1', strategy: 'evaluate-script' },
+  }), /strategy must be "scroll-through"/);
+  assert.throws(() => parseServerMessage({ ...preparationEnvelope(),
+    command: { type: 'page.prepare.step', operationId: 'preparation-1',
+      budget: { maxActions: 0, maxDurationMs: 2_000 } } }), /positive number/);
+});
+
+function preparationEnvelope() {
+  return { protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'command.execute',
+    requestId: 'request-prepare', leaseId: 'lease-1', sessionId: 'session-1' };
+}
 
 test('validates reader preparation selectors', () => {
   assert.throws(() => parseServerMessage({
     protocolVersion: BROWSER_CLIENT_PROTOCOL_VERSION, type: 'command.execute',
     requestId: 'request-prepare', leaseId: 'lease-1', sessionId: 'session-1',
-    command: { type: 'page.prepare-content', strategy: 'scroll-through', reader: { pageSelector: 42 } },
+    command: { type: 'page.prepare.start', operationId: 'preparation-1',
+      strategy: 'scroll-through', reader: { pageSelector: 42 } },
   }), /Field "pageSelector" must be a non-empty string/);
 });
 

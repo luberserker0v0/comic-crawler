@@ -1,24 +1,37 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  beginScrollableContentPreparation,
   finishScrollPreparation,
-  prepareScrollableContent,
   recordScrollPreparationBottomStep,
 } from '../src';
 
 test('reader preparation follows dynamic pages without entering infinite comments', testDynamicReaderBoundary);
 test('document fallback stops after its fixed step budget', testFallbackStepBudget);
 test('successful preparation restores window and nested scroll positions', testCompletedRestoration);
+test('failed restoration still clears reader preparation state', testFailedRestorationCleanup);
 
 async function testDynamicReaderBoundary(): Promise<void> {
   const fixture = createDynamicReaderExecutor();
-  await prepareScrollableContent(fixture.execute, 2_000, {
+  const operation = await beginScrollableContentPreparation(fixture.execute, {
     containerSelector: '.reader', pageSelector: '.page', endSelector: '.reader-end',
   });
+  const steps = await runToCompletion(operation);
+  await operation.finish();
+  assert.ok(steps > 1);
   assert.deepEqual(fixture.candidates, [0, 1, 2]);
   assert.equal(fixture.bottomSteps, 0);
   assert.ok(fixture.calls.includes('finishScrollPreparation'));
   assert.ok(fixture.calls.includes('clearScrollPreparation'));
+}
+
+async function runToCompletion(operation: Awaited<ReturnType<typeof beginScrollableContentPreparation>>) {
+  let steps = 0;
+  while (operation.progress.status !== 'completed') {
+    await operation.step({ maxActions: 1, maxDurationMs: 1_000 }, new AbortController().signal);
+    steps += 1;
+  }
+  return steps;
 }
 
 function createDynamicReaderExecutor() {
@@ -33,6 +46,7 @@ function createDynamicReaderExecutor() {
     if (script.name === 'scrollPreparationCandidate')
       candidates.push((argument as { index: number }).index);
     if (script.name === 'scrollPreparationBottomStep') bottomSteps += 1;
+    if (script.name === 'captureLoadedImageUrls') return candidates.length as Result;
     return undefined as Result;
   };
   return { calls, candidates, get bottomSteps() { return bottomSteps; }, execute };
@@ -68,6 +82,21 @@ async function testCompletedRestoration(): Promise<void> {
   assert.deepEqual([nested.scrollTop, nested.scrollLeft], [42, 7]);
   assert.deepEqual(restoredWindow, [321]);
   assert.equal(page.getAttribute('data-comiccrawler-image-url'), 'https://img/1.jpg');
+}
+
+async function testFailedRestorationCleanup(): Promise<void> {
+  const calls: string[] = [];
+  const execute = async <Argument, Result>(script: (argument: Argument) => Result | Promise<Result>) => {
+    calls.push(script.name);
+    if (script.name === 'finishScrollPreparation') throw new Error('restore failed');
+    if (script.name === 'captureLoadedImageUrls' || script.name === 'countScrollPreparationCandidates')
+      return 0 as Result;
+    return undefined as Result;
+  };
+  const operation = await beginScrollableContentPreparation(execute);
+  await assert.rejects(operation.finish(), /restore failed/);
+  assert.deepEqual(calls.slice(-3),
+    ['finishScrollPreparation', 'captureLoadedImageUrls', 'clearScrollPreparation']);
 }
 
 function createScrollElement(top: number, left: number) {

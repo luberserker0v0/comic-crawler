@@ -22,9 +22,16 @@ const driver: BrowserPageDriver<Page> = {
   async navigate(page, url) { page.url = url; return url; },
   async content(page) { return page.html; },
   async waitForReady() {},
-  async prepareContent() {},
+  async prepareContent() { return completedPreparation(); },
   async focus(page) { page.focused = true; },
 };
+
+function completedPreparation() {
+  const progress = { status: 'progressing' as const, phase: 'candidates' as const,
+    discoveredCandidates: 1, processedCandidates: 0, capturedImages: 0, fallbackSteps: 0 };
+  return { progress, async step() { return { ...progress, status: 'completed' as const,
+    phase: 'completed' as const, processedCandidates: 1, capturedImages: 1 }; }, async finish() {} };
+}
 
 test('portable contract harness validates an existing-tab executor', testExistingTabContract);
 test('portable contract harness validates a managed-profile executor', testManagedProfileContract);

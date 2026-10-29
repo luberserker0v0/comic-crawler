@@ -1,72 +1,134 @@
-import type { ReaderPreparationSelectors } from './contracts';
+import type { ReaderPreparationBudget, ReaderPreparationProgress,
+  ReaderPreparationSelectors } from './contracts';
 
 export type BrowserScriptExecutor = <Argument, Result>(
   script: (argument: Argument) => Result | Promise<Result>,
   argument: Argument
 ) => Promise<Result>;
 
-export async function prepareScrollableContent(
-  execute: BrowserScriptExecutor, timeoutMs: number, reader: ReaderPreparationSelectors = {},
-  signal?: AbortSignal
-): Promise<void> {
-  signal?.throwIfAborted();
-  const deadline = Date.now() + timeoutMs;
+export async function beginScrollableContentPreparation(
+  execute: BrowserScriptExecutor, reader: ReaderPreparationSelectors = {}
+): Promise<ScrollableContentPreparation> {
   await execute(initializeScrollPreparation, reader);
-  await execute(captureScrollPreparationPositions, reader);
   try {
-    await execute(captureLoadedImageUrls, reader);
-    const found = await prepareCandidates(execute, deadline, reader, signal);
-    if (!found && reader.pageSelector) throw new Error('Reader page selector did not match any elements.');
-    if (!found) await prepareDocumentBottom(execute, deadline, reader, signal);
-  } finally {
-    await finishPreparation(execute, reader);
+    await execute(captureScrollPreparationPositions, reader);
+    const captured = await execute(captureLoadedImageUrls, reader);
+    const discovered = await execute(countScrollPreparationCandidates, reader);
+    return new ScrollableContentPreparation(execute, reader, discovered, captured);
+  } catch (error) {
+    await finishPreparation(execute, reader).catch(() => undefined);
+    throw error;
   }
 }
 
-async function prepareCandidates(
-  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors, signal?: AbortSignal
-): Promise<boolean> {
-  let index = 0, stableChecks = 0, found = false;
-  while (Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const count = await execute(countScrollPreparationCandidates, reader);
-    found ||= count > 0;
-    if (index >= count && preparationIsStable(count, stableChecks)) return found;
-    if (index >= count) {
-      await execute(waitForScrollPreparation, Math.min(250, deadline - Date.now()));
-      stableChecks += 1;
-    } else {
-      await execute(scrollPreparationCandidate, { index, waitMs: Math.min(800, deadline - Date.now()), reader });
-      index += 1; stableChecks = 0;
+export class ScrollableContentPreparation {
+  private phase: ReaderPreparationProgress['phase'] = 'candidates';
+  private index = 0;
+  private stableChecks = 0;
+  private found = false;
+  private fallbackSteps = 0;
+  private closed = false;
+
+  constructor(
+    private readonly execute: BrowserScriptExecutor,
+    private readonly reader: ReaderPreparationSelectors,
+    private discoveredCandidates: number,
+    private capturedImages: number
+  ) {}
+
+  async step(budget: ReaderPreparationBudget, signal: AbortSignal): Promise<ReaderPreparationProgress> {
+    this.assertOpen();
+    const deadline = Date.now() + normalizeDuration(budget.maxDurationMs);
+    const actions = Math.max(1, Math.floor(budget.maxActions));
+    for (let action = 0; action < actions && this.phase !== 'completed'; action += 1) {
+      signal.throwIfAborted();
+      if (Date.now() >= deadline) break;
+      await this.takeStep(deadline);
+      signal.throwIfAborted();
     }
-    await execute(captureLoadedImageUrls, reader);
+    return this.progress;
   }
-  return found;
+
+  get progress(): ReaderPreparationProgress {
+    return { status: this.phase === 'completed' ? 'completed' : 'progressing', phase: this.phase,
+      discoveredCandidates: this.discoveredCandidates, processedCandidates: this.index,
+      capturedImages: this.capturedImages, fallbackSteps: this.fallbackSteps };
+  }
+
+  async finish(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await finishPreparation(this.execute, this.reader);
+  }
+
+  private async takeStep(deadline: number): Promise<void> {
+    if (this.phase === 'candidates') await this.takeCandidateStep(deadline);
+    else if (this.phase === 'fallback') await this.takeFallbackStep();
+  }
+
+  private async takeCandidateStep(deadline: number): Promise<void> {
+    const count = await this.execute(countScrollPreparationCandidates, this.reader);
+    this.discoveredCandidates = Math.max(this.discoveredCandidates, count);
+    this.found ||= count > 0;
+    if (this.index >= count && preparationIsStable(count, this.stableChecks)) {
+      this.completeCandidatePhase(); return;
+    }
+    if (this.index >= count) await this.waitForCandidates(deadline);
+    else await this.visitCandidate(deadline);
+    this.capturedImages = await this.execute(captureLoadedImageUrls, this.reader);
+  }
+
+  private completeCandidatePhase(): void {
+    if (this.found) { this.phase = 'completed'; return; }
+    if (this.reader.pageSelector) throw new Error('Reader page selector did not match any elements.');
+    this.phase = 'fallback';
+  }
+
+  private async waitForCandidates(deadline: number): Promise<void> {
+    await this.execute(waitForScrollPreparation, Math.max(0, Math.min(250, deadline - Date.now())));
+    this.stableChecks += 1;
+  }
+
+  private async visitCandidate(deadline: number): Promise<void> {
+    await this.execute(scrollPreparationCandidate, { index: this.index,
+      waitMs: Math.max(0, Math.min(800, deadline - Date.now())), reader: this.reader });
+    this.index += 1;
+    this.stableChecks = 0;
+  }
+
+  private async takeFallbackStep(): Promise<void> {
+    const step = await this.execute(scrollPreparationBottomStep, this.reader);
+    const done = step.done || await this.execute(recordScrollPreparationBottomStep, step);
+    this.fallbackSteps += 1;
+    this.capturedImages = await this.execute(captureLoadedImageUrls, this.reader);
+    if (done) this.phase = 'completed';
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error('Reader preparation operation is closed.');
+  }
 }
 
 function preparationIsStable(candidateCount: number, stableChecks: number): boolean {
   return stableChecks >= (candidateCount === 0 ? 8 : 3);
 }
 
-async function prepareDocumentBottom(
-  execute: BrowserScriptExecutor, deadline: number, reader: ReaderPreparationSelectors,
-  signal?: AbortSignal
-): Promise<void> {
-  let done = false;
-  while (!done && Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const step = await execute(scrollPreparationBottomStep, reader);
-    done = step.done || await execute(recordScrollPreparationBottomStep, step);
-    await execute(captureLoadedImageUrls, reader);
-  }
+function normalizeDuration(value: number): number {
+  if (!Number.isFinite(value)) return 2_000;
+  return Math.max(1, Math.floor(value));
 }
 
 async function finishPreparation(
   execute: BrowserScriptExecutor, reader: ReaderPreparationSelectors
 ): Promise<void> {
-  await execute(finishScrollPreparation, undefined);
-  await execute(captureLoadedImageUrls, reader);
-  await execute(clearScrollPreparation, undefined);
+  let failure: unknown;
+  try { await execute(finishScrollPreparation, undefined); }
+  catch (error) { failure = error; }
+  try { await execute(captureLoadedImageUrls, reader); }
+  catch (error) { failure ??= error; }
+  try { await execute(clearScrollPreparation, undefined); }
+  catch (error) { failure ??= error; }
+  if (failure) throw failure;
 }
 
 export function initializeScrollPreparation(reader: ReaderPreparationSelectors): void {
@@ -113,10 +175,9 @@ export async function waitForScrollPreparation(waitMs: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, waitMs));
 }
 
-export function captureLoadedImageUrls(reader: ReaderPreparationSelectors): void {
-  const root = document.documentElement;
-  const state = JSON.parse(root.getAttribute('data-comiccrawler-preparation-state') ?? '{}') as {
-    captured?: Record<string, string> };
+export function captureLoadedImageUrls(reader: ReaderPreparationSelectors): number {
+  const root = document.documentElement, state = JSON.parse(
+    root.getAttribute('data-comiccrawler-preparation-state') ?? '{}') as { captured?: Record<string, string> };
   const scope = reader.containerSelector ? document.querySelector(reader.containerSelector) : document;
   if (!scope) throw new Error('Reader container selector did not match an element.');
   const captured = state.captured ?? {};
@@ -132,6 +193,7 @@ export function captureLoadedImageUrls(reader: ReaderPreparationSelectors): void
     }
   }
   state.captured = captured; root.setAttribute('data-comiccrawler-preparation-state', JSON.stringify(state));
+  return Object.keys(captured).length;
 }
 
 export async function scrollPreparationCandidate(input: {

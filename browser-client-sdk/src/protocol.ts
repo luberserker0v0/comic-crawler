@@ -130,19 +130,32 @@ const commandValidators: Record<string, (value: Record<string, unknown>) => void
   'page.get-content': () => undefined,
   'page.focus': () => undefined,
   'page.wait-for-ready': validateOptionalTimeout,
-  'page.prepare-content': validateContentPreparation,
+  'page.prepare.start': validatePreparationStart,
+  'page.prepare.step': validatePreparationStep,
+  'page.prepare.finish': validatePreparationOperation,
 };
 
 function validateOptionalTimeout(value: Record<string, unknown>): void {
   if (value.timeoutMs !== undefined) requirePositiveNumber(value, 'timeoutMs');
 }
 
-function validateContentPreparation(value: Record<string, unknown>): void {
+function validatePreparationStart(value: Record<string, unknown>): void {
+  validatePreparationOperation(value);
   if (value.strategy !== 'scroll-through') {
     throw protocolError('Content preparation strategy must be "scroll-through".');
   }
-  validateOptionalTimeout(value);
   validateReaderSelectors(value.reader);
+}
+
+function validatePreparationStep(value: Record<string, unknown>): void {
+  validatePreparationOperation(value);
+  if (!isRecord(value.budget)) throw protocolError('Reader preparation budget must be an object.');
+  requirePositiveNumber(value.budget, 'maxActions');
+  requirePositiveNumber(value.budget, 'maxDurationMs');
+}
+
+function validatePreparationOperation(value: Record<string, unknown>): void {
+  requireString(value, 'operationId');
 }
 
 function validateReaderSelectors(value: unknown): void {

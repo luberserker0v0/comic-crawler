@@ -398,6 +398,12 @@ class ImmediateSession implements BrowserSession {
   async execute(command: BrowserCommand): Promise<BrowserCommandResult> {
     if (command.type === 'page.get-content') return { type: command.type, url: 'about:blank', html: '' };
     if (command.type === 'page.focus') return { type: command.type };
+    if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step') {
+      return { type: command.type, operationId: command.operationId, progress: completedProgress() };
+    }
+    if (command.type === 'page.prepare.finish') {
+      return { type: command.type, operationId: command.operationId, url: 'about:blank' };
+    }
     return { type: command.type, url: command.type === 'page.navigate' ? command.url : 'about:blank' };
   }
   async close(): Promise<void> {}
@@ -539,8 +545,14 @@ function commandCancellationMessage(requestId: string): Record<string, unknown> 
 }
 
 function prepareCommandMessage(requestId: string): Record<string, unknown> {
-  const message = commandMessage(requestId, 'page.prepare-content');
-  return { ...message, command: { type: 'page.prepare-content', strategy: 'scroll-through' } };
+  const message = commandMessage(requestId, 'page.prepare.start');
+  return { ...message, command: { type: 'page.prepare.start', operationId: 'preparation-1',
+    strategy: 'scroll-through' } };
+}
+
+function completedProgress() {
+  return { status: 'completed' as const, phase: 'completed' as const,
+    discoveredCandidates: 1, processedCandidates: 1, capturedImages: 1, fallbackSteps: 0 };
 }
 
 function sessionCloseMessage(): Record<string, unknown> {

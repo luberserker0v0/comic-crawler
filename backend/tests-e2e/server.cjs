@@ -16,7 +16,7 @@ const { BrowserClientRegistry } = require('../dist/browser/browser-client-regist
 const { BrowserSessionGateway } = require('../dist/browser/browser-session-gateway');
 const { BrowserWorkerLeaseCoordinator } = require('../dist/browser/browser-worker-lease-coordinator');
 const { BrowserRenderService } = require('../dist/browser/browser-render-service');
-const { BrowserClient } = require('../../browser-client-sdk/dist/src');
+const { BrowserClient, beginScrollableContentPreparation } = require('../../browser-client-sdk/dist/src');
 const { chromium } = require('playwright');
 const WebSocket = require('ws');
 const { ApiSecurityService } = require('../dist/security/api-security');
@@ -444,63 +444,83 @@ function createE2eBrowserExecutor(localWsEndpoint) {
   };
   return {
     describe: async () => capabilities,
-    openSession: async (request) => {
-      const browser = await chromium.connect(localWsEndpoint);
-      const context = await browser.newContext({
-        viewport: request.renderContext?.viewport,
-        deviceScaleFactor: request.renderContext?.deviceScaleFactor,
-        isMobile: request.renderContext?.isMobile,
-        hasTouch: request.renderContext?.hasTouch,
-        userAgent: request.renderContext?.userAgent,
-      });
-      const page = await context.newPage();
-      return {
-        execute: async (command) => {
-          if (command.type === 'page.navigate') {
-            await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-            return { type: command.type, url: page.url() };
-          }
-          if (command.type === 'page.get-url') return { type: command.type, url: page.url() };
-          if (command.type === 'page.get-content') return { type: command.type, url: page.url(), html: await page.content() };
-          if (command.type === 'page.wait-for-ready') {
-            await page.waitForLoadState('domcontentloaded', { timeout: command.timeoutMs || 30_000 }).catch(() => undefined);
-            await page.waitForTimeout(750);
-            return { type: command.type, url: page.url() };
-          }
-          if (command.type === 'page.prepare-content') {
-            await page.evaluate(async (timeoutMs) => {
-              const startY = window.scrollY;
-              const deadline = Date.now() + timeoutMs;
-              let previousHeight = 0;
-              let stableBottomChecks = 0;
-              try {
-                while (Date.now() < deadline) {
-                  const height = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
-                  const bottom = Math.max(0, height - window.innerHeight);
-                  window.scrollTo(0, Math.min(bottom, window.scrollY + Math.max(600, Math.floor(window.innerHeight * 0.8))));
-                  await new Promise((resolve) => setTimeout(resolve, 120));
-                  const atBottom = window.scrollY >= bottom;
-                  stableBottomChecks = atBottom && height === previousHeight ? stableBottomChecks + 1 : 0;
-                  previousHeight = height;
-                  if (stableBottomChecks >= 3) break;
-                }
-              } finally {
-                window.scrollTo(0, startY);
-              }
-            }, command.timeoutMs || 30_000);
-            return { type: command.type, url: page.url() };
-          }
-          await page.bringToFront();
-          return { type: 'page.focus' };
-        },
-        close: async () => {
-          await context.close().catch(() => undefined);
-          await browser.close().catch(() => undefined);
-        },
-      };
-    },
+    openSession: (request) => openE2eBrowserSession(localWsEndpoint, request),
     close: async () => undefined,
   };
+}
+
+async function openE2eBrowserSession(localWsEndpoint, request) {
+  const browser = await chromium.connect(localWsEndpoint);
+  const context = await browser.newContext({
+    viewport: request.renderContext?.viewport,
+    deviceScaleFactor: request.renderContext?.deviceScaleFactor,
+    isMobile: request.renderContext?.isMobile,
+    hasTouch: request.renderContext?.hasTouch,
+    userAgent: request.renderContext?.userAgent,
+  });
+  const page = await context.newPage();
+  const state = { browser, context, page, preparation: undefined, operationId: undefined };
+  return { execute: (command, signal) => executeE2eBrowserCommand(state, command, signal),
+    close: () => closeE2eBrowserSession(state) };
+}
+
+async function executeE2eBrowserCommand(state, command, signal) {
+  if (command.type === 'page.navigate') return navigateE2ePage(state.page, command);
+  if (command.type === 'page.get-url') return { type: command.type, url: state.page.url() };
+  if (command.type === 'page.get-content')
+    return { type: command.type, url: state.page.url(), html: await state.page.content() };
+  if (command.type === 'page.wait-for-ready') return waitForE2ePage(state.page, command);
+  if (command.type === 'page.prepare.start') return startE2ePreparation(state, command);
+  if (command.type === 'page.prepare.step') return stepE2ePreparation(state, command, signal);
+  if (command.type === 'page.prepare.finish') return finishE2ePreparation(state, command);
+  await state.page.bringToFront();
+  return { type: 'page.focus' };
+}
+
+async function navigateE2ePage(page, command) {
+  await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  return { type: command.type, url: page.url() };
+}
+
+async function waitForE2ePage(page, command) {
+  await page.waitForLoadState('domcontentloaded', { timeout: command.timeoutMs || 30_000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(750);
+  return { type: command.type, url: page.url() };
+}
+
+async function startE2ePreparation(state, command) {
+  if (state.preparation) throw new Error('Reader preparation is already active.');
+  const execute = (script, argument) => state.page.evaluate(script, argument);
+  state.preparation = await beginScrollableContentPreparation(execute, command.reader);
+  state.operationId = command.operationId;
+  return { type: command.type, operationId: command.operationId, progress: state.preparation.progress };
+}
+
+async function stepE2ePreparation(state, command, signal) {
+  assertE2ePreparation(state, command.operationId);
+  const progress = await state.preparation.step(command.budget, signal);
+  return { type: command.type, operationId: command.operationId, progress };
+}
+
+async function finishE2ePreparation(state, command) {
+  assertE2ePreparation(state, command.operationId);
+  await state.preparation.finish();
+  state.preparation = undefined;
+  state.operationId = undefined;
+  return { type: command.type, operationId: command.operationId, url: state.page.url() };
+}
+
+function assertE2ePreparation(state, operationId) {
+  if (!state.preparation || state.operationId !== operationId)
+    throw new Error('Reader preparation operation does not exist.');
+}
+
+async function closeE2eBrowserSession(state) {
+  await state.preparation?.finish().catch(() => undefined);
+  state.preparation = undefined;
+  await state.context.close().catch(() => undefined);
+  await state.browser.close().catch(() => undefined);
 }
 
 function createMemoryStateStore() {

@@ -101,10 +101,20 @@ Profile lock，並執行實際複製。SDK 會固定排除 cache 與 lock 檔案
 SDK 不直接依賴 Playwright、Node API 或特定瀏覽器平台 API。Browser Client 只需把
 對應 runtime 操作包成 driver 或 launcher。
 
-`page.prepare-content` 可接收 `reader.containerSelector`、
-`reader.pageSelector` 與選用的 `reader.endSelector`。SDK 只在 reader 範圍
-捲動與收集圖片；找到 page 元素後不再掃描整份文件。找不到 page 時才
-使用有界 fallback，最後還原 window 與巢狀容器位置。
+Reader preparation 使用同一個 session 內的三段 operation：
+
+1. `page.prepare.start` 建立游標並保存捲動位置。
+2. `page.prepare.step` 在指定 action 與時間預算內推進。
+3. `page.prepare.finish` 收集最後結果並還原捲動位置。
+
+`start` 可接收 `reader.containerSelector`、`reader.pageSelector` 與選用的
+`reader.endSelector`。SDK 只在 reader 範圍捲動與收集圖片；找到 page
+元素後不再掃描整份文件。找不到 page 時才使用有界 fallback。
+
+每次 `step` 回傳 `progressing` 或 `completed`，並帶回目前 phase、候選數、
+已處理數、圖片數與 fallback 步數。Server 依進度決定是否繼續，不把整個
+reader 綁在一個 Browser command timeout。Session 關閉時 SDK 也會對尚未
+結束的 operation 執行一次 cleanup。
 
 虛擬化 reader 已載入的 URL 會保存在 `data-comiccrawler-src` /
 `data-comiccrawler-image-url`。
