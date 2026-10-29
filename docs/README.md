@@ -32,6 +32,7 @@ This directory contains user- and contributor-facing documentation for the
   existing-tab and managed-profile Browser Clients.
 - `development/` - version-controlled SRS, SDD, TDD, test scenarios, and
   authentication credential contract.
+- `development/RELEASE_PROCESS.md` - GitHub Release assets and publish sequence.
 
 ## Documentation boundary
 
