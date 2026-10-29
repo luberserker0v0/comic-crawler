@@ -3,14 +3,14 @@
 ## 1. 文件狀態
 
 本文件定義 production Browser Client Framework 的實作基線。Runtime 只支援
-Version 3 command protocol，不提供舊 protocol 相容層。
+Version 4 command protocol，不提供舊 protocol 相容層。
 
 Execution mode 與 browser resource 契約見 `BROWSER_EXECUTION_MODES.md`。
 
 目前元件：
 
 - 平台無關 Browser Client SDK 核心。
-- Version 3 command、resource 與 control message types。
+- Version 4 command、resource 與 control message types。
 - Browser Client identity 與 credential registry。
 - Browser Session Gateway。
 - Browser Worker Lease Coordinator。
@@ -255,13 +255,13 @@ humanHandoff       true
 `executionMode: managed-profile`。Profile provisioning 與 lifecycle 不放在
 capability boolean。
 
-## 8. Version 3 command protocol
+## 8. Version 4 command protocol
 
 ### 8.1 Command envelope
 
 ```ts
 export interface BrowserCommandEnvelope {
-  protocolVersion: 3;
+  protocolVersion: 4;
   requestId: string;
   leaseId: string;
   sessionId: string;
@@ -302,13 +302,13 @@ export interface OpenBrowserSessionRequest {
 ```ts
 export type BrowserResultEnvelope =
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       requestId: string;
       ok: true;
       result: BrowserCommandResult;
     }
   | {
-      protocolVersion: 3;
+      protocolVersion: 4;
       requestId: string;
       ok: false;
       error: BrowserCommandError;
@@ -323,7 +323,9 @@ export type BrowserCommandResult =
   | { type: 'page.get-url'; url: string }
   | { type: 'page.get-content'; url: string; html: string }
   | { type: 'page.wait-for-ready'; url: string }
-  | { type: 'page.prepare-content'; url: string }
+  | { type: 'page.prepare.start'; operationId: string; progress: ReaderPreparationProgress }
+  | { type: 'page.prepare.step'; operationId: string; progress: ReaderPreparationProgress }
+  | { type: 'page.prepare.finish'; operationId: string; url: string }
   | { type: 'page.focus' };
 ```
 
@@ -353,9 +355,21 @@ export type BrowserCommand =
   | { type: 'page.get-url' }
   | { type: 'page.get-content' }
   | { type: 'page.wait-for-ready'; timeoutMs?: number }
-  | { type: 'page.prepare-content'; strategy: 'scroll-through'; timeoutMs?: number;
-      reader?: { containerSelector?: string; pageSelector?: string; endSelector?: string } }
+  | { type: 'page.prepare.start'; operationId: string; strategy: 'scroll-through';
+      reader?: ReaderPreparationSelectors }
+  | { type: 'page.prepare.step'; operationId: string;
+      budget: { maxActions: number; maxDurationMs: number } }
+  | { type: 'page.prepare.finish'; operationId: string }
   | { type: 'page.focus' };
+
+export interface ReaderPreparationProgress {
+  status: 'progressing' | 'completed';
+  phase: 'candidates' | 'fallback' | 'completed';
+  discoveredCandidates: number;
+  processedCandidates: number;
+  capturedImages: number;
+  fallbackSteps: number;
+}
 ```
 
 Session open 與 close 使用 control message，不混入 page command。
@@ -364,7 +378,7 @@ Session open 與 close 使用 control message，不混入 page command。
 
 ```ts
 export interface BrowserCommandCancellation {
-  protocolVersion: 3;
+  protocolVersion: 4;
   type: 'command.cancel';
   requestId: string;
   leaseId: string;
@@ -375,11 +389,20 @@ export interface BrowserCommandCancellation {
 Client 依 `requestId` 中止執行中或尚未開始的 command。取消 command 不會
 關閉 session；Server 仍會在 task 結束時送出 `session.close`。
 
-`page.prepare-content` 是固定語意操作：在 adapter 宣告的 reader 範圍
-依序捲動 page 元素。只有找不到 page 時才執行有界 fallback。完成後會
-還原 window 與巢狀容器位置。保留值使用
-`data-comiccrawler-src` 與 `data-comiccrawler-image-url` DOM 註記。Protocol
-不提供 `evaluate`、`click`、`fill`、download 或任意 script。
+Reader preparation 是固定語意、可分段推進的 operation：
+
+1. Server 以 `page.prepare.start` 建立 operation。
+2. SDK 保存 window 與巢狀容器位置。
+3. Server 重複送出有界的 `page.prepare.step`。
+4. SDK 保存候選游標、fallback 位置與已擷取 URL。
+5. Progress 變成 `completed` 後，Server 送出 `page.prepare.finish`。
+6. SDK 收集最後 URL 並還原位置。
+
+失敗或取消也必須執行一次 `finish`。若 Server 未能送達，session cleanup
+會結束仍在執行的 operation。Adapter 只宣告 reader selectors，不實作分段、
+重試或游標。保留值使用 `data-comiccrawler-src` 與
+`data-comiccrawler-image-url` DOM 註記。Protocol 不提供 `evaluate`、
+`click`、`fill`、download 或任意 script。
 
 ### 8.5 Transport authentication
 
@@ -399,7 +422,7 @@ Credential 不放在 URL、query string 或 WebSocket subprotocol。
 1. 每個 command 必須有唯一 `requestId`。
 2. 每個 command 必須綁定 lease 與 session。
 3. SDK 必須一次執行一個 session command。
-4. Server 必須設定 timeout。
+4. Server 必須為每個 command 設定 timeout。
 5. Timeout 或 task cancellation 必須送出 `command.cancel`。
 6. Session 關閉後不得接受新 command。
 7. Result 必須對應原 request。
@@ -409,8 +432,12 @@ Credential 不放在 URL、query string 或 WebSocket subprotocol。
 
 `POST /api/adapters/chapter-images` 的 HTTP connection 也是 cancellation
 source。Client 中止 response connection 時，Server 會取消 Worker acquisition
-或目前的 command。`prepareScrollableContent` 必須接收相同 signal，在每個
-有界 scroll step 之間檢查，並在回報 cancellation 前完成位置還原。
+或目前的 command。Reader preparation 會在每個有界 step 之間檢查相同
+signal，並在回報 cancellation 前完成位置還原。
+
+Reader preparation 的 `browser.timeout` 是 no-progress timeout。任何 phase、
+候選、已處理頁、圖片或 fallback step 的前進都會重設計時。單一 command
+仍有獨立 timeout；framework 另有總 operation deadline，避免永不結束。
 
 ## 9. Identity 與 state
 
@@ -496,11 +523,19 @@ sequenceDiagram
     Browser-->>Executor: ready
     Executor-->>SDK: command result
     SDK-->>Gateway: result
-    Runtime->>Gateway: page.prepare-content(scroll-through)
-    Gateway-->>SDK: bounded semantic command
-    SDK->>Executor: hydrate lazy content and restore position
-    Executor-->>SDK: command result
-    SDK-->>Gateway: result
+    Runtime->>Gateway: page.prepare.start(scroll-through)
+    Gateway-->>SDK: start operation
+    SDK->>Executor: save positions and initialize cursor
+    loop until progress is completed
+      Runtime->>Gateway: page.prepare.step(budget)
+      Gateway-->>SDK: bounded semantic command
+      SDK->>Executor: advance reader cursor
+      Executor-->>SDK: progress
+      SDK-->>Gateway: progress
+    end
+    Runtime->>Gateway: page.prepare.finish
+    Gateway-->>SDK: finish operation
+    SDK->>Executor: capture final URLs and restore positions
     Runtime->>Gateway: page.get-content
     Gateway-->>SDK: command
     SDK->>Executor: get rendered DOM

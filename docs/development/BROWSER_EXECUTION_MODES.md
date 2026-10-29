@@ -384,8 +384,14 @@ sequenceDiagram
   SDK->>BrowserClient: Bind resource to session
   BrowserClient-->>SDK: session ready
   Server->>SDK: page.get-url
-  Server->>SDK: page.prepare-content(scroll-through)
-  SDK->>Tab: Hydrate lazy content and restore scroll position
+  Server->>SDK: page.prepare.start(scroll-through)
+  SDK->>Tab: Save positions and initialize cursor
+  loop until completed
+    Server->>SDK: page.prepare.step(budget)
+    SDK->>Tab: Advance bounded reader work
+  end
+  Server->>SDK: page.prepare.finish
+  SDK->>Tab: Capture final URLs and restore positions
   Server->>SDK: page.get-content
   SDK->>Tab: Read current rendered DOM
   Tab-->>SDK: URL + HTML

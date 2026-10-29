@@ -13,6 +13,7 @@ import { createEmptyCheckpoint } from '../../src/task/checkpoint';
 import { ComicError, ErrorType } from '../../src/error/types';
 import type { ComicMetadata } from '../../../shared/types';
 import { BrowserRenderService } from '../../src/browser/browser-render-service';
+import type { BrowserCommand } from '@comiccrawler/browser-client-sdk';
 
 const TEST_ROOT = join(__dirname, '__tmp__', 'rest-only-flow');
 
@@ -164,13 +165,28 @@ function createRestServer(configManager: ConfigManager): ComicCrawlerServer {
     });
 }
 
-async function executeBrowserCommand(_sessionId: string, command: { type: string; url?: string }) {
+async function executeBrowserCommand(_sessionId: string, command: BrowserCommand) {
   if (command.type === 'page.navigate') return { type: 'page.navigate', url: command.url };
   if (command.type === 'page.wait-for-ready') return { type: 'page.wait-for-ready', url: chapterUrlForCommand(command) };
-  if (command.type === 'page.prepare-content') return { type: 'page.prepare-content', url: chapterUrlForCommand(command) };
+  if (command.type === 'page.prepare.start') return { type: 'page.prepare.start',
+    operationId: command.operationId, progress: progressingPreparation() };
+  if (command.type === 'page.prepare.step') return { type: 'page.prepare.step',
+    operationId: command.operationId, progress: completedPreparation() };
+  if (command.type === 'page.prepare.finish') return { type: 'page.prepare.finish',
+    operationId: command.operationId, url: chapterUrlForCommand(command) };
   if (command.type === 'page.get-content') return { type: 'page.get-content', url: 'https://rest-only.example/', html: '<html></html>' };
   if (command.type === 'page.get-url') return { type: 'page.get-url', url: 'https://rest-only.example/' };
   return { type: 'page.focus' };
+}
+
+function progressingPreparation() {
+  return { status: 'progressing' as const, phase: 'candidates' as const,
+    discoveredCandidates: 1, processedCandidates: 0, capturedImages: 0, fallbackSteps: 0 };
+}
+
+function completedPreparation() {
+  return { ...progressingPreparation(), status: 'completed' as const,
+    phase: 'completed' as const, processedCandidates: 1, capturedImages: 1 };
 }
 
 function browserLeaseCoordinator() {

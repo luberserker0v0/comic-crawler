@@ -33,8 +33,14 @@ class CancellableCommandPort {
   async execute(
     _sessionId: string, command: BrowserCommand, _timeout?: number, signal?: AbortSignal
   ): Promise<BrowserCommandResult> {
-    if (command.type === 'page.prepare-content' && this.blockPreparation)
+    if (command.type === 'page.prepare.step' && this.blockPreparation)
       return this.blockUntilCancelled(signal);
+    if (command.type === 'page.prepare.start')
+      return { type: command.type, operationId: command.operationId, progress: progressingPreparation() };
+    if (command.type === 'page.prepare.step')
+      return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+    if (command.type === 'page.prepare.finish')
+      return { type: command.type, operationId: command.operationId, url: TARGET_URL };
     if (command.type === 'page.get-content')
       return { type: command.type, url: TARGET_URL, html: '<main><img src="/1.jpg"></main>' };
     if (command.type === 'page.focus') return { type: command.type };
@@ -49,6 +55,16 @@ class CancellableCommandPort {
       reject(signal.reason);
     }, { once: true }));
   }
+}
+
+function progressingPreparation() {
+  return { status: 'progressing' as const, phase: 'candidates' as const,
+    discoveredCandidates: 1, processedCandidates: 0, capturedImages: 0, fallbackSteps: 0 };
+}
+
+function completedPreparation() {
+  return { ...progressingPreparation(), status: 'completed' as const,
+    phase: 'completed' as const, processedCandidates: 1, capturedImages: 1 };
 }
 
 const TARGET_URL = 'https://example.test/chapter/1';

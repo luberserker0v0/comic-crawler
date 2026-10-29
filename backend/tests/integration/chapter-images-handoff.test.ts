@@ -123,8 +123,17 @@ function createRenderService(page: { html: string }): BrowserRenderService {
     if (command.type === 'page.focus') return { type: command.type };
     if (command.type === 'page.navigate') return { type: command.type, url: command.url };
     if (command.type === 'page.get-content') return { type: command.type, url: CHAPTER_URL, html: page.html };
+    if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step')
+      return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+    if (command.type === 'page.prepare.finish')
+      return { type: command.type, operationId: command.operationId, url: CHAPTER_URL };
     return { type: command.type, url: CHAPTER_URL };
   } });
+}
+
+function completedPreparation() {
+  return { status: 'completed' as const, phase: 'completed' as const,
+    discoveredCandidates: 1, processedCandidates: 1, capturedImages: 1, fallbackSteps: 0 };
 }
 
 function createChallengeService(storage: IStorage, browserRenderService: BrowserRenderService,

@@ -1,4 +1,4 @@
-import type { BrowserCommand } from '@comiccrawler/browser-client-sdk';
+import type { BrowserCommand, BrowserCommandResult } from '@comiccrawler/browser-client-sdk';
 import { BrowserRenderService } from '../../../src/browser/browser-render-service';
 import { ChallengeDiscoveryService } from '../../../src/challenge/discovery-service';
 import type { ChallengeDiscoveryJob } from '../../../src/challenge/discovery-types';
@@ -87,12 +87,16 @@ function expectReadyHandoff(ready: ChallengeDiscoveryJob, browserTarget: object,
     });
 }
 
-async function readyCommandResult(_sessionId: string, command: BrowserCommand) {
+async function readyCommandResult(_sessionId: string, command: BrowserCommand): Promise<BrowserCommandResult> {
   if (command.type === 'page.get-url') return { type: command.type, url: 'about:blank' };
   if (command.type === 'page.navigate') return { type: command.type, url: command.url };
   if (command.type === 'page.get-content') return { type: command.type,
     url: 'https://example.com/chapter', html: '<main class="reader"><img src="/1.jpg"></main>' };
   if (command.type === 'page.focus') return { type: command.type };
+  if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step')
+    return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+  if (command.type === 'page.prepare.finish') return { type: command.type,
+    operationId: command.operationId, url: 'https://example.com/chapter' };
   return { type: command.type, url: 'https://example.com/chapter' };
 }
 
@@ -174,7 +178,16 @@ function remoteCommandResult(command: BrowserCommand, html: string) {
   if (command.type === 'page.focus') return { type: command.type };
   if (command.type === 'page.get-content')
     return { type: command.type, url: 'https://example.test/chapter', html };
+  if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step')
+    return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+  if (command.type === 'page.prepare.finish')
+    return { type: command.type, operationId: command.operationId, url: 'https://example.test/chapter' };
   return { type: command.type, url: 'https://example.test/chapter' };
+}
+
+function completedPreparation() {
+  return { status: 'completed' as const, phase: 'completed' as const,
+    discoveredCandidates: 1, processedCandidates: 1, capturedImages: 1, fallbackSteps: 0 };
 }
 
 async function seedChallengeJob(storage: IStorage): Promise<ChallengeDiscoveryJob> {
@@ -195,5 +208,5 @@ async function expectReadySnapshot(service: ChallengeDiscoveryService, id: strin
 
 const SETTLED_SNAPSHOT_COMMANDS = [
   'page.get-content', 'page.get-url', 'page.wait-for-ready',
-  'page.prepare-content', 'page.get-content',
+  'page.prepare.start', 'page.prepare.finish', 'page.get-content',
 ];

@@ -186,8 +186,13 @@ class E2eExistingTabDriver implements BrowserPageDriver<number> {
   }
 
   async prepareContent(_tabId: number, _strategy: 'scroll-through',
-    _timeoutMs: number | undefined, _reader: ReaderPreparationSelectors | undefined,
-    signal: AbortSignal): Promise<void> { await this.wait(signal); }
+    _reader: ReaderPreparationSelectors | undefined, signal: AbortSignal) {
+    assertE2eCommandActive(signal);
+    return { progress: preparationProgress('progressing'),
+      step: async (_budget: unknown, stepSignal: AbortSignal) => {
+        await this.wait(stepSignal); return preparationProgress('completed');
+      }, finish: async () => undefined };
+  }
 
   async focus(_tabId: number, signal: AbortSignal): Promise<void> { assertE2eCommandActive(signal); }
 
@@ -196,6 +201,12 @@ class E2eExistingTabDriver implements BrowserPageDriver<number> {
     await Promise.race([this.blockedCommands, e2eAbortPromise(signal)]);
     assertE2eCommandActive(signal);
   }
+}
+
+function preparationProgress(status: 'progressing' | 'completed') {
+  return { status, phase: status === 'completed' ? 'completed' as const : 'candidates' as const,
+    discoveredCandidates: 1, processedCandidates: status === 'completed' ? 1 : 0,
+    capturedImages: status === 'completed' ? 1 : 0, fallbackSteps: 0 };
 }
 
 function e2eAbortPromise(signal: AbortSignal): Promise<never> {

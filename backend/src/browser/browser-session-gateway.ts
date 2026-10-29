@@ -760,7 +760,7 @@ function requireResource(value: BrowserResourceDescriptor): BrowserResourceDescr
 }
 
 function assertCapability(capabilities: BrowserCapabilities, command: BrowserCommand): void {
-  const supported = command.type === 'page.get-content' || command.type === 'page.prepare-content'
+  const supported = command.type === 'page.get-content' || command.type.startsWith('page.prepare.')
     ? capabilities.renderedDom
     : command.type === 'page.focus'
       ? capabilities.humanHandoff

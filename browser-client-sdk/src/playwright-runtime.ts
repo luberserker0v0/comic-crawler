@@ -1,6 +1,7 @@
 import type { BrowserRenderContext, ReaderPreparationSelectors } from './contracts';
-import { prepareScrollableContent } from './content-preparation';
-import type { BrowserPageDriver, ManagedProfile, ManagedProfileLauncher } from './executors';
+import { beginScrollableContentPreparation } from './content-preparation';
+import type { BrowserContentPreparation, BrowserPageDriver,
+  ManagedProfile, ManagedProfileLauncher } from './executors';
 import { BrowserClientError } from './errors';
 
 export interface PreparedProfile {
@@ -135,20 +136,15 @@ export class PlaywrightPageDriver<Page extends PlaywrightPageLike> implements Br
   async prepareContent(
     page: Page,
     strategy: 'scroll-through',
-    timeoutMs: number | undefined,
     reader: ReaderPreparationSelectors | undefined,
     signal: AbortSignal
-  ): Promise<void> {
+  ): Promise<BrowserContentPreparation> {
+    signal.throwIfAborted();
     if (strategy !== 'scroll-through') {
       throw new BrowserClientError(`Unsupported content preparation strategy "${strategy}".`, 'UNSUPPORTED_COMMAND');
     }
-    const operation = prepareScrollableContent(
-      (script, argument) => page.evaluate(script, argument),
-      normalizePreparationTimeout(timeoutMs),
-      reader,
-      signal
-    );
-    await operation;
+    return beginScrollableContentPreparation(
+      (script, argument) => page.evaluate(script, argument), reader);
   }
 
   async focus(page: Page, signal: AbortSignal): Promise<void> {
@@ -246,11 +242,6 @@ function toPlaywrightContext(renderContext: BrowserRenderContext | undefined): P
 
 function assertNotAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new BrowserClientError('Browser operation was cancelled.', 'CANCELLED');
-}
-
-function normalizePreparationTimeout(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) return 30_000;
-  return Math.max(1, Math.floor(value));
 }
 
 function raceAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

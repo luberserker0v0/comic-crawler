@@ -8,6 +8,8 @@ import type {
   BrowserResourceDescriptor,
   BrowserSession,
   OpenBrowserSessionRequest,
+  ReaderPreparationBudget,
+  ReaderPreparationProgress,
   ReaderPreparationSelectors,
 } from './contracts';
 import { BrowserClientError } from './errors';
@@ -17,9 +19,15 @@ export interface BrowserPageDriver<PageHandle> {
   navigate(page: PageHandle, url: string, signal: AbortSignal): Promise<string>;
   content(page: PageHandle, signal: AbortSignal): Promise<string>;
   waitForReady(page: PageHandle, timeoutMs: number | undefined, signal: AbortSignal): Promise<void>;
-  prepareContent(page: PageHandle, strategy: 'scroll-through', timeoutMs: number | undefined,
-    reader: ReaderPreparationSelectors | undefined, signal: AbortSignal): Promise<void>;
+  prepareContent(page: PageHandle, strategy: 'scroll-through',
+    reader: ReaderPreparationSelectors | undefined, signal: AbortSignal): Promise<BrowserContentPreparation>;
   focus(page: PageHandle, signal: AbortSignal): Promise<void>;
+}
+
+export interface BrowserContentPreparation {
+  readonly progress: ReaderPreparationProgress;
+  step(budget: ReaderPreparationBudget, signal: AbortSignal): Promise<ReaderPreparationProgress>;
+  finish(): Promise<void>;
 }
 
 export interface BrowserPageLease<PageHandle> {
@@ -164,6 +172,7 @@ implements BrowserPageAcquisitionStrategy<PageHandle> {
 
 class DriverBrowserSession<PageHandle> implements BrowserSession {
   private closed = false;
+  private preparation?: { operationId: string; operation: BrowserContentPreparation };
 
   constructor(
     private readonly driver: BrowserPageDriver<PageHandle>,
@@ -189,7 +198,9 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
       await this.driver.waitForReady(this.page, command.timeoutMs, signal);
       return { type: command.type, url: await this.driver.currentUrl(this.page, signal) };
     }
-    if (command.type === 'page.prepare-content') return this.prepareContent(command, signal);
+    if (command.type === 'page.prepare.start') return this.startPreparation(command, signal);
+    if (command.type === 'page.prepare.step') return this.stepPreparation(command, signal);
+    if (command.type === 'page.prepare.finish') return this.finishPreparation(command);
     if (command.type === 'page.focus') {
       await this.driver.focus(this.page, signal);
       return { type: command.type };
@@ -197,11 +208,37 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
     throw new BrowserClientError(`Unsupported command "${command.type}".`, 'UNSUPPORTED_COMMAND');
   }
 
-  private async prepareContent(
-    command: Extract<BrowserCommand, { type: 'page.prepare-content' }>, signal: AbortSignal
+  private async startPreparation(
+    command: Extract<BrowserCommand, { type: 'page.prepare.start' }>, signal: AbortSignal
   ): Promise<BrowserCommandResult> {
-    await this.driver.prepareContent(this.page, command.strategy, command.timeoutMs, command.reader, signal);
-    return { type: command.type, url: await this.driver.currentUrl(this.page, signal) };
+    if (this.preparation) throw new BrowserClientError('Reader preparation is already active.', 'INVALID_STATE');
+    const operation = await this.driver.prepareContent(this.page, command.strategy, command.reader, signal);
+    this.preparation = { operationId: command.operationId, operation };
+    return { type: command.type, operationId: command.operationId, progress: operation.progress };
+  }
+
+  private async stepPreparation(
+    command: Extract<BrowserCommand, { type: 'page.prepare.step' }>, signal: AbortSignal
+  ): Promise<BrowserCommandResult> {
+    const active = this.requirePreparation(command.operationId);
+    const progress = await active.operation.step(command.budget, signal);
+    return { type: command.type, operationId: command.operationId, progress };
+  }
+
+  private async finishPreparation(
+    command: Extract<BrowserCommand, { type: 'page.prepare.finish' }>
+  ): Promise<BrowserCommandResult> {
+    const active = this.requirePreparation(command.operationId);
+    this.preparation = undefined;
+    await active.operation.finish();
+    const signal = new AbortController().signal;
+    return { type: command.type, operationId: command.operationId,
+      url: await this.driver.currentUrl(this.page, signal) };
+  }
+
+  private requirePreparation(operationId: string) {
+    if (this.preparation?.operationId === operationId) return this.preparation;
+    throw new BrowserClientError('Reader preparation operation does not match the active operation.', 'INVALID_STATE');
   }
 
   private async readContent(signal: AbortSignal): Promise<BrowserCommandResult> {
@@ -212,7 +249,17 @@ class DriverBrowserSession<PageHandle> implements BrowserSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.releasePage();
+    try {
+      await this.closePreparation();
+    } finally {
+      await this.releasePage();
+    }
+  }
+
+  private async closePreparation(): Promise<void> {
+    const active = this.preparation;
+    this.preparation = undefined;
+    await active?.operation.finish();
   }
 }
 

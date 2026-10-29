@@ -62,6 +62,11 @@ one outbound command WebSocket.
 - **ADP-013**: Adapters must declare reader boundary selectors separately from image extraction.
 - **ADP-014**: Browser Client must bound reader preparation and restore scroll positions.
 - **ADP-015**: AO must receive one minimal capability contract per generation stage.
+- **ADP-016**: Reader preparation must expose progressing and completed states.
+- **ADP-017**: Browser Client must preserve reader progress across bounded preparation steps.
+- **ADP-018**: Reader preparation timeout must measure lack of progress, not total work duration.
+- **ADP-019**: Success, cancellation, failure, or session close must restore reader positions once.
+- **ADP-020**: Adapter contracts must not own preparation cursors or continuation logic.
 
 ## 6. Security requirements
 

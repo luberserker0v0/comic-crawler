@@ -80,6 +80,12 @@ class TestSession implements BrowserSession {
       return { type: command.type, url: this.url, html: '<main>chapter</main>' };
     }
     if (command.type === 'page.focus') return { type: command.type };
+    if (command.type === 'page.prepare.start' || command.type === 'page.prepare.step') {
+      return { type: command.type, operationId: command.operationId, progress: completedPreparation() };
+    }
+    if (command.type === 'page.prepare.finish') {
+      return { type: command.type, operationId: command.operationId, url: this.url };
+    }
     return { type: command.type, url: this.url };
   }
   async close(): Promise<void> {
@@ -98,6 +104,11 @@ class TestSession implements BrowserSession {
     return new Promise((_resolve, reject) => signal?.addEventListener(
       'abort', () => reject(signal.reason), { once: true }));
   }
+}
+
+function completedPreparation() {
+  return { status: 'completed' as const, phase: 'completed' as const,
+    discoveredCandidates: 1, processedCandidates: 1, capturedImages: 1, fallbackSteps: 0 };
 }
 
 function principal(): ApiPrincipal {

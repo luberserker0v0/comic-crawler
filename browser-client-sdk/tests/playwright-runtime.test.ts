@@ -5,7 +5,8 @@ import {
   FreshProfileProvisioner,
   PlaywrightManagedProfileLauncher,
   PlaywrightPageDriver,
-  prepareScrollableContent,
+  beginScrollableContentPreparation,
+  type BrowserContentPreparation,
   type PlaywrightPageLike,
   type ProfileDirectoryAccess,
 } from '../src';
@@ -34,6 +35,7 @@ class FakePage implements PlaywrightPageLike {
       return { done: false, height: 1000, position: 1000, bottom: 1000 } as R;
     }
     if (pageFunction.name === 'recordScrollPreparationBottomStep') return true as R;
+    if (pageFunction.name === 'captureLoadedImageUrls') return this.preparedCandidates.length as R;
     return undefined as R;
   }
   async bringToFront(): Promise<void> { this.focused = true; }
@@ -106,7 +108,8 @@ test('PlaywrightPageDriver maps semantic page commands', async () => {
 
   assert.equal(await driver.navigate(page, 'https://example.test/chapter', signal), 'https://example.test/chapter');
   assert.equal(await driver.content(page, signal), '<main>chapter</main>');
-  await driver.prepareContent(page, 'scroll-through', 1_000, undefined, signal);
+  const preparation = await driver.prepareContent(page, 'scroll-through', undefined, signal);
+  await completePreparation(preparation, signal);
   await driver.focus(page, signal);
   assert.equal(page.focused, true);
   assert.deepEqual(page.preparedCandidates, [0, 1, 2]);
@@ -123,27 +126,35 @@ test('content preparation uses bounded fallback only when reader pages are absen
     if (script.name === 'scrollPreparationBottomStep')
       return { done: false, height: 1000, position: 1000, bottom: 1000 } as Result;
     if (script.name === 'recordScrollPreparationBottomStep') return true as Result;
+    if (script.name === 'captureLoadedImageUrls') return 0 as Result;
     return undefined as Result;
   };
-  await prepareScrollableContent(execute, 1_000);
+  const operation = await beginScrollableContentPreparation(execute);
+  await completePreparation(operation, new AbortController().signal);
   assert.equal(calls.filter((name) => name === 'scrollPreparationBottomStep').length, 1);
 });
 
 test('content preparation rejects an explicit reader page selector with no matches', async () => {
   const execute = async <Argument, Result>(
     script: (argument: Argument) => Result | Promise<Result>, _argument: Argument
-  ): Promise<Result> => (script.name === 'countScrollPreparationCandidates' ? 0 : undefined) as Result;
-  await assert.rejects(() => prepareScrollableContent(execute, 1_000, {
-    containerSelector: '.reader', pageSelector: '.page',
-  }), /Reader page selector did not match/);
+  ): Promise<Result> => (script.name === 'countScrollPreparationCandidates'
+    || script.name === 'captureLoadedImageUrls' ? 0 : undefined) as Result;
+  const operation = await beginScrollableContentPreparation(execute, {
+    containerSelector: '.reader', pageSelector: '.page' });
+  await assert.rejects(() => completePreparation(operation, new AbortController().signal),
+    /Reader page selector did not match/);
+  await operation.finish();
 });
 
 test('content preparation cancels candidate scanning and restores positions', async () => {
   const controller = new AbortController();
   const calls: string[] = [];
   const execute = cancellationExecutor(calls, controller, 'scrollPreparationCandidate', 1);
-  await assert.rejects(() => prepareScrollableContent(
-    execute, 1_000, {}, controller.signal), { name: 'AbortError' });
+  const operation = await beginScrollableContentPreparation(execute);
+  await assert.rejects(() => operation.step(
+    { maxActions: 10, maxDurationMs: 5_000 }, controller.signal), { name: 'AbortError' });
+  assert.ok(!calls.includes('finishScrollPreparation'));
+  await operation.finish();
   assert.ok(calls.includes('finishScrollPreparation'));
   assert.ok(calls.includes('clearScrollPreparation'));
 });
@@ -152,8 +163,11 @@ test('content preparation cancels fallback scanning and restores positions', asy
   const controller = new AbortController();
   const calls: string[] = [];
   const execute = cancellationExecutor(calls, controller, 'scrollPreparationBottomStep', 0);
-  await assert.rejects(() => prepareScrollableContent(
-    execute, 1_000, {}, controller.signal), { name: 'AbortError' });
+  const operation = await beginScrollableContentPreparation(execute);
+  await assert.rejects(() => operation.step(
+    { maxActions: 10, maxDurationMs: 5_000 }, controller.signal), { name: 'AbortError' });
+  assert.ok(!calls.includes('finishScrollPreparation'));
+  await operation.finish();
   assert.ok(calls.includes('finishScrollPreparation'));
   assert.ok(calls.includes('clearScrollPreparation'));
 });
@@ -164,11 +178,21 @@ function cancellationExecutor(
   return async <Argument, Result>(script: (argument: Argument) => Result | Promise<Result>) => {
     calls.push(script.name);
     if (script.name === 'countScrollPreparationCandidates') return candidateCount as Result;
+    if (script.name === 'captureLoadedImageUrls') return 0 as Result;
     if (script.name === abortAt) controller.abort(new DOMException('Cancelled.', 'AbortError'));
     if (script.name === 'scrollPreparationBottomStep')
       return { done: false, height: 1000, position: 500, bottom: 1000 } as Result;
     return undefined as Result;
   };
+}
+
+async function completePreparation(
+  operation: BrowserContentPreparation, signal: AbortSignal
+): Promise<void> {
+  while (operation.progress.status !== 'completed') {
+    await operation.step({ maxActions: 10, maxDurationMs: 5_000 }, signal);
+  }
+  await operation.finish();
 }
 
 test('CopyProfileProvisioner applies the fixed cache and lock exclusions', async () => {

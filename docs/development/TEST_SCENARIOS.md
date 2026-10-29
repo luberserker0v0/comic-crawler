@@ -606,9 +606,10 @@
 ### BC-15 準備虛擬化 reader
 
 1. 開啟虛擬化 reader。
-2. 執行 `page.prepare-content`。
-3. 讀取 prepared DOM。
-4. 檢查每個 reader page。
+2. 開始 reader operation。
+3. 推進 bounded steps。
+4. 完成 operation。
+5. 讀取 prepared DOM。
 
 預期：每頁保留 `data-comiccrawler-*` 圖片 URL。
 
@@ -672,9 +673,10 @@
 ### BC-22 等待動態 reader
 
 1. 開啟延遲建立的 reader。
-2. 執行 `page.prepare-content`。
+2. 開始 reader operation。
 3. 等待 reader page 出現。
-4. 捲動每個動態 page。
+4. 推進 bounded steps。
+5. 完成 operation。
 
 預期：prepared DOM 保留全部圖片 URL。
 
@@ -719,6 +721,27 @@
 6. 再次呼叫相同 API。
 
 預期：舊 command 停止，新請求成功且不重疊。
+
+### BC-27 分段準備長篇 reader
+
+1. 建立超過單步預算的 reader。
+2. 開始 reader operation。
+3. 執行第一個 step。
+4. 檢查 progressing 狀態。
+5. 繼續 step 至 completed。
+6. 完成 operation。
+
+預期：游標與已擷取 URL 跨 step 保留。
+
+### BC-28 停止無進度的 reader
+
+1. 建立不再前進的 reader。
+2. 開始 reader operation。
+3. 重複回傳相同進度。
+4. 等待 no-progress timeout。
+5. 檢查位置還原。
+
+預期：Server 停止 operation，Client 只清理一次。
 
 ## 6. WebUI
 

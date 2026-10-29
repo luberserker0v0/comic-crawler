@@ -196,12 +196,19 @@ Browser-backed request outcomes are distinct:
 | --- | --- | --- |
 | Success | Returns the complete image list. | Preparation finishes and positions are restored. |
 | Caller disconnect | No response can be delivered. | The active command is cancelled and the lease is released. |
-| Command timeout | Returns the normal extraction failure response. | Server sends `command.cancel` before cleanup. |
+| No reader progress | Returns the normal extraction failure response. | Server finishes preparation and restores positions. |
+| Step command timeout | Returns the normal extraction failure response. | Server sends `command.cancel` before cleanup. |
 | Worker disconnect | Returns a browser transport failure. | The session is removed or follows task reconnect policy. |
 
 Aborting the caller's `fetch` therefore stops Browser Client preparation. A
 replacement request is not admitted through the adapter lock until cancelled
 preparation has restored its scroll positions.
+
+Reader preparation is incremental inside one Browser session. The Server sends
+bounded start, step, and finish commands. Each successful step preserves the
+reader cursor and captured URLs in the Browser Client. For this phase,
+`browser.timeout` limits how long progress may remain unchanged; it does not
+limit the total duration of a reader that continues to discover or process pages.
 
 Identity guarantees:
 
