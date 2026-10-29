@@ -223,7 +223,7 @@ The multi-stage Dockerfile performs these actions:
 Set image metadata for release builds:
 
 ```bash
-COMICCRAWLER_IMAGE_VERSION=0.4.0 \
+COMICCRAWLER_IMAGE_VERSION=0.5.0 \
 COMICCRAWLER_IMAGE_REVISION=<git-commit> \
 docker compose build app
 ```
@@ -231,7 +231,7 @@ docker compose build app
 PowerShell:
 
 ```powershell
-$env:COMICCRAWLER_IMAGE_VERSION = "0.4.0"
+$env:COMICCRAWLER_IMAGE_VERSION = "0.5.0"
 $env:COMICCRAWLER_IMAGE_REVISION = git rev-parse HEAD
 docker compose build app
 ```

@@ -13,7 +13,7 @@ Every GitHub Release must contain:
 Build the same files locally with:
 
 ```bash
-npm run release:artifacts -- --ref v0.4.0
+npm run release:artifacts -- --ref v0.5.0
 ```
 
 The command rejects a tag that differs from `package.json`. It also rejects SDK

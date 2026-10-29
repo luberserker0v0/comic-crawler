@@ -499,7 +499,7 @@ async function ComicCrawlerE2ETestAPI01({ request }) {
     expect(response.ok()).toBeTruthy();
     const body = await response.json();
     expect(body.data).toBeDefined();
-    expect(body.data.version).toBe('0.4.0');
+    expect(body.data.version).toBe('0.5.0');
     expect(body.data.adapters).toBeDefined();
     expect(body.data.adapters.loaded).toBeGreaterThanOrEqual(0);
 }
