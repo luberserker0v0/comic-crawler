@@ -82,6 +82,35 @@ export interface ChapterImageDescriptor {
   sourceFingerprint?: string;
 }
 
+export interface ChapterImageManifest {
+  adapterId: string;
+  chapter: ChapterIdentityDescriptor;
+  identityResolver: ChapterImageIdentityResolverDescriptor;
+  revision: string;
+  capturedAt: string;
+  images: ChapterImageDescriptor[];
+}
+
+export interface ChapterImageIdentityResolverDescriptor {
+  id: string;
+  version: number;
+}
+
+export interface ChapterImageManifestResolvePagesRequest {
+  urls: string[];
+  revision?: string;
+}
+
+export type ChapterImagePageResolution =
+  | { url: string; status: 'matched'; pageId: string; orderIndex: number; sourceFingerprint?: string }
+  | { url: string; status: 'not_found' | 'ambiguous' };
+
+export interface ChapterImageManifestResolvePagesResponse {
+  chapterId: string;
+  revision: string;
+  matches: ChapterImagePageResolution[];
+}
+
 export interface AdapterListItem {
   id: string;
   name: string;

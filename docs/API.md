@@ -243,6 +243,58 @@ adapter identity algorithm are data migrations and must not be made casually.
 0.x API line. Their removal requires a documented deprecation and a future major
 API version. Existing callers may ignore `chapter` and `images`.
 
+### Read a persisted chapter image manifest
+
+Every successful `POST /api/adapters/chapter-images` extraction atomically
+replaces the authenticated owner's latest manifest for that logical chapter.
+Manifest reads are passive: they never resolve an Adapter, acquire a Browser
+Client, navigate, scroll, or retry live extraction.
+
+Resolve the latest manifest from a chapter URL:
+
+```http
+GET /api/chapter-image-manifests/resolve?url={encodedChapterUrl}&adapterId={optionalAdapterId}
+```
+
+Read it later by its opaque chapter ID:
+
+```http
+GET /api/chapter-image-manifests/{chapterId}
+```
+
+Both endpoints return `adapterId`, `chapter`, `identityResolver`, `revision`,
+`capturedAt`, and the complete ordered `images` array. `identityResolver`
+identifies the pure matching algorithm and version without exposing its keys.
+`revision` identifies the semantic manifest
+content; `capturedAt` records when it was saved. A repeated extraction may have
+the same revision and a later capture time. GET responses include an `ETag`
+equal to the quoted revision and accept `If-None-Match`.
+
+Map URLs observed by a Browser Client back to persisted logical page IDs:
+
+```http
+POST /api/chapter-image-manifests/{chapterId}/resolve-pages
+```
+
+```json
+{
+  "revision": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "urls": [
+    "https://renewed-cdn.example/pages/001.jpg?token=new"
+  ]
+}
+```
+
+Each input produces one ordered result with status `matched`, `not_found`, or
+`ambiguous`. A matched result contains `pageId`, `orderIndex`, and the optional
+stored `sourceFingerprint`. The optional revision guard returns `409` when the
+client is resolving against a stale manifest.
+
+Manifest records are owner-scoped. URL resolution can return `409` when more
+than one Adapter owns a matching chapter URL; repeat the request with
+`adapterId`. Unknown chapters return `404`. There is deliberately no live
+fallback. Internal source keys and normalized matching keys are never exposed.
+
 ### 2. Create task or queue adapter discovery
 
 ```http
@@ -578,6 +630,9 @@ Use HTTPS/WSS for remote deployments.
 | `GET` | `/api/status` | Health/status check. |
 | `GET` | `/api/adapters` | List registered adapters and capabilities. |
 | `POST` | `/api/adapters/chapter-images` | Return stable chapter/page identities and every ordered image URL. |
+| `GET` | `/api/chapter-image-manifests/resolve` | Resolve an owner-scoped persisted manifest from a chapter URL. |
+| `GET` | `/api/chapter-image-manifests/:chapterId` | Read the latest persisted manifest by opaque chapter ID. |
+| `POST` | `/api/chapter-image-manifests/:chapterId/resolve-pages` | Map observed image URLs to persisted logical page IDs. |
 | `GET` | `/api/adapters/deleted` | List deleted adapters, source deletion status, and restore availability. |
 | `GET` | `/api/adapters/:id` | Read adapter detail. |
 | `GET` | `/api/adapters/:id/capabilities` | Read Adapter Lab capabilities and fine-grained function descriptors. |

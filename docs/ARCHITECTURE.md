@@ -14,6 +14,7 @@ adapter implementation discovery.
 - [Adapters and capabilities](#adapters-and-capabilities)
 - [Crawler rendering](#crawler-rendering)
 - [Responsive rendering](#responsive-rendering)
+- [Persisted chapter image manifests](#persisted-chapter-image-manifests)
 - [Browser Client boundary](#browser-client-boundary)
 - [Task reliability](#task-reliability)
 - [Human verification handoff](#human-verification-handoff)
@@ -208,6 +209,16 @@ each other's renderer.
 This is viewport emulation, not complete device emulation. ComicCrawler does
 not currently set a mobile user agent, `isMobile`, or `hasTouch`; sites that
 branch on those signals may still return their desktop variant.
+
+### Persisted chapter image manifests
+
+A successful chapter-image extraction saves the owner's latest complete
+manifest. REST consumers can later resolve it by chapter URL or opaque chapter
+ID, then map renewed image URLs back to stable page IDs.
+
+Manifest reads use durable storage and a pure URL resolver only. They do not
+acquire a Browser Client, run an Adapter, navigate, scroll, or download image
+bytes. Unknown records return `404`; there is no live fallback.
 
 ### Browser Client boundary
 

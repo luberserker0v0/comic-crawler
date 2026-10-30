@@ -67,6 +67,13 @@ one outbound command WebSocket.
 - **ADP-018**: Reader preparation timeout must measure lack of progress, not total work duration.
 - **ADP-019**: Success, cancellation, failure, or session close must restore reader positions once.
 - **ADP-020**: Adapter contracts must not own preparation cursors or continuation logic.
+- **ADP-021**: A successful chapter-image extraction must atomically persist the owner's latest complete manifest.
+- **ADP-022**: Manifest reads must not execute Adapter or Browser Client operations.
+- **ADP-023**: Manifest lookup must be scoped to the authenticated owner.
+- **ADP-024**: Manifest revisions must identify semantic content independently from capture time.
+- **ADP-025**: Public manifests must not expose internal source or normalized matching keys.
+- **ADP-026**: A missing manifest must return `404` without live extraction fallback.
+- **ADP-027**: Page URL resolution must preserve input order and report matched, missing, or ambiguous results.
 
 ## 6. Security requirements
 

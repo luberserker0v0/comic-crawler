@@ -21,6 +21,7 @@ const coreBackendTests = [
   'tests/unit/selector-discovery/task-markdown.test.ts',
   'tests/unit/server/adapter-routes.test.ts',
   'tests/unit/adapter/chapter-image-identity.test.ts',
+  'tests/unit/adapter/chapter-image-manifest.test.ts',
   'tests/unit/server/adapter-draft-routes.test.ts',
   'tests/unit/server/adapter-registry-routes.test.ts',
   'tests/unit/server/fixture-routes.test.ts',

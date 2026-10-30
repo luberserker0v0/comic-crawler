@@ -11,21 +11,24 @@ const VOLATILE_QUERY_PARAMETER = /^(?:token|auth|authorization|signature|sig|exp
 
 export class NormalizedUrlChapterImageIdentityStrategy implements ChapterImageIdentityStrategyContract {
   identifyChapter(input: { chapterUrl: string; document: unknown }): { canonicalUrl: string; sourceKey: string } {
-    const canonicalUrl = normalizeHttpUrl(input.chapterUrl, true);
+    const canonicalUrl = normalizedChapterLookupKey(input.chapterUrl);
     return { canonicalUrl, sourceKey: canonicalUrl };
   }
 
   identifyPage(input: { chapterUrl: string; imageUrl: string; document: unknown }): { sourceKey: string } {
-    const parsed = new URL(input.imageUrl, input.chapterUrl);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return { sourceKey: normalizeHttpUrl(parsed.href, true) };
-    }
-
-    // Page identity deliberately excludes the origin. CDN host rotation should
-    // not change a logical source page; the chapter ID supplies the namespace.
-    const search = stableSearch(parsed.searchParams);
-    return { sourceKey: `${parsed.pathname}${search}` };
+    return { sourceKey: normalizedPageMatchKey(input.chapterUrl, input.imageUrl) };
   }
+}
+
+export function normalizedChapterLookupKey(value: string): string {
+  return normalizeHttpUrl(value, true);
+}
+
+export function normalizedPageMatchKey(chapterUrl: string, imageUrl: string): string {
+  const parsed = new URL(imageUrl, chapterUrl);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return normalizeHttpUrl(parsed.href, true);
+  const search = stableSearch(parsed.searchParams);
+  return `${parsed.pathname}${search}`;
 }
 
 export function createChapterImageIdentities(input: {
