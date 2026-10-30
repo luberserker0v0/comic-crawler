@@ -269,7 +269,7 @@ session command is checked against Worker, session, and lease identity.
 ## 10. Persistence boundary
 
 Durable Server state includes Client records, tasks, checkpoints, adapter
-packages, catalog pointers, and fixtures. Approved package content is immutable.
+packages, catalog pointers, fixtures, and chapter image manifests. Approved package content is immutable.
 Approved fixtures are version-owned at
 `approved-fixtures/<adapterId>/<version>/<fixtureId>/`; diagnostic captures stay
 under `fixtures/<domain>/<fixtureId>/` and may expire by retention policy.
@@ -277,3 +277,25 @@ Activation, rollback, and deletion update only catalog metadata. Live sockets,
 Workers, leases, and sessions are process memory only.
 Browser profile state belongs to the consumer and is never persisted by the
 Server.
+
+### Chapter image manifests
+
+`ChapterImageManifestService` stores one latest complete record per owner and
+opaque chapter ID. A record contains the public manifest plus Server-only URL
+matching keys and resolver version. The public manifest contains stable page
+IDs, current order, current URLs, optional fingerprints, a semantic revision,
+and capture time.
+
+```mermaid
+flowchart LR
+  Extract[Successful chapter extraction] --> Save[Atomic latest write]
+  Save --> Store[(Durable storage)]
+  Consumer[REST consumer] --> Lookup[Manifest read API]
+  Lookup --> Store
+  Lookup --> Resolve[Pure URL identity resolver]
+```
+
+The read path depends only on durable storage and the pure versioned resolver.
+It cannot access Adapter Registry, Browser Session Gateway, or live extraction.
+Records are partitioned by a hash of owner ID. Raw owner IDs, Adapter source
+keys, and normalized matching keys are not returned by the API.

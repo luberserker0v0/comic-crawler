@@ -68,6 +68,11 @@
 59. Preserve captured URLs and cursor progress between steps.
 60. Reset the no-progress timer only when progress changes.
 61. Finish active preparation once when a session closes.
+62. Persist owner-scoped chapter manifests across service restarts.
+63. Keep manifest revisions stable when semantic content is unchanged.
+64. Resolve renewed signed URLs without exposing internal matching keys.
+65. Report duplicate URL matches as ambiguous unless input occurrences disambiguate them.
+66. Require an Adapter ID when multiple manifests match one chapter URL.
 
 ### Integration tests
 
@@ -84,6 +89,9 @@
 11. Repeat Dynamic/Playwright chapter extraction.
 12. Preserve IDs across renewed and reordered URLs.
 13. Reuse one verified handoff for chapter-images retry.
+14. Persist only a successful complete chapter extraction.
+15. Read the manifest after restart without Adapter or Browser Client access.
+16. Return `404` for missing manifests without live fallback.
 
 ### Functional tests
 
@@ -169,6 +177,8 @@
 | `backend/tests/unit/adapter/sites/comix/adapter.test.ts` | COMIX-01, COMIX-03 |
 | `backend/tests/integration/chapter-images-handoff.test.ts` | ADP-10, ADP-11 |
 | `backend/tests/integration/chapter-images-request-cancellation.test.ts` | BC-26 |
+| `backend/tests/unit/adapter/chapter-image-manifest.test.ts` | ADP-24～27 |
+| `backend/tests/integration/chapter-image-manifests.test.ts` | ADP-24～26 |
 | `backend/tests/unit/fixtures/dom-readiness.test.ts` | ADP-06, BC-15 |
 | `browser-client-sdk/tests/browser-client.test.ts` | BC-20, BC-21, BC-26 |
 | `browser-client-sdk/tests/content-preparation.test.ts` | BC-25, BC-27 |

@@ -44,6 +44,7 @@ import type { HtmlRenderer } from '../../crawler/html-renderer';
 import type { ApiSecurityService } from '../../security/api-security';
 import { requestPrincipal } from '../middleware/api-security';
 import { trackRequestCancellation } from '../request-cancellation';
+import type { ChapterImageManifestService } from '../../adapter/chapter-image-manifest';
 
 export type { AdapterFunctionId } from './adapter-function-types';
 export { testAdapterFunction } from './adapter-function-runner';
@@ -64,6 +65,7 @@ interface AdapterRouteOptions {
   storage?: IStorage;
   adapterCatalog?: AdapterCatalog;
   apiSecurity?: ApiSecurityService;
+  chapterImageManifestService?: ChapterImageManifestService;
 }
 
 export function setupAdaptersRoutes(app: FastifyInstance, registry: AdapterRegistry, options: AdapterRouteOptions = {}): void {
@@ -328,7 +330,12 @@ async function extractChapterImagesForRequest(
   const network = await ctx.options.getNetworkConfig?.();
   const extraction = await runChapterImageExtraction(ctx, request, prepared, network, signal);
   signal.throwIfAborted();
-  sendChapterImagesResponse(reply, prepared.adapter, prepared.chapterUrl, extraction, prepared.renderContext);
+  const data = createChapterImagesResponse(
+    reply, prepared.adapter, prepared.chapterUrl, extraction, prepared.renderContext);
+  if (!data) return;
+  await ctx.options.chapterImageManifestService?.save(requestOwner(ctx, request), data);
+  signal.throwIfAborted();
+  reply.send({ data });
 }
 
 type ChapterPreparation = { status: 400 | 404 | 422; error: string } | {
@@ -369,8 +376,7 @@ async function runChapterImageExtraction(
     input.chapterUrl, { ...base, htmlRenderer: ctx.options.htmlRenderer });
   if (input.body.challengeDiscoveryId || !ctx.options.withBrowserSession || !ctx.options.browserRenderService)
     return testAdapterFunction(input.adapter, 'extractChapterImageUrls', input.chapterUrl, base);
-  const ownerUserId = ctx.options.apiSecurity
-    ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
+  const ownerUserId = requestOwner(ctx, request);
   return ctx.options.withBrowserSession(request, input.body.browserTarget, input.chapterUrl,
     input.renderContext, (sessionId, claimBrowserLease) => testAdapterFunction(input.adapter, 'extractChapterImageUrls',
       input.chapterUrl, { ...base,
@@ -439,25 +445,28 @@ export function adapterFunctionNeedsBrowser(functionId: AdapterFunctionId): bool
     'getReaderEndSelector'].includes(functionId);
 }
 
-function sendChapterImagesResponse(
+function createChapterImagesResponse(
   reply: FastifyReply,
   adapter: IComicAdapter,
   chapterUrl: string,
   extraction: Awaited<ReturnType<typeof testAdapterFunction>>,
   renderContext: EffectiveRenderContext
-): void {
+): ChapterImagesResponse | undefined {
   if (!extraction.ok) {
-    return sendChapterImageFailure(reply, extraction);
+    sendChapterImageFailure(reply, extraction); return undefined;
   }
   const imageUrls = extractImageUrls(extraction.resultSummary?.imageUrls);
   const chapter = extraction.resultSummary?.chapter;
   const images = extraction.resultSummary?.images;
   if (!isChapterIdentityDescriptor(chapter) || !isChapterImageDescriptors(images, imageUrls)) {
     reply.code(500).send({ error: 'Chapter image extraction returned invalid identity descriptors.' });
-    return;
+    return undefined;
   }
-  reply.send({ data: createChapterImagesData(
-    adapter, chapterUrl, imageUrls, chapter, images, extraction, renderContext) });
+  return createChapterImagesData(adapter, chapterUrl, imageUrls, chapter, images, extraction, renderContext);
+}
+
+function requestOwner(ctx: AdapterRouteContext, request: FastifyRequest): string {
+  return ctx.options.apiSecurity ? requestPrincipal(request, ctx.options.apiSecurity).userId : 'public';
 }
 
 function createChapterImagesData(

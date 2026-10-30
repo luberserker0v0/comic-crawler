@@ -41,6 +41,8 @@ import { setupApiSecurity } from './middleware/api-security';
 import { requestPrincipal } from './middleware/api-security';
 import { logger } from '../utils/logger';
 import type { BrowserLeaseClaim } from './routes/adapter-function-runner';
+import { ChapterImageManifestService } from '../adapter/chapter-image-manifest';
+import { setupChapterImageManifestRoutes } from './routes/chapter-image-manifests';
 
 export interface ServerOptions {
   port: number;
@@ -167,6 +169,8 @@ export class ComicCrawlerServer {
   }
 
   private setupAdapterRoutes(): void {
+    const manifestService = this.options.storage
+      ? new ChapterImageManifestService(this.options.storage) : undefined;
     setupAdaptersRoutes(this.app, this.options.adapterRegistry, {
       challengeDiscoveryService: this.options.challengeDiscoveryService,
       withBrowserSession: (request, target, initialUrl, renderContext, action, signal) =>
@@ -176,7 +180,9 @@ export class ComicCrawlerServer {
       storage: this.options.storage,
       adapterCatalog: this.options.adapterCatalog,
       apiSecurity: this.apiSecurity,
+      chapterImageManifestService: manifestService,
     });
+    if (manifestService) setupChapterImageManifestRoutes(this.app, manifestService, this.apiSecurity);
     if (this.options.officialAdapterRegistry)
       setupAdapterRegistryRoutes(this.app, this.options.officialAdapterRegistry);
     this.setupAdapterDraftRoutes();

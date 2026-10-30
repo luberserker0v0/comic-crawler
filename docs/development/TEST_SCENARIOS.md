@@ -332,6 +332,38 @@
 
 預期：fixture 路徑包含 adapter ID 與 version，replay 使用同一版程式。
 
+### ADP-24 保存 chapter manifest
+
+1. 成功擷取完整章節圖片。
+2. 重新建立 manifest service。
+3. 以 chapter ID 讀取 manifest。
+
+預期：重啟後仍可讀取完整結果。
+
+### ADP-25 被動解析 page URL
+
+1. 保存帶簽章的圖片 URL。
+2. 更新 CDN host 與簽章。
+3. 呼叫 page resolution API。
+
+預期：回傳相同 page ID，不公開 matching key。
+
+### ADP-26 拒絕 live fallback
+
+1. 使用空的 manifest storage。
+2. 以 chapter URL 查詢。
+3. 檢查 Server 依賴呼叫。
+
+預期：回傳 `404`，不執行 Adapter 或 Browser Client。
+
+### ADP-27 隔離 manifest owner
+
+1. User A 保存 manifest。
+2. User B 查詢相同 chapter。
+3. User A 再次查詢。
+
+預期：User B 得到 `404`，User A 取得 manifest。
+
 ### COMIX-01 擷取 Comix fixture
 
 1. 載入 Comix chapter fixture。

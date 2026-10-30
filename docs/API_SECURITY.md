@@ -70,6 +70,12 @@ Send the complete `apiSecurity` object to `PUT /api/config`:
         "methods": ["POST"],
         "path": "/api/tasks/:id/rebind-browser-target",
         "permission": "task:control-own"
+      },
+      {
+        "id": "chapter-image-manifest-read",
+        "methods": ["GET", "POST"],
+        "path": "/api/chapter-image-manifests/**",
+        "permission": "adapter:read"
       }
     ]
   }
@@ -92,7 +98,8 @@ Create the secret file outside the ComicCrawler data directory:
         "browser-client:read-own",
         "browser-client:manage-own",
         "browser-client:session-own",
-        "task:control-own"
+        "task:control-own",
+        "adapter:read"
       ],
       "limits": {
         "maxRegisteredBrowserClients": 10,
@@ -168,6 +175,10 @@ credential rotation, and revocation. Existing-tab task recovery implements
 changing the target. Browser-backed operations accept a stable `browserTarget`;
 the Server verifies visibility, reserves the Worker, and keeps the resulting
 lease bound to the operation.
+
+Chapter image manifest handlers always scope storage reads to the authenticated
+user ID. The `adapter:read` policy grants access to the API operation; it does
+not grant access to another user's manifests.
 
 Other resource-specific `*-own` permissions remain denied until their resource
 models store an owner. Use their non-`own` permission only when cross-user
